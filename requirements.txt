@@ -10,4 +10,5 @@ flask-login
 flask-bcrypt
 flask-socketio
 eventlet
+flask-cors
 werkzeug
