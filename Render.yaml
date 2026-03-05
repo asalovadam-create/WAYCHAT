@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: waychat
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: false
+    disk:
+      name: waychat-data
+      mountPath: /opt/render/project/src/instance
+      sizeGB: 1
