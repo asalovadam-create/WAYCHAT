@@ -67,7 +67,8 @@ MOMENTS_FOLDER  = os.path.join(UPLOAD_FOLDER, 'moments')
 GROUP_AVA_FOLDER = os.path.join(UPLOAD_FOLDER, 'groups')
 
 for _folder in [AVATARS_FOLDER, MESSAGES_FOLDER, MOMENTS_FOLDER, GROUP_AVA_FOLDER]:
-    os.makedirs(_folder, exist_ok=True)
+    if not os.path.exists(_folder):
+    os.makedirs(_folder)
 
 # ══════════════════════════════════════════════════════════
 #  TTL КЭШИ
@@ -2426,4 +2427,5 @@ if __name__ == '__main__':
             debug   = os.environ.get('DEBUG', 'true').lower() == 'true',
             allow_unsafe_werkzeug = True,
             use_reloader = False,
+
         )
