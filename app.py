@@ -16,7 +16,6 @@ import base64
 import struct
 import hmac as hmac_module
 import random
-import re
 import eventlet
 import eventlet.queue
 from functools import wraps
@@ -67,8 +66,12 @@ MOMENTS_FOLDER  = os.path.join(UPLOAD_FOLDER, 'moments')
 GROUP_AVA_FOLDER = os.path.join(UPLOAD_FOLDER, 'groups')
 
 for _folder in [AVATARS_FOLDER, MESSAGES_FOLDER, MOMENTS_FOLDER, GROUP_AVA_FOLDER]:
-    if not os.path.exists(_folder):
-    os.makedirs(_folder)
+    try:
+        os.makedirs(_folder, exist_ok=True)
+    except FileExistsError:
+        pass
+    except Exception as _e:
+        print(f'Warning: could not create {_folder}: {_e}')
 
 # ══════════════════════════════════════════════════════════
 #  TTL КЭШИ
@@ -274,7 +277,7 @@ app = Flask(__name__,
             template_folder=os.path.join(BASE_DIR, 'templates'),
             static_folder=os.path.join(BASE_DIR, 'static'),
             static_url_path='/static')
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=2, x_proto=2, x_host=2, x_port=2)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config.update(
     SQLALCHEMY_DATABASE_URI        = f'sqlite:///{os.path.join(BASE_DIR, "instance", "data.db")}',
@@ -286,8 +289,8 @@ app.config.update(
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
-    SESSION_COOKIE_SAMESITE  = 'Lax',   # Lax — будем патчить в after_request
-    SESSION_COOKIE_SECURE    = False,   # False — сервер HTTP, патчим в after_request
+    SESSION_COOKIE_SAMESITE  = 'Lax',
+    SESSION_COOKIE_SECURE    = False,
     SESSION_COOKIE_HTTPONLY  = True,
     REMEMBER_COOKIE_SAMESITE = 'Lax',
     REMEMBER_COOKIE_SECURE   = False,
@@ -297,27 +300,6 @@ app.config.update(
 )
 
 CORS(app, supports_credentials=True, origins=['*'])
-
-@app.after_request
-def patch_cookies_for_cloudflare(response):
-    """Принудительно патчим Set-Cookie для работы через Cloudflare туннель.
-    Сервер работает по HTTP, но Cloudflare даёт HTTPS снаружи.
-    Браузер получает куки через HTTPS, поэтому Secure+SameSite=None обязательны."""
-    response.headers['Permissions-Policy'] = 'microphone=*, camera=*, autoplay=*'
-    response.headers['Cross-Origin-Opener-Policy'] = 'same-origin-allow-popups'
-
-    if 'Set-Cookie' in response.headers:
-        cookies = response.headers.getlist('Set-Cookie')
-        response.headers.remove('Set-Cookie')
-        for cookie in cookies:
-            # Убираем SameSite=Lax если есть
-            cookie = re.sub(r';\s*SameSite=\w+', '', cookie)
-            cookie = re.sub(r';\s*Secure', '', cookie)
-            # Добавляем правильные флаги
-            cookie += '; SameSite=None; Secure'
-            response.headers.add('Set-Cookie', cookie)
-    return response
-
 db = SQLAlchemy(app)
 
 login_manager = LoginManager(app)
@@ -327,7 +309,7 @@ socketio = SocketIO(
     app,
     async_mode          = 'eventlet',
     cors_allowed_origins = '*',
-    manage_session      = False,  # False чтобы не конфликтовал с Flask-Login
+    manage_session      = True,
     path                = '/socket.io',
     ping_timeout        = 20,
     ping_interval       = 10,
@@ -2329,6 +2311,19 @@ def run_migrations():
 
 
 # ══════════════════════════════════════════════════════════
+#  ИНИЦИАЛИЗАЦИЯ БД (выполняется при импорте модуля — нужно для gunicorn)
+# ══════════════════════════════════════════════════════════
+def _init_app():
+    with app.app_context():
+        os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
+        db.create_all()
+        run_migrations()
+        optimize_sqlite()
+    eventlet.spawn(background_cleanup)
+
+_init_app()
+
+# ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
 # ══════════════════════════════════════════════════════════
 @app.route('/health')
@@ -2371,13 +2366,7 @@ def server_error(e):
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════════
 if __name__ == '__main__':
-    with app.app_context():
-        os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
-        db.create_all()
-        run_migrations()
-        optimize_sqlite()
-
-    eventlet.spawn(background_cleanup)
+    # _init_app() уже вызван выше при импорте
 
     print('╔══════════════════════════════════════════════════════╗')
     print('║         WAYCHAT SERVER v7.0.0 — STARTING            ║')
@@ -2427,5 +2416,5 @@ if __name__ == '__main__':
             debug   = os.environ.get('DEBUG', 'true').lower() == 'true',
             allow_unsafe_werkzeug = True,
             use_reloader = False,
-
         )
+
