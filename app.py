@@ -283,15 +283,14 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 app.config.update(
     SQLALCHEMY_DATABASE_URI        = os.environ.get(
         'DATABASE_URL',
-        'postgresql://neondb_owner:npg_nEtRAGdzwU05@ep-jolly-rain-aimw5fdo-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require'
-    ).replace('postgres://', 'postgresql://', 1),
+        'postgresql+psycopg://neondb_owner:npg_nEtRAGdzwU05@ep-jolly-rain-aimw5fdo-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require'
+    ).replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
         'pool_pre_ping': True,
         'pool_recycle':  300,
         'pool_size':     5,
         'max_overflow':  10,
-        'connect_args':  {'connect_timeout': 10},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
