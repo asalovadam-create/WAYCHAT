@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
@@ -278,12 +275,17 @@ app = Flask(__name__,
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config.update(
-    SQLALCHEMY_DATABASE_URI        = f'sqlite:///{os.path.join(BASE_DIR, "instance", "data.db")}',
+    SQLALCHEMY_DATABASE_URI        = os.environ.get(
+        'DATABASE_URL',
+        'postgresql://neondb_owner:npg_nEtRAGdzwU05@ep-jolly-rain-aimw5fdo-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require'
+    ).replace('postgres://', 'postgresql://', 1),
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
-        'connect_args': {'check_same_thread': False, 'timeout': 30},
         'pool_pre_ping': True,
-        'pool_recycle':  3600,
+        'pool_recycle':  300,
+        'pool_size':     5,
+        'max_overflow':  10,
+        'connect_args':  {'connect_timeout': 10},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
@@ -2211,19 +2213,20 @@ def background_cleanup():
 
 
 def optimize_sqlite():
-    try:
-        with app.app_context():
-            db.session.execute(text('PRAGMA journal_mode=WAL'))
-            db.session.execute(text('PRAGMA synchronous=NORMAL'))
-            db.session.execute(text('PRAGMA cache_size=-32000'))
-            db.session.execute(text('PRAGMA temp_store=MEMORY'))
-            db.session.execute(text('PRAGMA mmap_size=268435456'))
-            db.session.execute(text('PRAGMA busy_timeout=30000'))
-            db.session.execute(text('PRAGMA foreign_keys=ON'))
-            db.session.commit()
-            print('✅ SQLite WAL + 32MB cache включён')
-    except Exception as e:
-        app.logger.warning(f'SQLite optimization: {e}')
+    # PostgreSQL — SQLite PRAGMAs не нужны
+    db_url = app.config.get('SQLALCHEMY_DATABASE_URI', '')
+    if 'sqlite' in db_url:
+        try:
+            with app.app_context():
+                db.session.execute(text('PRAGMA journal_mode=WAL'))
+                db.session.execute(text('PRAGMA synchronous=NORMAL'))
+                db.session.execute(text('PRAGMA cache_size=-32000'))
+                db.session.commit()
+                print('✅ SQLite WAL включён')
+        except Exception as e:
+            app.logger.warning(f'SQLite optimization: {e}')
+    else:
+        print('✅ PostgreSQL — оптимизация не нужна')
 
 
 # ══════════════════════════════════════════════════════════
@@ -2234,10 +2237,10 @@ def run_migrations():
     try:
         with db.engine.connect() as conn:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS moment_view (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 moment_id INTEGER NOT NULL REFERENCES moment(id),
-                viewer_id INTEGER NOT NULL REFERENCES user(id),
-                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                viewer_id INTEGER NOT NULL REFERENCES "user"(id),
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(moment_id, viewer_id)
             )'''))
             conn.commit()
@@ -2252,60 +2255,6 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
-    import sqlite3
-
-    instance_dir = os.path.join(BASE_DIR, 'instance')
-    os.makedirs(instance_dir, exist_ok=True)
-
-    candidates = [
-        os.path.join(instance_dir, 'data.db'),
-        os.path.join(BASE_DIR, 'data.db'),
-    ]
-    db_path = next((p for p in candidates if os.path.exists(p)), None)
-    if not db_path:
-        return
-
-    conn   = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute('PRAGMA journal_mode=WAL')
-
-    def get_columns(table):
-        try:
-            cursor.execute(f'PRAGMA table_info({table})')
-            return {row[1] for row in cursor.fetchall()}
-        except Exception:
-            return set()
-
-    migrations = {
-        'user':    [
-            ('bio',        "ALTER TABLE user ADD COLUMN bio TEXT DEFAULT ''"),
-            ('is_blocked', 'ALTER TABLE user ADD COLUMN is_blocked BOOLEAN DEFAULT 0'),
-            ('created_at', 'ALTER TABLE user ADD COLUMN created_at DATETIME'),
-        ],
-        'chat':    [
-            ('created_at', 'ALTER TABLE chat ADD COLUMN created_at DATETIME'),
-        ],
-        'message': [
-            ('is_deleted',  'ALTER TABLE message ADD COLUMN is_deleted BOOLEAN DEFAULT 0'),
-            ('sender_name', "ALTER TABLE message ADD COLUMN sender_name VARCHAR(120) DEFAULT ''"),
-        ],
-    }
-
-    for table, cols in migrations.items():
-        existing = get_columns(table)
-        if not existing:
-            continue
-        for col, sql in cols:
-            if col not in existing:
-                print(f'  🔧 Миграция: {table}.{col}')
-                try:
-                    cursor.execute(sql)
-                    conn.commit()
-                    print(f'  ✅ {table}.{col} добавлена')
-                except Exception as ex:
-                    print(f'  ⚠️  {table}.{col}: {ex}')
-
-    conn.close()
 
 
 # ══════════════════════════════════════════════════════════
