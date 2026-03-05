@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
@@ -66,7 +69,10 @@ MOMENTS_FOLDER  = os.path.join(UPLOAD_FOLDER, 'moments')
 GROUP_AVA_FOLDER = os.path.join(UPLOAD_FOLDER, 'groups')
 
 for _folder in [AVATARS_FOLDER, MESSAGES_FOLDER, MOMENTS_FOLDER, GROUP_AVA_FOLDER]:
-    os.makedirs(_folder, exist_ok=True)
+    try:
+        os.makedirs(_folder, exist_ok=True)
+    except Exception:
+        pass
 
 # ══════════════════════════════════════════════════════════
 #  TTL КЭШИ
@@ -2213,20 +2219,7 @@ def background_cleanup():
 
 
 def optimize_sqlite():
-    # PostgreSQL — SQLite PRAGMAs не нужны
-    db_url = app.config.get('SQLALCHEMY_DATABASE_URI', '')
-    if 'sqlite' in db_url:
-        try:
-            with app.app_context():
-                db.session.execute(text('PRAGMA journal_mode=WAL'))
-                db.session.execute(text('PRAGMA synchronous=NORMAL'))
-                db.session.execute(text('PRAGMA cache_size=-32000'))
-                db.session.commit()
-                print('✅ SQLite WAL включён')
-        except Exception as e:
-            app.logger.warning(f'SQLite optimization: {e}')
-    else:
-        print('✅ PostgreSQL — оптимизация не нужна')
+    print('✅ PostgreSQL — оптимизация не нужна')
 
 
 # ══════════════════════════════════════════════════════════
@@ -2239,7 +2232,7 @@ def run_migrations():
             conn.execute(text('''CREATE TABLE IF NOT EXISTS moment_view (
                 id SERIAL PRIMARY KEY,
                 moment_id INTEGER NOT NULL REFERENCES moment(id),
-                viewer_id INTEGER NOT NULL REFERENCES "user"(id),
+                viewer_id INTEGER NOT NULL REFERENCES user(id),
                 viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(moment_id, viewer_id)
             )'''))
@@ -2330,30 +2323,11 @@ if __name__ == '__main__':
 
     port = int(os.environ.get('PORT', 5000))
 
-    # SSL — нужен Safari для доступа к камере/микрофону
-    import ssl as _ssl, os as _os
-    _cert = _os.path.join(BASE_DIR, 'cert.pem')
-    _key  = _os.path.join(BASE_DIR, 'key.pem')
-    if _os.path.exists(_cert) and _os.path.exists(_key):
-        _ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
-        _ssl_ctx.load_cert_chain(_cert, _key)
-        print(f'🔐  HTTPS enabled  →  https://0.0.0.0:{port}')
-        socketio.run(
-            app,
-            host    = '0.0.0.0',
-            port    = port,
-            debug   = False,
-            allow_unsafe_werkzeug = True,
-            use_reloader = False,
-            ssl_context = (_cert, _key),
-        )
-    else:
-        print(f'⚠️  No SSL certs found — running HTTP (mic/cam blocked on Safari)')
-        socketio.run(
-            app,
-            host    = '0.0.0.0',
-            port    = port,
-            debug   = os.environ.get('DEBUG', 'true').lower() == 'true',
-            allow_unsafe_werkzeug = True,
-            use_reloader = False,
-        )
+    socketio.run(
+        app,
+        host         = '0.0.0.0',
+        port         = port,
+        debug        = False,
+        allow_unsafe_werkzeug = True,
+        use_reloader = False,
+    )
