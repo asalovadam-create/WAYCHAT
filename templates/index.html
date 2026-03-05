@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <title>VartoChat</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/logo.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/static/logo.png">
+
+    <link rel="preconnect" href="https://cdn.tailwindcss.com">
+    <link rel="preconnect" href="https://cdn.socket.io">
+    <link rel="preconnect" href="https://unpkg.com">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="VartoChat">
+    <meta name="theme-color" content="#000000">
+
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <style>
+        /* Базовые стили для плавности и OLED-черного */
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+
+        body, html, #root {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            background: #000000;
+            color: white;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        /* Плавный вход в приложение */
+        #root {
+            animation: appFadeIn 0.4s ease-out;
+        }
+
+        @keyframes appFadeIn {
+            from { opacity: 0; transform: scale(0.98); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        /* Прячем скроллбары, но оставляем прокрутку */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-black">
+
+    <div id="user-data-bridge"
+         data-user='{{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar} | tojson | safe }}'
+         style="display: none;">
+    </div>
+
+    <script>
+        (function() {
+            try {
+                const bridge = document.getElementById('user-data-bridge');
+                const rawData = bridge.dataset.user;
+
+                // Парсим данные от сервера
+                window.currentUser = JSON.parse(rawData);
+
+                // Сразу сохраняем в локальный кеш, чтобы аватарка не моргала при перезаходе
+                if (window.currentUser && window.currentUser.id) {
+                    localStorage.setItem('varto_user_cache', JSON.stringify(window.currentUser));
+                }
+
+                console.log('✅ Данные профиля синхронизированы');
+            } catch (e) {
+                console.warn('⚠️ Ошибка сервера, достаем профиль из кеша...');
+                const cache = localStorage.getItem('varto_user_cache');
+                window.currentUser = cache ? JSON.parse(cache) : { id: 0, name: 'Гость', avatar: '/static/default_avatar.png' };
+            }
+        })();
+    </script>
+
+    <div id="root" class="h-full w-full"></div>
+
+    <script src="/static/js/main.js" defer></script>
+</body>
+</html>
