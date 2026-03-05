@@ -281,7 +281,7 @@ app = Flask(__name__,
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config.update(
-    SQLALCHEMY_DATABASE_URI        = f'sqlite:///{os.path.join(BASE_DIR, "instance", "data.db")}',
+    SQLALCHEMY_DATABASE_URI    = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
         'pool_pre_ping': True,
