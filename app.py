@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
@@ -69,10 +66,7 @@ MOMENTS_FOLDER  = os.path.join(UPLOAD_FOLDER, 'moments')
 GROUP_AVA_FOLDER = os.path.join(UPLOAD_FOLDER, 'groups')
 
 for _folder in [AVATARS_FOLDER, MESSAGES_FOLDER, MOMENTS_FOLDER, GROUP_AVA_FOLDER]:
-    try:
-        os.makedirs(_folder, exist_ok=True)
-    except Exception:
-        pass
+    os.makedirs(_folder, exist_ok=True)
 
 # ══════════════════════════════════════════════════════════
 #  TTL КЭШИ
@@ -281,15 +275,14 @@ app = Flask(__name__,
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config.update(
-    SQLALCHEMY_DATABASE_URI    = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
+    SQLALCHEMY_DATABASE_URI        = f'sqlite:///{os.path.join(BASE_DIR, "instance", "data.db")}',
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
+        'connect_args': {'check_same_thread': False, 'timeout': 30},
         'pool_pre_ping': True,
-        'pool_recycle':  300,
-        'pool_size':     5,
-        'max_overflow':  10,
+        'pool_recycle':  3600,
     },
-    SECRET_KEY               = os.environ.get('SECRET_KEY', 'fallback-change-me-in-render-env'),
+    SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
     SESSION_COOKIE_SAMESITE  = 'Lax',
     SESSION_COOKIE_SECURE    = False,
@@ -302,32 +295,6 @@ app.config.update(
 )
 
 CORS(app, supports_credentials=True, origins=['*'])
-
-def upload_to_cloudinary(file_obj, folder='waychat'):
-    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME')
-    api_key    = os.environ.get('CLOUDINARY_API_KEY')
-    api_secret = os.environ.get('CLOUDINARY_API_SECRET')
-    if not all([cloud_name, api_key, api_secret]):
-        return None
-    try:
-        import cloudinary
-        import cloudinary.uploader
-        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret)
-        result = cloudinary.uploader.upload(file_obj, folder=folder, resource_type='auto')
-        return result.get('secure_url')
-    except Exception as e:
-        app.logger.error(f'Cloudinary upload error: {e}')
-        return None
-
-
-
-@app.teardown_appcontext
-def shutdown_session(exception=None):
-    if exception:
-        db.session.rollback()
-    db.session.remove()
-
-
 db = SQLAlchemy(app)
 
 login_manager = LoginManager(app)
@@ -1051,10 +1018,6 @@ def get_user_profile(user_id):
 @app.route('/get_my_chats')
 @login_required
 def get_my_chats():
-    try:
-        db.session.rollback()
-    except Exception:
-        pass
     uid = current_user.id
     cached = _chat_cache.get(uid)
     if cached:
@@ -1251,8 +1214,9 @@ def get_messages(chat_id):
     before_id = request.args.get('before_id', None, type=int)
 
     # Помечаем прочитанными
-    db.session.execute(
-        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
+    try:
+        db.session.execute(
+        text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': current_user.id}
     )
     db.session.commit()
@@ -1653,15 +1617,10 @@ def upload_avatar():
                 pass
 
     filename = f'ava_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}'
-    file.seek(0)
-    cloud_url = upload_to_cloudinary(file, folder='waychat/avatars')
-    if cloud_url:
-        url = cloud_url
-    else:
-        filepath = os.path.join(AVATARS_FOLDER, filename)
-        file.seek(0)
-        file.save(filepath)
-        url = '/static/uploads/avatars/' + filename
+    filepath = os.path.join(AVATARS_FOLDER, filename)
+    file.save(filepath)
+    url = '/static/uploads/avatars/' + filename
+
     current_user.avatar = url
     db.session.commit()
     current_user.invalidate_cache()
@@ -1715,15 +1674,10 @@ def upload_media():
         ext = {'image': 'jpg', 'video': 'mp4', 'audio': 'ogg'}.get(file_type, 'bin')
 
     filename = f'msg_{current_user.id}_{uuid.uuid4().hex[:12]}.{ext}'
-    file.seek(0)
-    cloud_url = upload_to_cloudinary(file, folder='waychat/messages')
-    if cloud_url:
-        url = cloud_url
-    else:
-        filepath = os.path.join(MESSAGES_FOLDER, filename)
-        file.seek(0)
-        file.save(filepath)
-        url = '/static/uploads/messages/' + filename
+    filepath = os.path.join(MESSAGES_FOLDER, filename)
+    file.save(filepath)
+    url = '/static/uploads/messages/' + filename
+
     return jsonify({'success': True, 'url': url, 'type': file_type})
 
 
@@ -1869,15 +1823,9 @@ def create_moment():
         if file and file.filename:
             ext      = (file.filename.rsplit('.', 1)[-1] if '.' in file.filename else 'jpg').lower()
             filename = f'moment_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}'
-            file.seek(0)
-            cloud_url = upload_to_cloudinary(file, folder='waychat/moments')
-            if cloud_url:
-                media_url = cloud_url
-            else:
-                filepath = os.path.join(MOMENTS_FOLDER, filename)
-                file.seek(0)
-                file.save(filepath)
-                media_url = '/static/uploads/moments/' + filename
+            filepath = os.path.join(MOMENTS_FOLDER, filename)
+            file.save(filepath)
+            media_url = '/static/uploads/moments/' + filename
 
     text_content = request.form.get('text', '').strip()[:500]
     geo_name     = request.form.get('geo_name','').strip()[:200] or None
@@ -1955,7 +1903,7 @@ def on_enter_chat(data):
     join_room(f'chat_{chat_id}')
     # Помечаем прочитанными
     db.session.execute(
-        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
+        text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': current_user.id}
     )
     db.session.commit()
@@ -2055,7 +2003,7 @@ def handle_mark_read(data):
     if not chat_id:
         return
     result = db.session.execute(
-        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
+        text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': current_user.id}
     )
     db.session.commit()
@@ -2265,7 +2213,19 @@ def background_cleanup():
 
 
 def optimize_sqlite():
-    print('✅ PostgreSQL — оптимизация не нужна')
+    try:
+        with app.app_context():
+            db.session.execute(text('PRAGMA journal_mode=WAL'))
+            db.session.execute(text('PRAGMA synchronous=NORMAL'))
+            db.session.execute(text('PRAGMA cache_size=-32000'))
+            db.session.execute(text('PRAGMA temp_store=MEMORY'))
+            db.session.execute(text('PRAGMA mmap_size=268435456'))
+            db.session.execute(text('PRAGMA busy_timeout=30000'))
+            db.session.execute(text('PRAGMA foreign_keys=ON'))
+            db.session.commit()
+            print('✅ SQLite WAL + 32MB cache включён')
+    except Exception as e:
+        app.logger.warning(f'SQLite optimization: {e}')
 
 
 # ══════════════════════════════════════════════════════════
@@ -2276,10 +2236,10 @@ def run_migrations():
     try:
         with db.engine.connect() as conn:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS moment_view (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 moment_id INTEGER NOT NULL REFERENCES moment(id),
                 viewer_id INTEGER NOT NULL REFERENCES user(id),
-                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(moment_id, viewer_id)
             )'''))
             conn.commit()
@@ -2294,6 +2254,60 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
+    import sqlite3
+
+    instance_dir = os.path.join(BASE_DIR, 'instance')
+    os.makedirs(instance_dir, exist_ok=True)
+
+    candidates = [
+        os.path.join(instance_dir, 'data.db'),
+        os.path.join(BASE_DIR, 'data.db'),
+    ]
+    db_path = next((p for p in candidates if os.path.exists(p)), None)
+    if not db_path:
+        return
+
+    conn   = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('PRAGMA journal_mode=WAL')
+
+    def get_columns(table):
+        try:
+            cursor.execute(f'PRAGMA table_info({table})')
+            return {row[1] for row in cursor.fetchall()}
+        except Exception:
+            return set()
+
+    migrations = {
+        'user':    [
+            ('bio',        "ALTER TABLE user ADD COLUMN bio TEXT DEFAULT ''"),
+            ('is_blocked', 'ALTER TABLE user ADD COLUMN is_blocked BOOLEAN DEFAULT 0'),
+            ('created_at', 'ALTER TABLE user ADD COLUMN created_at DATETIME'),
+        ],
+        'chat':    [
+            ('created_at', 'ALTER TABLE chat ADD COLUMN created_at DATETIME'),
+        ],
+        'message': [
+            ('is_deleted',  'ALTER TABLE message ADD COLUMN is_deleted BOOLEAN DEFAULT 0'),
+            ('sender_name', "ALTER TABLE message ADD COLUMN sender_name VARCHAR(120) DEFAULT ''"),
+        ],
+    }
+
+    for table, cols in migrations.items():
+        existing = get_columns(table)
+        if not existing:
+            continue
+        for col, sql in cols:
+            if col not in existing:
+                print(f'  🔧 Миграция: {table}.{col}')
+                try:
+                    cursor.execute(sql)
+                    conn.commit()
+                    print(f'  ✅ {table}.{col} добавлена')
+                except Exception as ex:
+                    print(f'  ⚠️  {table}.{col}: {ex}')
+
+    conn.close()
 
 
 # ══════════════════════════════════════════════════════════
@@ -2332,10 +2346,6 @@ def too_large(e):
 @app.errorhandler(500)
 def server_error(e):
     app.logger.error(f'500: {e}')
-    try:
-        db.session.rollback()
-    except Exception:
-        pass
     return jsonify({'error': 'Внутренняя ошибка'}), 500
 
 
@@ -2373,11 +2383,30 @@ if __name__ == '__main__':
 
     port = int(os.environ.get('PORT', 5000))
 
-    socketio.run(
-        app,
-        host         = '0.0.0.0',
-        port         = port,
-        debug        = False,
-        allow_unsafe_werkzeug = True,
-        use_reloader = False,
-    )
+    # SSL — нужен Safari для доступа к камере/микрофону
+    import ssl as _ssl, os as _os
+    _cert = _os.path.join(BASE_DIR, 'cert.pem')
+    _key  = _os.path.join(BASE_DIR, 'key.pem')
+    if _os.path.exists(_cert) and _os.path.exists(_key):
+        _ssl_ctx = _ssl.SSLContext(_ssl.PROTOCOL_TLS_SERVER)
+        _ssl_ctx.load_cert_chain(_cert, _key)
+        print(f'🔐  HTTPS enabled  →  https://0.0.0.0:{port}')
+        socketio.run(
+            app,
+            host    = '0.0.0.0',
+            port    = port,
+            debug   = False,
+            allow_unsafe_werkzeug = True,
+            use_reloader = False,
+            ssl_context = (_cert, _key),
+        )
+    else:
+        print(f'⚠️  No SSL certs found — running HTTP (mic/cam blocked on Safari)')
+        socketio.run(
+            app,
+            host    = '0.0.0.0',
+            port    = port,
+            debug   = os.environ.get('DEBUG', 'true').lower() == 'true',
+            allow_unsafe_werkzeug = True,
+            use_reloader = False,
+        )
