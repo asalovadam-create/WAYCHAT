@@ -1975,6 +1975,9 @@ function renderNewMessage(msg, animate = true) {
     if (!msg._optimistic) {
         const cacheKey = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
         if (messagesByChatCache[cacheKey]) {
+            if (!Array.isArray(messagesByChatCache[cacheKey].messages)) {
+                messagesByChatCache[cacheKey].messages = [];
+            }
             messagesByChatCache[cacheKey].messages.push(msg);
         }
     }
