@@ -1055,7 +1055,7 @@ def get_user_profile(user_id):
 @login_required
 def get_my_chats():
     try:
-        db.session.rollback()  # сброс любой зависшей транзакции
+        db.session.rollback()
     except Exception:
         pass
     uid = current_user.id
@@ -1246,12 +1246,16 @@ def get_group_chat_id(group_id):
 @app.route('/get_messages/<int:chat_id>')
 @login_required
 def get_messages(chat_id):
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
     limit     = min(request.args.get('limit', 35, type=int), 100)
     before_id = request.args.get('before_id', None, type=int)
 
     # Помечаем прочитанными
     db.session.execute(
-        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=0 AND sender_id!=:uid AND is_deleted=0'),
+        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': current_user.id}
     )
     db.session.commit()
@@ -1652,9 +1656,15 @@ def upload_avatar():
                 pass
 
     filename = f'ava_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}'
-    filepath = os.path.join(AVATARS_FOLDER, filename)
-    file.save(filepath)
-    url = '/static/uploads/avatars/' + filename
+    file.seek(0)
+    cloud_url = upload_to_cloudinary(file, folder='waychat/avatars')
+    if cloud_url:
+        url = cloud_url
+    else:
+        filepath = os.path.join(AVATARS_FOLDER, filename)
+        file.seek(0)
+        file.save(filepath)
+        url = '/static/uploads/avatars/' + filename
 
     current_user.avatar = url
     db.session.commit()
@@ -1949,7 +1959,7 @@ def on_enter_chat(data):
     join_room(f'chat_{chat_id}')
     # Помечаем прочитанными
     db.session.execute(
-        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=0 AND sender_id!=:uid AND is_deleted=0'),
+        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': current_user.id}
     )
     db.session.commit()
@@ -2049,7 +2059,7 @@ def handle_mark_read(data):
     if not chat_id:
         return
     result = db.session.execute(
-        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=0 AND sender_id!=:uid AND is_deleted=0'),
+        text('UPDATE message SET is_read=1 WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': current_user.id}
     )
     db.session.commit()
@@ -2270,10 +2280,10 @@ def run_migrations():
     try:
         with db.engine.connect() as conn:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS moment_view (
-                id SERIAL PRIMARY KEY,
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 moment_id INTEGER NOT NULL REFERENCES moment(id),
                 viewer_id INTEGER NOT NULL REFERENCES user(id),
-                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(moment_id, viewer_id)
             )'''))
             conn.commit()
