@@ -281,10 +281,7 @@ app = Flask(__name__,
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
 app.config.update(
-    SQLALCHEMY_DATABASE_URI        = os.environ.get(
-        'DATABASE_URL',
-        'postgresql+psycopg://neondb_owner:npg_nEtRAGdzwU05@ep-jolly-rain-aimw5fdo-pooler.c-4.us-east-1.aws.neon.tech/neondb?sslmode=require'
-    ).replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
+    SQLALCHEMY_DATABASE_URI        = f'sqlite:///{os.path.join(BASE_DIR, "instance", "data.db")}',
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
         'pool_pre_ping': True,
@@ -292,7 +289,7 @@ app.config.update(
         'pool_size':     5,
         'max_overflow':  10,
     },
-    SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
+    SECRET_KEY               = os.environ.get('SECRET_KEY', 'fallback-change-me-in-render-env'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
     SESSION_COOKIE_SAMESITE  = 'Lax',
     SESSION_COOKIE_SECURE    = False,
@@ -1665,7 +1662,6 @@ def upload_avatar():
         file.seek(0)
         file.save(filepath)
         url = '/static/uploads/avatars/' + filename
-
     current_user.avatar = url
     db.session.commit()
     current_user.invalidate_cache()
@@ -2280,10 +2276,10 @@ def run_migrations():
     try:
         with db.engine.connect() as conn:
             conn.execute(text('''CREATE TABLE IF NOT EXISTS moment_view (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 moment_id INTEGER NOT NULL REFERENCES moment(id),
                 viewer_id INTEGER NOT NULL REFERENCES user(id),
-                viewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(moment_id, viewer_id)
             )'''))
             conn.commit()
