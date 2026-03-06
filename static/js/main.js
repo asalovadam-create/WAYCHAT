@@ -1136,9 +1136,16 @@ async function loadChats() {
         recentChats = chats;
         renderChatList(chats);
         updatePageTitle();
+        // Prefetch аватарки первых 5 чатов в фоне
+        chats.slice(0, 5).forEach(c => {
+            const av = c.partner_avatar;
+            const id = c.partner_id;
+            if (av && !av.includes('default') && !av.startsWith('emoji:')) {
+                AvatarCache.getOrFetch(av, id).then(src => { chatPartnerAvatarSrc[id] = src; });
+            }
+        });
     } catch(e) { console.error('loadChats:', e); }
 }
-
 // ════════════════════════════════════
 // Контекстное меню чата (long-press)
 // ════════════════════════════════════
