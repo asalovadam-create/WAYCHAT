@@ -777,7 +777,8 @@ body {
 .section-header-row { display:flex;align-items:center;justify-content:center;position:relative;padding:0 20px;margin-bottom:4px; }
 .section-title { font-size:28px;font-weight:800;letter-spacing:-0.5px;text-align:center; }
 
-.conn-status { display:none !important; }
+.conn-status { position:fixed;top:0;left:0;right:0;height:3px;background:var(--accent);z-index:99998;transition:opacity 0.5s; }
+.conn-status.offline { background:#ef4444; }
 
 /* ГРУППА БЕЙДЖ */
 .group-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:2px 8px;font-size:11px;font-weight:600;color:#60a5fa; }
@@ -1920,7 +1921,12 @@ function buildMessageRow(msg, animate = true) {
         const text = msg.content || msg.text || '';
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const linkedColor = isMe ? 'rgba(255,255,255,0.85)' : 'var(--accent)';
-        const linked = safe.replace(/(https?:\/\/[^\s<]+)/g, `<a href="$1" target="_blank" rel="noopener" style="color:${linkedColor};text-decoration:underline">$1</a>`);
+        const linked = safe.replace(/(https?:\/\/[^\s<"']+)/g, (match) => {
+            // Санируем URL — убираем javascript: и data: схемы (на всякий случай после escaping)
+            const href = match.replace(/['"]/g, '');
+            if (!/^https?:\/\//i.test(href)) return escHtml(match);
+            return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:${linkedColor};text-decoration:underline">${href}</a>`;
+        });
         contentHtml = `<div style="white-space:pre-wrap;word-break:break-word">${linked}</div>`;
     }
 
@@ -2694,7 +2700,6 @@ function _doStartVideoCircleUI() {
 
 function _cancelVideoCircle(overlay) {
     clearInterval(_videoTimer); _videoTimer=null;
-    window._vcLocked = false;
     if(_videoRecorder && _videoRecorder.state!=='inactive') {
         _videoRecorder.ondataavailable=null; _videoRecorder.onstop=null;
         _videoRecorder.stop();
@@ -2707,7 +2712,6 @@ function _cancelVideoCircle(overlay) {
 function _stopVideoCircle() {
     if(!_videoRecorder || _videoRecorder.state==='inactive') return;
     clearInterval(_videoTimer); _videoTimer=null;
-    window._vcLocked = false;
     _videoRecorder.stop();
     _videoRecStream?.getTracks().forEach(t=>t.stop());
     document.getElementById('video-circle-ui')?.remove();
@@ -2723,21 +2727,16 @@ async function _sendVideoCircle(mime) {
     showToast('Отправка видео-кружка...','info');
     const fd = new FormData();
     fd.append('file', blob, 'video_circle.'+ext);
+    fd.append('video_circle','1'); // флаг для рендера кружка
     try {
         const r = await apiFetch('/upload_media',{method:'POST',body:fd});
-        if(!r) throw new Error('no response');
         const d = await r.json();
         if(d.url) {
-            // Отправляем через socket.emit как обычное сообщение
-            socket.emit('send_message', {
-                chat_id:    currentChatId,
-                type_msg:   'video_circle',
-                file_url:   d.url,
-                sender_id:  currentUser.id,
+            await apiFetch('/send_message',{
+                method:'POST', headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({chat_id:currentChatId, media_url:d.url, media_type:'video_circle', text:''})
             });
             showToast('Видео-кружок отправлен 🎥','success');
-        } else {
-            showToast('Ошибка загрузки','error');
         }
     } catch(e) { showToast('Ошибка отправки','error'); }
 }
@@ -2966,7 +2965,6 @@ function setupVoiceRecording() {
                     if (_videoRecStream) { stream.getTracks().forEach(t => t.stop()); return; }
                     _videoRecStream = stream;
                     _sessionPerms['camera'] = 'granted';
-                    window._vcLocked = true; // авто-фиксация — отпуск пальца не останавливает
                     _doStartVideoCircleUI();
                 }).catch(e => {
                     _videoRecStream = null;
@@ -3014,10 +3012,7 @@ function setupVoiceRecording() {
 
         if (_holdDone) {
             if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') {
-                // Если зафиксировано — не останавливаем при отпускании пальца
-                if (!window._vcLocked) _stopVideoCircle();
-            }
+            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
         }
         _holdDone = false;
     }
