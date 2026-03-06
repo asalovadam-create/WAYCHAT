@@ -733,6 +733,10 @@ body {
 .settings-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0; }
 .img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:none; }
 .img-bubble img { display:block;width:100%; }
+/* Bubble без отступов и фона когда внутри медиа */
+.bubble.media-bubble { padding:3px !important; background:transparent !important; border:none !important; box-shadow:none !important; }
+.bubble.media-bubble .img-bubble { max-width:280px; border-radius:16px; overflow:hidden; }
+.bubble.media-bubble .msg-time { padding:4px 6px 2px; font-size:11px; color:var(--text-2); }
 
 /* МОДАЛЬНЫЕ */
 .modal-overlay { position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end;animation:fadeIn 0.2s ease; }
@@ -1910,11 +1914,12 @@ function buildMessageRow(msg, animate = true) {
         return circRow;
     }
 
+    const isMediaMsg = (type === 'image' || type === 'video');
     let contentHtml = '';
     if (type === 'image') {
         contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
     } else if (type === 'video') {
-        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline preload="metadata" style="max-width:260px;width:100%;display:block;background:#111"></video>`;
+        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline preload="metadata" style="max-width:280px;width:100%;display:block;background:#111;border-radius:16px"></video>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
@@ -1961,7 +1966,7 @@ function buildMessageRow(msg, animate = true) {
     row.innerHTML = `
         ${avatarHtml}
         <div style="flex:1;display:flex;flex-direction:column;${isMe?'align-items:flex-end':'align-items:flex-start'}">
-            <div class="bubble">
+            <div class="bubble${isMediaMsg ? ' media-bubble' : ''}">
                 ${senderNameHtml}
                 ${contentHtml}
                 <div class="msg-time">
@@ -4182,14 +4187,7 @@ async function pickMedia(context) {
             if (!r) return;
             const d = await r.json();
             if (currentChatId) {
-                // Определяем тип: сервер возвращает d.type, но если нет — смотрим MIME и URL
-                let msgType = d.type;
-                if (!msgType || msgType === 'file') {
-                    if (file.type.startsWith('video/') || file.name.match(/\.(mp4|mov|webm|m4v|avi)$/i)) msgType = 'video';
-                    else if (file.type.startsWith('image/')) msgType = 'image';
-                    else if (file.type.startsWith('audio/')) msgType = 'audio';
-                }
-                socket.emit('send_message', {chat_id:currentChatId, type_msg: msgType, file_url:d.url, sender_id:currentUser.id});
+                socket.emit('send_message', {chat_id:currentChatId, type_msg: d.type||(file.type.startsWith('video')?'video':'image'), file_url:d.url, sender_id:currentUser.id});
                 showToast('Отправлено','success');
             }
         } catch(e){ showToast('Ошибка загрузки','error'); }
@@ -4344,8 +4342,7 @@ async function _requestMeGeo(btn, geoTag) {
 async function _publishMomentEditor(ov, file, url) {
     const sBtn = document.getElementById('me-share');
     if(sBtn){ sBtn.disabled=true; sBtn.textContent='Публикую...'; }
-    const capInputEl = document.getElementById('me-cap');
-    const caption = (capInputEl?.value||'').trim();
+    const caption = (document.getElementById('me-cap')?.value||'').trim();
     showToast('Загрузка...','info',30000);
     try {
         const fd = new FormData();
@@ -4446,8 +4443,7 @@ function renderMomentsList(container, moments) {
         // Инфо
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0';
-        const isVideo = first.media_url && (first.media_url.match(/\.(mp4|mov|webm|avi|m4v)/i) || first.media_url.includes('/video/upload/'));
-        const previewText = first.text || (first.media_url ? (isVideo ? '🎥 Видео' : '📷 Фото') : '');
+        const previewText = first.text || (first.media_url ? (first.media_url.match(/\.(mp4|mov|webm)/i) ? '🎥 Видео' : '📷 Фото') : '');
         info.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between">'
             + '<div style="font-weight:700;font-size:15px">' + first.user_name + (isMe?' (Вы)':'') + '</div>'
             + '<div style="display:flex;align-items:center;gap:6px">'
@@ -4490,8 +4486,7 @@ function _runMomentsViewer(list, startIdx) {
         const bg = document.createElement('div');
         bg.style.cssText = 'position:absolute;inset:0';
         if (m.media_url) {
-            const isCloudinaryVideo = m.media_url.includes('/video/upload/') || m.media_url.includes('resource_type=video');
-            if (m.media_url.match(/\.(mp4|mov|webm|avi|m4v)/i) || isCloudinaryVideo) {
+            if (m.media_url.match(/\.(mp4|mov|webm)/i)) {
                 const vid = document.createElement('video');
                 vid.src = m.media_url; vid.autoplay=true; vid.loop=false; vid.playsInline=true; vid.muted=false;
                 vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
