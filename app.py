@@ -140,14 +140,14 @@ app.config.update(
         'max_overflow':  10,
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
-    MAX_CONTENT_LENGTH       = 30 * 1024 * 1024,
+    MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
     SESSION_COOKIE_SAMESITE  = 'Lax',
-    SESSION_COOKIE_SECURE    = True,
+    SESSION_COOKIE_SECURE    = False,
     SESSION_COOKIE_HTTPONLY  = True,
     REMEMBER_COOKIE_SAMESITE = 'Lax',
-    REMEMBER_COOKIE_SECURE   = True,
+    REMEMBER_COOKIE_SECURE   = False,
     REMEMBER_COOKIE_DURATION = timedelta(days=30),
-    SESSION_PROTECTION       = 'strong',
+    SESSION_PROTECTION       = None,
     JSON_SORT_KEYS           = False,
 )
 
@@ -520,21 +520,6 @@ class PushSubscription(db.Model):
     __table_args__ = (db.UniqueConstraint('user_id', 'endpoint', name='uq_push_sub'),)
 
 
-class PendingCode(db.Model):
-    """Коды верификации в БД — не теряются при рестарте сервера."""
-    __tablename__ = 'pending_code'
-    id         = db.Column(db.Integer,     primary_key=True)
-    phone      = db.Column(db.String(20),  unique=True, nullable=False, index=True)
-    name       = db.Column(db.String(120), default='')
-    username   = db.Column(db.String(80),  default='')
-    code_hash  = db.Column(db.String(256), nullable=False)   # храним хеш, не plaintext
-    attempts   = db.Column(db.Integer,     default=0)
-    locked_until = db.Column(db.Float,     default=0.0)
-    expires_at = db.Column(db.Float,       nullable=False)
-    is_login   = db.Column(db.Boolean,     default=False)
-    created_at = db.Column(db.DateTime,    default=datetime.utcnow)
-
-
 @login_manager.user_loader
 def load_user(uid):
     """Всегда загружаем свежий объект из БД для flask-login"""
@@ -696,31 +681,6 @@ def register():
 
 _pending_registrations = {}
 
-# Брутфорс-защита: {phone: {'attempts': N, 'locked_until': ts}}
-_code_attempts = {}
-
-def _check_code_attempts(phone):
-    """Возвращает (allowed: bool, seconds_left: int)"""
-    now = time.time()
-    rec = _code_attempts.get(phone)
-    if not rec:
-        return True, 0
-    if rec.get('locked_until', 0) > now:
-        return False, int(rec['locked_until'] - now)
-    return True, 0
-
-def _register_failed_attempt(phone):
-    """Фиксирует неудачную попытку. После 5 — блокируем на 10 минут."""
-    now = time.time()
-    rec = _code_attempts.setdefault(phone, {'attempts': 0, 'locked_until': 0})
-    rec['attempts'] += 1
-    if rec['attempts'] >= 5:
-        rec['locked_until'] = now + 600  # 10 минут
-        rec['attempts']     = 0
-
-def _reset_attempts(phone):
-    _code_attempts.pop(phone, None)
-
 
 def _gen_code():
     return str(random.randint(100000, 999999))
@@ -765,34 +725,22 @@ def send_code():
             if User.query.filter_by(username=username).first():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
 
-        code      = str(random.randint(100000, 999999))
-        code_hash = generate_password_hash(code)
-        expires   = time.time() + 600
+        code    = str(random.randint(100000, 999999))
+        expires = time.time() + 600
 
-        # Сохраняем в БД (перезаписываем если уже есть)
-        rec = PendingCode.query.filter_by(phone=phone).first()
-        if rec:
-            rec.code_hash    = code_hash
-            rec.name         = name or (existing.name     if existing else '')
-            rec.username     = username or (existing.username if existing else '')
-            rec.expires_at   = expires
-            rec.attempts     = 0
-            rec.locked_until = 0.0
-            rec.is_login     = existing is not None
-        else:
-            rec = PendingCode(
-                phone        = phone,
-                name         = name or (existing.name     if existing else ''),
-                username     = username or (existing.username if existing else ''),
-                code_hash    = code_hash,
-                expires_at   = expires,
-                is_login     = existing is not None,
-            )
-            db.session.add(rec)
-        db.session.commit()
+        _pending_registrations[phone] = {
+            'name':     name or (existing.name if existing else ''),
+            'username': username or (existing.username if existing else ''),
+            'code':     code,
+            'expires':  expires,
+            'is_login': existing is not None,
+        }
 
-        print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
-        return jsonify({'success': True, 'message': 'Код отправлен'})
+        print(f'\n{"="*50}')
+        print(f'📱 КОД для {phone}: {code}')
+        print(f'{"="*50}\n')
+
+        return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
 
     except Exception as e:
         app.logger.error(f'send_code: {e}')
@@ -809,48 +757,25 @@ def verify_code():
         if not phone or not code:
             return jsonify({'success': False, 'error': 'Заполните все поля'}), 400
 
-        rec = PendingCode.query.filter_by(phone=phone).first()
-        if not rec:
+        pending = _pending_registrations.get(phone)
+        if not pending:
             return jsonify({'success': False, 'error': 'Сначала запросите код'}), 400
-
-        now = time.time()
-
-        # Проверка блокировки
-        if rec.locked_until > now:
-            secs = int(rec.locked_until - now)
-            return jsonify({'success': False, 'error': f'Слишком много попыток. Подождите {secs} сек.'}), 429
-
-        # Проверка срока
-        if now > rec.expires_at:
-            db.session.delete(rec); db.session.commit()
+        if time.time() > pending['expires']:
+            _pending_registrations.pop(phone, None)
             return jsonify({'success': False, 'error': 'Код истёк, запросите новый'}), 400
+        if pending['code'] != code:
+            return jsonify({'success': False, 'error': 'Неверный код'}), 400
 
-        # Проверка кода через хеш
-        if not check_password_hash(rec.code_hash, code):
-            rec.attempts += 1
-            if rec.attempts >= 5:
-                rec.locked_until = now + 600
-                rec.attempts     = 0
-                db.session.commit()
-                return jsonify({'success': False, 'error': 'Заблокировано на 10 минут за множество попыток'}), 429
-            db.session.commit()
-            left = 5 - rec.attempts
-            return jsonify({'success': False, 'error': f'Неверный код. Осталось попыток: {left}'}), 400
-
-        # Код верный
-        pending_name     = rec.name
-        pending_username = rec.username
-        db.session.delete(rec)
-        db.session.commit()
+        _pending_registrations.pop(phone, None)
 
         u = User.query.filter_by(phone=phone).first()
         if not u:
-            if User.query.filter_by(username=pending_username).first():
+            if User.query.filter_by(username=pending['username']).first():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
             u = User(
                 phone         = phone,
-                name          = pending_name[:120],
-                username      = pending_username[:80],
+                name          = pending['name'][:120],
+                username      = pending['username'][:80],
                 password_hash = generate_password_hash('__passwordless__'),
             )
             db.session.add(u)
@@ -911,22 +836,13 @@ def register_step1():
         if errors:
             return jsonify({'success': False, 'error': errors[0]}), 400
 
-        code      = _gen_code()
-        code_hash = generate_password_hash(code)
-        expires   = time.time() + 600
-
-        rec = PendingCode.query.filter_by(phone=phone).first()
-        if rec:
-            rec.code_hash = code_hash; rec.name = name; rec.username = username
-            rec.expires_at = expires; rec.attempts = 0; rec.locked_until = 0.0
-        else:
-            rec = PendingCode(phone=phone, name=name, username=username,
-                              code_hash=code_hash, expires_at=expires)
-            db.session.add(rec)
-        db.session.commit()
-
+        code    = _gen_code()
+        expires = time.time() + 600
+        _pending_registrations[phone] = {
+            'name': name, 'username': username, 'code': code, 'expires': expires,
+        }
         print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
-        return jsonify({'success': True, 'message': 'Код отправлен'})
+        return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
 
     except Exception as e:
         app.logger.error(f'register_step1 error: {e}')
@@ -944,35 +860,14 @@ def register_step2_page():
         phone = (data.get('phone', '') or '').strip()
         code  = (data.get('code',  '') or '').strip()
 
-        rec = PendingCode.query.filter_by(phone=phone).first()
-        if not rec:
+        pending = _pending_registrations.get(phone)
+        if not pending:
             return jsonify({'success': False, 'error': 'Сначала введите данные на шаге 1'}), 400
-
-        now = time.time()
-        if rec.locked_until > now:
-            secs = int(rec.locked_until - now)
-            return jsonify({'success': False, 'error': f'Заблокировано. Подождите {secs} сек.'}), 429
-        if now > rec.expires_at:
-            db.session.delete(rec); db.session.commit()
+        if time.time() > pending['expires']:
+            _pending_registrations.pop(phone, None)
             return jsonify({'success': False, 'error': 'Код истёк, попробуйте снова'}), 400
-        if not check_password_hash(rec.code_hash, code):
-            rec.attempts += 1
-            if rec.attempts >= 5:
-                rec.locked_until = now + 600; rec.attempts = 0
-                db.session.commit()
-                return jsonify({'success': False, 'error': 'Заблокировано на 10 минут'}), 429
-            db.session.commit()
-            return jsonify({'success': False, 'error': f'Неверный код. Осталось: {5 - rec.attempts}'}), 400
-
-        pending_name     = rec.name
-        pending_username = rec.username
-        db.session.delete(rec)
-        db.session.commit()
-
-        if User.query.filter_by(phone=phone).first():
-            return jsonify({'success': False, 'error': 'Номер уже зарегистрирован'}), 400
-        if User.query.filter_by(username=pending_username).first():
-            return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
+        if pending['code'] != code:
+            return jsonify({'success': False, 'error': 'Неверный код'}), 400
         if User.query.filter_by(phone=phone).first():
             return jsonify({'success': False, 'error': 'Номер уже зарегистрирован'}), 400
         if User.query.filter_by(username=pending['username']).first():
@@ -980,8 +875,8 @@ def register_step2_page():
 
         u = User(
             phone         = phone,
-            name          = pending_name[:120],
-            username      = pending_username[:80],
+            name          = pending['name'][:120],
+            username      = pending['username'][:80],
             password_hash = generate_password_hash('__passwordless__'),
         )
         db.session.add(u)
@@ -1344,7 +1239,7 @@ def get_messages(chat_id):
         db.session.rollback()
     except Exception:
         pass
-    limit     = min(request.args.get('limit', 35, type=int), 100)
+    limit     = min(request.args.get('limit', 25, type=int), 50)
     before_id = request.args.get('before_id', None, type=int)
     uid       = current_user.id
 
@@ -1366,7 +1261,11 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in reversed(msgs)])
+
+    resp = jsonify([m.to_dict() for m in reversed(msgs)])
+    # Короткий кэш — браузер не будет перегружать при быстрой навигации
+    resp.headers['Cache-Control'] = 'private, max-age=5'
+    return resp
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -1815,13 +1714,25 @@ def block_user(user_id):
 def get_moments():
     cached = _moments_cache.get('all')
     if cached:
-        return jsonify(cached)
+        resp = jsonify(cached)
+        resp.headers['Cache-Control'] = 'private, max-age=20'
+        return resp
 
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
+
+    # Считаем view_count одним запросом вместо N запросов
+    moment_ids = [m.Moment.id for m in moments]
+    view_counts = {}
+    if moment_ids:
+        rows = db.session.execute(
+            text('SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id IN :ids GROUP BY moment_id'),
+            {'ids': tuple(moment_ids) if len(moment_ids) > 1 else (moment_ids[0], moment_ids[0])}
+        ).fetchall()
+        view_counts = {r[0]: r[1] for r in rows}
 
     data = [{
         'id':            m.Moment.id,
@@ -1833,12 +1744,14 @@ def get_moments():
         'geo_name':      m.Moment.geo_name or '',
         'timestamp':     to_moscow_str(m.Moment.timestamp),
         'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
+        'view_count':    view_counts.get(m.Moment.id, 0),
         'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
     _moments_cache.set('all', data)
-    return jsonify(data)
+    resp = jsonify(data)
+    resp.headers['Cache-Control'] = 'private, max-age=20'
+    return resp
 
 
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
@@ -2033,20 +1946,6 @@ def on_leave_chat(data):
         leave_room(f'chat_{data["chat_id"]}')
 
 
-# Rate limit для Socket.IO событий: {uid: [timestamps]}
-_socket_rate = defaultdict(list)
-
-def _socket_rate_limit(uid, max_calls=30, window_sec=10):
-    """Макс 30 сообщений за 10 сек на пользователя."""
-    now   = time.monotonic()
-    calls = _socket_rate[uid]
-    calls[:] = [t for t in calls if now - t < window_sec]
-    if len(calls) >= max_calls:
-        return False
-    calls.append(now)
-    return True
-
-
 @socketio.on('send_message')
 def handle_msg(data):
     if not current_user.is_authenticated:
@@ -2059,11 +1958,6 @@ def handle_msg(data):
         uid   = current_user.id
         uname = current_user.name
     except Exception:
-        return
-
-    # Rate limit — макс 30 сообщений за 10 сек
-    if not _socket_rate_limit(uid):
-        emit('error', {'message': 'Слишком много сообщений, подождите'})
         return
 
     msg_type = data.get('type_msg') or data.get('type', 'text')
@@ -2367,18 +2261,6 @@ def background_cleanup():
                     _user_dict_cache.delete(u.id)
                 if stale:
                     db.session.commit()
-
-                # Чистим просроченные коды верификации
-                try:
-                    expired_codes = PendingCode.query.filter(
-                        PendingCode.expires_at < time.time()
-                    ).all()
-                    for ec in expired_codes:
-                        db.session.delete(ec)
-                    if expired_codes:
-                        db.session.commit()
-                except Exception:
-                    pass
         except Exception as e:
             app.logger.error(f'Cleanup error: {e}')
 
@@ -2400,29 +2282,21 @@ def run_migrations():
         app.logger.warning(f'moment_view migration: {e}')
     try:
         with db.engine.connect() as conn:
-            conn.execute(text('''CREATE TABLE IF NOT EXISTS pending_code (
-                id SERIAL PRIMARY KEY,
-                phone VARCHAR(20) UNIQUE NOT NULL,
-                name VARCHAR(120) DEFAULT '',
-                username VARCHAR(80) DEFAULT '',
-                code_hash VARCHAR(256) NOT NULL,
-                attempts INTEGER DEFAULT 0,
-                locked_until FLOAT DEFAULT 0.0,
-                expires_at FLOAT NOT NULL,
-                is_login BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT NOW()
-            )'''))
-            conn.commit()
-    except Exception as e:
-        app.logger.warning(f'pending_code migration: {e}')
-    try:
-        with db.engine.connect() as conn:
             conn.execute(text(
                 'UPDATE "user" SET password_hash=:ph WHERE password_hash IS NULL OR password_hash=\'\''
             ), {'ph': generate_password_hash('__passwordless__')})
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
+    # Индексы для быстрой пагинации сообщений
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_msg_chat_id_id ON message(chat_id, id DESC)'))
+            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_msg_chat_del ON message(chat_id, is_deleted, id DESC)'))
+            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp)'))
+            conn.commit()
+    except Exception as e:
+        app.logger.warning(f'index migration: {e}')
 
 # ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
