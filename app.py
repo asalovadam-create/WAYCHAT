@@ -304,24 +304,29 @@ app.config.update(
 CORS(app, supports_credentials=True, origins=['*'])
 
 def upload_to_cloudinary(file_obj, folder='waychat'):
-    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
-    api_key    = os.environ.get('CLOUDINARY_API_KEY', '')
-    api_secret = os.environ.get('CLOUDINARY_API_SECRET', '')
-    app.logger.error(f"DEBUG: key={api_key} secret={api_secret[:10]}...")
-    if not all([cloud_name, api_key, api_secret]):
-        app.logger.error('Cloudinary env vars missing')
-        return None
     try:
         import cloudinary
         import cloudinary.uploader
+        
+        cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
+        api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
+        api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
+        
+        if not all([cloud_name, api_key, api_secret]):
+            app.logger.error('Cloudinary env vars missing')
+            return None
+
         cloudinary.config(
             cloud_name = cloud_name,
             api_key    = api_key,
             api_secret = api_secret,
-            secure     = True
+            secure     = True,
+            signature_algorithm = 'sha256'
         )
+        
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
+            
         result = cloudinary.uploader.upload(
             file_obj,
             folder        = folder,
@@ -331,32 +336,6 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
     except Exception as e:
         app.logger.error(f'Cloudinary upload error: {e}')
         return None
-
-
-@app.teardown_appcontext
-def shutdown_session(exception=None):
-    if exception:
-        db.session.rollback()
-    db.session.remove()
-
-
-db = SQLAlchemy(app)
-
-login_manager = LoginManager(app)
-login_manager.login_view = 'login'
-
-socketio = SocketIO(
-    app,
-    async_mode          = 'eventlet',
-    cors_allowed_origins = '*',
-    manage_session      = True,
-    path                = '/socket.io',
-    ping_timeout        = 20,
-    ping_interval       = 10,
-    max_http_buffer_size = 10 * 1024 * 1024,
-    logger              = False,
-    engineio_logger     = False,
-)
 
 # ══════════════════════════════════════════════════════════
 #  МОДЕЛИ
