@@ -305,14 +305,6 @@ function initSocket() {
     socket.on('avatar_updated', (d) => {
         invalidateAvatarCache(d.user_id, d.avatar);
         updateAvatarInDOM(d.user_id, d.avatar);
-        // Обновляем свой аватар сразу если это я
-        if (currentUser && d.user_id === currentUser.id) {
-            currentUser.avatar = d.avatar;
-            const profileAva = document.getElementById('profile-avatar-img');
-            if (profileAva) profileAva.src = d.avatar;
-            const navAva = document.querySelector('.nav-avatar');
-            if (navAva) navAva.src = d.avatar;
-        }
     });
 
     socket.on('message_deleted', (d) => {
@@ -369,16 +361,46 @@ function initSocket() {
 // Заранее греем поток микрофона — вызывается при первом touch на экране
 // Это единственный способ на Safari: запросить внутри user gesture
 let _micPreWarmed = false;
-function _preWarmMic() {
-    if (_micPreWarmed || _globalMicStream) return;
-    if (!navigator.mediaDevices?.getUserMedia) return; // HTTP — пропускаем
-    _micPreWarmed = true;
-    navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(stream => {
-            _globalMicStream = stream;
-            _sessionPerms['microphone'] = 'granted';
-        })
-        .catch(() => {});
+
+async function _preWarmMic() {
+    // если уже получили поток — выходим
+    if (_micPreWarmed && _globalMicStream) return;
+
+    // Safari требует secure context
+    if (!window.isSecureContext) {
+        alert("Сайт не HTTPS (нет secure context)");
+        return;
+    }
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        alert("getUserMedia не поддерживается");
+        return;
+    }
+
+    try {
+        _micPreWarmed = true;
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true
+            },
+            video: false
+        });
+
+        _globalMicStream = stream;
+
+        if (typeof _sessionPerms !== "undefined") {
+            _sessionPerms["microphone"] = "granted";
+        }
+
+        console.log("Микрофон успешно получен");
+
+    } catch (e) {
+        _micPreWarmed = false;
+        alert("Ошибка микрофона: " + e.name + " | " + e.message);
+        console.error(e);
+    }
 }
 
 async function init() {
@@ -393,11 +415,7 @@ async function init() {
     applyTheme(activeTheme);
     updateAllAvatarUI();
     setupGlobalGestures();
-    // Один раз при первом касании экрана запрашиваем разрешение на микрофон
-    document.addEventListener('touchstart', function _onFirstTouch() {
-        document.removeEventListener('touchstart', _onFirstTouch);
-        setTimeout(_preWarmMic, 500); // небольшая задержка чтобы страница прогрузилась
-    }, { passive: true, once: true });
+    // Микрофон запрашивается только при необходимости (запись голоса/видео)
     initSocket();
     setTimeout(syncProfileData, 800);
     setTimeout(_updatePermsSummary, 1200);
@@ -831,7 +849,6 @@ body {
                 </div>
                 <button onclick="openTextMoment()" style="width:60px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;cursor:pointer;flex-shrink:0;padding:0;-webkit-tap-highlight-color:transparent">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    <div style="font-size:9px;color:var(--text-2);font-weight:600;letter-spacing:.2px">Текст</div>
                 </button>
             </div>
             <div id="full-moments-list"></div>
@@ -1348,7 +1365,7 @@ function renderChatList(chats) {
                     const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
                     const _p=document.createElementNS(_ns,'path');
                     _p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-                    _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','2');
+                    _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','3.5');
                     _p.setAttribute('fill','none');_p.setAttribute('stroke-linecap','round');
                     _sv.appendChild(_p);
                 }
@@ -1983,9 +2000,6 @@ function renderNewMessage(msg, animate = true) {
     if (!msg._optimistic) {
         const cacheKey = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
         if (messagesByChatCache[cacheKey]) {
-            if (!Array.isArray(messagesByChatCache[cacheKey].messages)) {
-                messagesByChatCache[cacheKey].messages = [];
-            }
             messagesByChatCache[cacheKey].messages.push(msg);
         }
     }
@@ -2511,20 +2525,41 @@ function _activateCamMode() {
     showToast('Зажмите для записи видео 🎥','info',2000);
 }
 
-async function _startVideoCircle() {
+function _startVideoCircle() {
     if (_videoRecStream) return;
-    const perm = await requestPermission('camera');
-    if (perm === 'denied') { _showPermDeniedGuide('camera'); return; }
 
-    try {
-        _videoFacing = _videoFacing || 'user';
-        _videoRecStream = await navigator.mediaDevices.getUserMedia({
-            video:{ facingMode:_videoFacing, width:{ideal:480}, height:{ideal:480}, frameRate:{ideal:30} },
-            audio:{ echoCancellation:true, noiseSuppression:true }
-        });
-    } catch(e) {
-        showToast('Нет доступа к камере','error'); return;
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+        showToast('Нет доступа к камере. Настройки → Safari → Камера → Разрешить', 'error', 5000);
+        return;
     }
+
+    // ⚠️ КРИТИЧНО ДЛЯ iOS SAFARI: getUserMedia вызывается СИНХРОННО
+    // без await перед ним — иначе Safari не покажет диалог разрешений
+    _videoFacing = _videoFacing || 'user';
+    const mediaPromise = navigator.mediaDevices.getUserMedia({
+        video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } },
+        audio: { echoCancellation: true, noiseSuppression: true }
+    }).catch(() => navigator.mediaDevices.getUserMedia({
+        video: { facingMode: _videoFacing },
+        audio: true
+    }));
+
+    mediaPromise.then(stream => {
+        _videoRecStream = stream;
+        _sessionPerms['camera'] = 'granted';
+        _doStartVideoCircleUI();
+    }).catch(e => {
+        _videoRecStream = null;
+        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+            _sessionPerms['camera'] = 'denied';
+            _showPermDeniedGuide('camera');
+        } else {
+            showToast('Нет доступа к камере: ' + (e.message || e.name), 'error', 4000);
+        }
+    });
+}
+
+function _doStartVideoCircleUI() {
 
     vibrate(40);
     _videoChunks = []; _videoSec = 0;
@@ -2738,17 +2773,51 @@ function setupVoiceRecording() {
         if (_globalMicStream && _globalMicStream.active) {
             return Promise.resolve(_globalMicStream);
         }
-        if (!navigator.mediaDevices?.getUserMedia) {
-            showToast('Нужен HTTPS для голосовых сообщений', 'error', 4000);
+
+        const hasModern = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+        const hasLegacy = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+
+        if (!hasModern && !hasLegacy) {
+            showToast('Нет доступа к микрофону. Настройки → Safari → Микрофон → Разрешить', 'error', 5000);
             return Promise.reject(new Error('no mediaDevices'));
         }
-        return navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation: true, noiseSuppression: true, sampleRate: 44100 }
-        }).then(stream => {
-            _globalMicStream = stream;
-            _sessionPerms['microphone'] = 'granted';
-            return stream;
-        });
+
+        const constraints = { audio: { echoCancellation: true, noiseSuppression: true }, video: false };
+
+        if (hasModern) {
+            return navigator.mediaDevices.getUserMedia(constraints)
+                .then(stream => {
+                    _globalMicStream = stream;
+                    _sessionPerms['microphone'] = 'granted';
+                    return stream;
+                })
+                .catch(err => {
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        _sessionPerms['microphone'] = 'denied';
+                        showToast('Нет доступа к микрофону. Настройки → Safari → Микрофон → Разрешить', 'error', 5000);
+                    }
+                    throw err;
+                });
+        } else {
+            // Полифилл для старых iOS
+            const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+            return new Promise((resolve, reject) => {
+                gum.call(navigator, constraints,
+                    stream => {
+                        _globalMicStream = stream;
+                        _sessionPerms['microphone'] = 'granted';
+                        resolve(stream);
+                    },
+                    err => {
+                        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                            _sessionPerms['microphone'] = 'denied';
+                            showToast('Нет доступа к микрофону. Настройки → Safari → Микрофон → Разрешить', 'error', 5000);
+                        }
+                        reject(err);
+                    }
+                );
+            });
+        }
     }
 
     function _doStartRecording(stream) {
@@ -2852,11 +2921,39 @@ function setupVoiceRecording() {
         const isCam = document.getElementById('voice-btn-main')?.dataset.mode === 'camera';
 
         if (isCam) {
-            // Камера — запускаем через 300мс
+            // ⚠️ КРИТИЧНО ДЛЯ iOS SAFARI:
+            // getUserMedia вызываем ЗДЕСЬ синхронно из touchstart
+            // setTimeout убивает user gesture — камера не запрашивается
+            if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+                showToast('Нет доступа к камере. Настройки → Safari → Камера → Разрешить', 'error', 5000);
+                return;
+            }
+            _videoFacing = _videoFacing || 'user';
+            const camPromise = navigator.mediaDevices.getUserMedia({
+                video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } },
+                audio: { echoCancellation: true, noiseSuppression: true }
+            }).catch(() => navigator.mediaDevices.getUserMedia({
+                video: { facingMode: _videoFacing },
+                audio: true
+            }));
+
             _pressTimer = setTimeout(() => {
                 _holdDone = true;
                 vibrate(45);
-                _startVideoCircle();
+                camPromise.then(stream => {
+                    if (_videoRecStream) { stream.getTracks().forEach(t => t.stop()); return; }
+                    _videoRecStream = stream;
+                    _sessionPerms['camera'] = 'granted';
+                    _doStartVideoCircleUI();
+                }).catch(e => {
+                    _videoRecStream = null;
+                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                        _sessionPerms['camera'] = 'denied';
+                        _showPermDeniedGuide('camera');
+                    } else {
+                        showToast('Нет доступа к камере: ' + (e.message || e.name), 'error', 4000);
+                    }
+                });
             }, 300);
             return;
         }
@@ -3029,12 +3126,6 @@ function cancelVoicePreview() {
         if (overlay._blobUrl) URL.revokeObjectURL(overlay._blobUrl);
         overlay.remove();
     }
-}
-
-
-async function doLogout() {
-    try { await fetch('/logout', {method:'GET',credentials:'include'}); } catch(e) {}
-    window.location.href = '/login';
 }
 
 async function sendVoicePreview() {
@@ -3843,7 +3934,15 @@ async function openPermissionsSettings() {
 
     sh.innerHTML = '<div class="modal-handle"></div>'
         + '<div style="font-size:17px;font-weight:700;margin-bottom:4px">Разрешения</div>'
-        + '<div style="font-size:13px;color:var(--text-2);margin-bottom:18px">Управление доступом к функциям устройства</div>'
+        + '<div style="font-size:13px;color:var(--text-2);margin-bottom:12px">Управление доступом к функциям устройства</div>'
+        + '<div style="font-size:11px;color:var(--text-2);background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px;font-family:monospace;line-height:1.7">'
+        + '🔒 protocol: <b style="color:' + (location.protocol==='https:' ? '#10b981' : '#ef4444') + '">' + location.protocol + '</b><br>'
+        + '🌐 host: ' + location.host + '<br>'
+        + '📱 mediaDevices: <b style="color:' + (navigator.mediaDevices ? '#10b981' : '#ef4444') + '">' + (navigator.mediaDevices ? 'есть' : 'НЕТ') + '</b><br>'
+        + '🎤 getUserMedia: <b style="color:' + (navigator.mediaDevices?.getUserMedia ? '#10b981' : '#ef4444') + '">' + (navigator.mediaDevices?.getUserMedia ? 'есть' : 'НЕТ') + '</b><br>'
+        + '📲 PWA: <b>' + (window.navigator.standalone ? 'да ✓' : 'нет — добавь на экран') + '</b><br>'
+        + '🔐 secureContext: <b>' + (window.isSecureContext ? 'true' : 'false') + '</b>'
+        + '</div>'
         + '<div id="perm-rows" style="display:flex;flex-direction:column;gap:8px"></div>';
 
     const closeBtn = document.createElement('button');
@@ -4647,20 +4746,35 @@ function requestPermission(type) {
 
         if (!firstTime) {
             // Уже видели диалог — сразу пробуем getUserMedia
-            return navigator.mediaDevices.getUserMedia(constraints)
-                .then(stream => {
-                    stream.getTracks().forEach(t => t.stop());
-                    _sessionPerms[type] = 'granted';
-                    return 'granted';
-                })
-                .catch(e => {
-                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                        _sessionPerms[type] = 'denied';
-                        return 'denied';
-                    }
-                    _sessionPerms[type] = 'granted';
-                    return 'granted';
+            // Пропускаем проверку protocol — Cloudflare туннель HTTPS снаружи
+            const hasMod = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+            const hasLeg = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+            if (!hasMod && !hasLeg) return Promise.resolve('denied');
+
+            if (hasMod) {
+                return navigator.mediaDevices.getUserMedia(constraints)
+                    .then(stream => {
+                        stream.getTracks().forEach(t => t.stop());
+                        _sessionPerms[type] = 'granted';
+                        return 'granted';
+                    })
+                    .catch(e => {
+                        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                            _sessionPerms[type] = 'denied';
+                            return 'denied';
+                        }
+                        _sessionPerms[type] = 'granted';
+                        return 'granted';
+                    });
+            } else {
+                const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+                return new Promise(res => {
+                    gum.call(navigator, constraints,
+                        stream => { stream.getTracks().forEach(t => t.stop()); _sessionPerms[type] = 'granted'; res('granted'); },
+                        err => { _sessionPerms[type] = 'denied'; res('denied'); }
+                    );
                 });
+            }
         }
 
         // Первый раз — показываем наш диалог-объяснение
@@ -4693,22 +4807,40 @@ function requestPermission(type) {
             allowBtn.onclick = () => {
                 ov.remove();
                 _savePerm(type + '_asked', true);
-                // Синхронный вызов из user gesture
-                navigator.mediaDevices.getUserMedia(constraints)
-                    .then(stream => {
-                        stream.getTracks().forEach(t => t.stop());
-                        _sessionPerms[type] = 'granted';
-                        resolve('granted');
-                    })
-                    .catch(e => {
-                        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                            _sessionPerms[type] = 'denied';
-                            resolve('denied');
-                        } else {
+                // Синхронный вызов из user gesture — Safari требует
+                const hasModernAPI = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+                const hasLegacyAPI = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+                if (hasModernAPI) {
+                    navigator.mediaDevices.getUserMedia(constraints)
+                        .then(stream => {
+                            stream.getTracks().forEach(t => t.stop());
                             _sessionPerms[type] = 'granted';
                             resolve('granted');
+                        })
+                        .catch(e => {
+                            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                                _sessionPerms[type] = 'denied';
+                                resolve('denied');
+                            } else {
+                                _sessionPerms[type] = 'granted';
+                                resolve('granted');
+                            }
+                        });
+                } else if (hasLegacyAPI) {
+                    const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+                    gum.call(navigator, constraints,
+                        stream => { stream.getTracks().forEach(t => t.stop()); _sessionPerms[type] = 'granted'; resolve('granted'); },
+                        err => {
+                            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                                _sessionPerms[type] = 'denied'; resolve('denied');
+                            } else {
+                                _sessionPerms[type] = 'granted'; resolve('granted');
+                            }
                         }
-                    });
+                    );
+                } else {
+                    resolve('denied');
+                }
             };
 
             const skipBtn = document.createElement('button');
@@ -4805,8 +4937,6 @@ function _showPermDeniedGuide(type) {
 
 async function startCall(type) {
     if (!currentPartnerId) return;
-    // Разрешения НЕ запрашиваем здесь — Safari требует синхронный user gesture
-    // getLocalStream сам получит доступ и поймает ошибку если откажут
     currentCallType = type; iceRestartCount = 0;
     vibrate(50);
     setupCallScreen(type, false);
@@ -4820,21 +4950,17 @@ async function startCall(type) {
         const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
         await peerConnection.setLocalDescription(offer);
         socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type });
-        // Тайм-аут если нет ответа
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
             }
         }, 45000);
     } catch(e) {
-        console.error('startCall:', e);
-        endCall(false);
+        console.error('startCall:', e); endCall(false);
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-            _showPermDeniedGuide(type === 'video' ? 'camera' : 'microphone');
-        } else if (e.name === 'HTTPSRequired') {
-            showToast('Нужен HTTPS для звонков', 'error', 4000);
+            showToast('Разрешите доступ в Настройки → Safari → Камера/Микрофон', 'error', 6000);
         } else {
-            showToast('Ошибка доступа к медиа', 'error');
+            showToast('Ошибка доступа к медиа: ' + (e.message || e.name), 'error', 4000);
         }
     }
 }
@@ -4842,37 +4968,71 @@ async function startCall(type) {
 async function getLocalStream(type, facingMode) {
     const fm = facingMode || _currentFacingMode || 'user';
     const permKey = type === 'video' ? 'camera' : 'microphone';
-    if (!navigator.mediaDevices?.getUserMedia) {
-        const e = new Error('Для звонков нужен HTTPS. Откройте сайт через https://');
+
+    // Проверяем наличие API — если есть, значит браузер считает контекст безопасным
+    // Не проверяем protocol напрямую — Cloudflare туннель HTTPS снаружи но HTTP внутри
+
+    const hasModern = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    const hasLegacy = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+
+    if (!hasModern && !hasLegacy) {
+        const e = new Error('getUserMedia не поддерживается. Проверь разрешения в Настройки → Safari');
         e.name = 'HTTPSRequired';
         throw e;
     }
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true, sampleRate:48000 },
-            video: type === 'video' ? { width:{ideal:1280}, height:{ideal:720}, facingMode:fm, frameRate:{ideal:30} } : false
-        });
-        _sessionPerms[permKey] = 'granted';
-        return stream;
-    } catch(e) {
-        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-            _sessionPerms[permKey] = 'denied';
-            throw e;
+
+    // iOS: пробуем сначала простые constraints (строгие часто падают с OverconstrainedError)
+    const constraintsList = [
+        {
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: type === 'video' ? { facingMode: fm, width: { ideal: 1280 }, height: { ideal: 720 } } : false
+        },
+        {
+            audio: { echoCancellation: true, noiseSuppression: true },
+            video: type === 'video' ? { facingMode: fm } : false
+        },
+        {
+            audio: true,
+            video: type === 'video' ? { facingMode: fm } : false
         }
-        // Слишком строгие constraints — пробуем проще
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: true,
-                video: type === 'video' ? { facingMode: fm } : false
-            });
-            _sessionPerms[permKey] = 'granted';
-            return stream;
-        } catch(e2) {
-            if (e2.name === 'NotAllowedError' || e2.name === 'PermissionDeniedError') {
-                _sessionPerms[permKey] = 'denied';
+    ];
+
+    if (hasModern) {
+        let lastError;
+        for (const constraints of constraintsList) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                _sessionPerms[permKey] = 'granted';
+                return stream;
+            } catch(e) {
+                lastError = e;
+                // NotAllowedError — пользователь отказал, не пробуем дальше
+                if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                    _sessionPerms[permKey] = 'denied';
+                    throw e;
+                }
+                // Другие ошибки (OverconstrainedError, NotFoundError) — пробуем проще
             }
-            throw e2;
         }
+        throw lastError;
+    } else {
+        // Полифилл для старых iOS (iOS < 14.3)
+        const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+        return new Promise((resolve, reject) => {
+            const constraints = {
+                audio: { echoCancellation: true, noiseSuppression: true },
+                video: type === 'video' ? { facingMode: fm } : false
+            };
+            gum.call(navigator, constraints,
+                stream => { _sessionPerms[permKey] = 'granted'; resolve(stream); },
+                err => {
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        _sessionPerms[permKey] = 'denied';
+                    }
+                    reject(err);
+                }
+            );
+        });
     }
 }
 
@@ -4898,7 +5058,9 @@ function setupCallScreen(type, isIncoming) {
     if (!screen) return;
     screen.classList.remove('hidden');
     const partnerName = document.getElementById('chat-name')?.textContent || 'Звонок';
-    const partnerAva  = chatPartnerAvatarSrc[currentPartnerId] || '';
+    const partnerAva  = chatPartnerAvatarSrc[currentPartnerId]
+        || document.getElementById('chat-ava-header')?.querySelector('img')?.src
+        || '';
 
     const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
     const statusText = isIncoming
@@ -4912,6 +5074,7 @@ function setupCallScreen(type, isIncoming) {
     setEl('call-timer',        el => el.style.display = 'none');
     setEl('call-quality-label',el => el.style.display = 'none');
     setEl('flip-btn',          el => el.style.display = type === 'video' ? 'flex' : 'none');
+    // Показываем кружки дозвона
     document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'block');
     acquireWakeLock();
 }
@@ -5211,7 +5374,11 @@ let _pushBannerShown = false;
 async function initPushNotifications() {
     if (!('serviceWorker' in navigator)) return;
     try {
-        _swReg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        // Регистрируем SW — updateViaCache важен для PWA чтобы не тормозить
+        _swReg = await navigator.serviceWorker.register('/sw.js', {
+            scope: '/',
+            updateViaCache: 'none'
+        });
         await navigator.serviceWorker.ready;
 
         navigator.serviceWorker.addEventListener('message', e => {
@@ -5219,6 +5386,16 @@ async function initPushNotifications() {
                 _openChatByChatId(e.data.chat_id);
             }
         });
+
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+        const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+        // iOS Safari: Push API доступен только в PWA (iOS 16.4+)
+        if (isIOS && !isPWA) {
+            // В браузере — только показываем инструкцию добавить на экран
+            _showPushBanner();
+            return;
+        }
 
         if (!('PushManager' in window)) {
             _requestBasicNotifPermission();
@@ -5231,6 +5408,9 @@ async function initPushNotifications() {
             _updateNotifToggle(true);
         } else if (Notification.permission === 'default') {
             _showPushBanner();
+        } else {
+            // denied — не показываем баннер
+            notifPermission = false;
         }
     } catch(e) {
         console.warn('SW error:', e);
@@ -5302,6 +5482,7 @@ async function _subscribeToPush() {
         let sub = await _swReg.pushManager.getSubscription();
         if (!sub) {
             const keyRes  = await fetch('/vapid-public-key', { credentials: 'same-origin' });
+            if (!keyRes.ok) { console.warn('VAPID key fetch failed:', keyRes.status); return; }
             const keyData = await keyRes.json();
             if (!keyData.publicKey) { console.warn('No VAPID key'); return; }
             sub = await _swReg.pushManager.subscribe({
@@ -5310,7 +5491,7 @@ async function _subscribeToPush() {
             });
         }
         const subJson = sub.toJSON();
-        await apiFetch('/push-subscribe', {
+        const res = await apiFetch('/push-subscribe', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -5319,9 +5500,19 @@ async function _subscribeToPush() {
                 auth:     subJson.keys?.auth   || '',
             }),
         });
-        console.log('✅ Push подписка активна');
+        if (res && res.ok !== false) {
+            console.log('✅ Push подписка активна');
+            notifPermission = true;
+        }
     } catch(e) {
         console.warn('Push subscribe error:', e);
+        // Если подписка устарела — удаляем и пробуем заново один раз
+        if (e.name === 'InvalidStateError' || e.name === 'AbortError') {
+            try {
+                const oldSub = await _swReg.pushManager.getSubscription();
+                if (oldSub) await oldSub.unsubscribe();
+            } catch(e2) {}
+        }
     }
 }
 
