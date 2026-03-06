@@ -731,10 +731,8 @@ body {
 .settings-row:last-child { border-bottom:none; }
 .settings-row:active { background:rgba(255,255,255,0.05); }
 .settings-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0; }
-.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:none; }
+.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:0.5px solid rgba(255,255,255,0.08); }
 .img-bubble img { display:block;width:100%; }
-.bubble.media-bubble { padding:0 !important;background:transparent !important;border:none !important;box-shadow:none !important; }
-.bubble.media-bubble .msg-time { padding:3px 8px 4px;font-size:11px;color:rgba(255,255,255,0.6);text-align:right; }
 
 /* МОДАЛЬНЫЕ */
 .modal-overlay { position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end;animation:fadeIn 0.2s ease; }
@@ -779,8 +777,7 @@ body {
 .section-header-row { display:flex;align-items:center;justify-content:center;position:relative;padding:0 20px;margin-bottom:4px; }
 .section-title { font-size:28px;font-weight:800;letter-spacing:-0.5px;text-align:center; }
 
-.conn-status { position:fixed;top:0;left:0;right:0;height:3px;background:var(--accent);z-index:99998;transition:opacity 0.5s; }
-.conn-status.offline { background:#ef4444; }
+.conn-status { display:none !important; }
 
 /* ГРУППА БЕЙДЖ */
 .group-badge { display:inline-flex;align-items:center;gap:4px;background:rgba(59,130,246,0.15);border:1px solid rgba(59,130,246,0.3);border-radius:8px;padding:2px 8px;font-size:11px;font-weight:600;color:#60a5fa; }
@@ -1912,17 +1909,11 @@ function buildMessageRow(msg, animate = true) {
         return circRow;
     }
 
-    const isMediaMsg = (type === 'image' || type === 'video');
     let contentHtml = '';
     if (type === 'image') {
         contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
     } else if (type === 'video') {
-        let posterAttr = '';
-        if (msg.file_url && msg.file_url.includes('cloudinary.com')) {
-            const posterUrl = msg.file_url.replace('/upload/', '/upload/so_0,w_400/').replace(/\.(mp4|webm|mov|avi)(\?.*)?$/, '.jpg');
-            posterAttr = `poster="${posterUrl}"`;
-        }
-        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline preload="metadata" ${posterAttr} style="max-width:280px;width:100%;display:block;border-radius:16px;background:#111"></video>`;
+        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
@@ -1969,7 +1960,7 @@ function buildMessageRow(msg, animate = true) {
     row.innerHTML = `
         ${avatarHtml}
         <div style="flex:1;display:flex;flex-direction:column;${isMe?'align-items:flex-end':'align-items:flex-start'}">
-            <div class="bubble${isMediaMsg?' media-bubble':''}">
+            <div class="bubble">
                 ${senderNameHtml}
                 ${contentHtml}
                 <div class="msg-time">
@@ -2703,6 +2694,7 @@ function _doStartVideoCircleUI() {
 
 function _cancelVideoCircle(overlay) {
     clearInterval(_videoTimer); _videoTimer=null;
+    window._vcLocked = false;
     if(_videoRecorder && _videoRecorder.state!=='inactive') {
         _videoRecorder.ondataavailable=null; _videoRecorder.onstop=null;
         _videoRecorder.stop();
@@ -2715,6 +2707,7 @@ function _cancelVideoCircle(overlay) {
 function _stopVideoCircle() {
     if(!_videoRecorder || _videoRecorder.state==='inactive') return;
     clearInterval(_videoTimer); _videoTimer=null;
+    window._vcLocked = false;
     _videoRecorder.stop();
     _videoRecStream?.getTracks().forEach(t=>t.stop());
     document.getElementById('video-circle-ui')?.remove();
@@ -2730,16 +2723,21 @@ async function _sendVideoCircle(mime) {
     showToast('Отправка видео-кружка...','info');
     const fd = new FormData();
     fd.append('file', blob, 'video_circle.'+ext);
-    fd.append('video_circle','1'); // флаг для рендера кружка
     try {
         const r = await apiFetch('/upload_media',{method:'POST',body:fd});
+        if(!r) throw new Error('no response');
         const d = await r.json();
         if(d.url) {
-            await apiFetch('/send_message',{
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({chat_id:currentChatId, media_url:d.url, media_type:'video_circle', text:''})
+            // Отправляем через socket.emit как обычное сообщение
+            socket.emit('send_message', {
+                chat_id:    currentChatId,
+                type_msg:   'video_circle',
+                file_url:   d.url,
+                sender_id:  currentUser.id,
             });
             showToast('Видео-кружок отправлен 🎥','success');
+        } else {
+            showToast('Ошибка загрузки','error');
         }
     } catch(e) { showToast('Ошибка отправки','error'); }
 }
@@ -2968,6 +2966,7 @@ function setupVoiceRecording() {
                     if (_videoRecStream) { stream.getTracks().forEach(t => t.stop()); return; }
                     _videoRecStream = stream;
                     _sessionPerms['camera'] = 'granted';
+                    window._vcLocked = true; // авто-фиксация — отпуск пальца не останавливает
                     _doStartVideoCircleUI();
                 }).catch(e => {
                     _videoRecStream = null;
@@ -3015,7 +3014,10 @@ function setupVoiceRecording() {
 
         if (_holdDone) {
             if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
+            else if (_videoRecorder && _videoRecorder.state !== 'inactive') {
+                // Если зафиксировано — не останавливаем при отпускании пальца
+                if (!window._vcLocked) _stopVideoCircle();
+            }
         }
         _holdDone = false;
     }
@@ -4488,16 +4490,12 @@ function _runMomentsViewer(list, startIdx) {
         // Медиа-фон
         const bg = document.createElement('div');
         bg.style.cssText = 'position:absolute;inset:0';
-        let momentVid = null; // ссылка на видео-элемент момента
         if (m.media_url) {
-            const isCloudinaryVideo = m.media_url.includes('/video/upload/');
-            if (m.media_url.match(/\.(mp4|mov|webm|avi|m4v)/i) || isCloudinaryVideo) {
+            if (m.media_url.match(/\.(mp4|mov|webm)/i)) {
                 const vid = document.createElement('video');
-                vid.src = m.media_url;
-                vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
+                vid.src = m.media_url; vid.autoplay=true; vid.loop=false; vid.playsInline=true; vid.muted=false;
                 vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
                 bg.appendChild(vid);
-                momentVid = vid;
             } else {
                 const img = document.createElement('img');
                 img.src = m.media_url; img.style.cssText='width:100%;height:100%;object-fit:cover';
@@ -4575,44 +4573,14 @@ function _runMomentsViewer(list, startIdx) {
             else next();
         };
 
-        // Запускаем прогресс — для видео ждём loadedmetadata чтобы знать реальную длину
+        // Запускаем прогресс
         clearTimeout(autoTimer);
-
-        function _startProgress(dur) {
-            requestAnimationFrame(() => {
-                const fill = document.getElementById('mpf');
-                if (fill) {
-                    fill.style.transition = 'width ' + dur/1000 + 's linear';
-                    fill.style.width = '100%';
-                }
-            });
-            autoTimer = setTimeout(() => next(), dur + 200);
-        }
-
-        if (momentVid) {
-            // Видео: ждём метаданные чтобы взять реальную длину
-            if (momentVid.readyState >= 1 && momentVid.duration) {
-                _startProgress(Math.max(momentVid.duration * 1000, 3000));
-            } else {
-                momentVid.addEventListener('loadedmetadata', () => {
-                    clearTimeout(autoTimer);
-                    _startProgress(Math.max(momentVid.duration * 1000, 3000));
-                }, { once: true });
-                // Fallback если метаданные не пришли за 3 сек
-                autoTimer = setTimeout(() => {
-                    clearTimeout(autoTimer);
-                    _startProgress(momentVid.duration ? momentVid.duration * 1000 : 10000);
-                }, 3000);
-            }
-            // Когда видео кончилось — переходим к следующему
-            momentVid.addEventListener('ended', () => {
-                clearTimeout(autoTimer);
-                next();
-            }, { once: true });
-        } else {
-            // Фото или текст — 5 сек
-            _startProgress(m.media_url ? 6000 : 5000);
-        }
+        const dur = m.media_url ? 7000 : 5000;
+        requestAnimationFrame(() => {
+            const fill = document.getElementById('mpf');
+            if (fill) { fill.style.transition='width '+dur/1000+'s linear'; fill.style.width='100%'; }
+        });
+        autoTimer = setTimeout(() => next(), dur+100);
     }
 
     function next() { clearTimeout(autoTimer); if (idx<list.length-1){idx++;render();}else{ov.remove();} }
