@@ -367,6 +367,7 @@ class User(UserMixin, db.Model):
     username      = db.Column(db.String(80),   unique=True, nullable=False, index=True)
     name          = db.Column(db.String(120),  nullable=False)
     bio           = db.Column(db.Text,         default='')
+    birthday      = db.Column(db.Date,         nullable=True)
     password_hash = db.Column(db.String(256),  nullable=True)
     avatar        = db.Column(db.String(300),  default='/static/default_avatar.png')
     is_online     = db.Column(db.Boolean,      default=False, index=True)
@@ -394,6 +395,7 @@ class User(UserMixin, db.Model):
             'username':   self.username,
             'name':       self.name,
             'bio':        self.bio or '',
+            'birthday':   self.birthday.isoformat() if self.birthday else None,
             'avatar':     self.avatar or '/static/default_avatar.png',
             'is_online':  self.is_online,
             'last_seen':  self.last_seen.isoformat() if self.last_seen else None,
@@ -1016,7 +1018,30 @@ def get_current_user_route():
         return jsonify({'error': 'Session error'}), 500
 
 
-@app.route('/get_user_profile/<int:user_id>')
+@app.route('/get_user_by_username/<username>')
+@login_required
+def get_user_by_username(username):
+    username = username.lstrip('@').lower()
+    u = User.query.filter_by(username=username).first()
+    if not u:
+        return jsonify({'error': 'Пользователь не найден'}), 404
+    return jsonify({'id': u.id, 'name': u.name, 'username': u.username, 'avatar': u.avatar})
+
+
+@app.route('/logout', methods=['POST', 'GET'])
+@login_required
+def logout():
+    try:
+        current_user.is_online = False
+        current_user.last_seen = datetime.utcnow()
+        db.session.commit()
+        current_user.invalidate_cache()
+        broadcast_status(current_user.id, False)
+    except Exception:
+        pass
+    logout_user()
+    session.clear()
+    return jsonify({'success': True, 'redirect': url_for('login_page')})
 @login_required
 def get_user_profile(user_id):
     cached = _partner_cache.get(user_id)
@@ -1036,6 +1061,7 @@ def get_user_profile(user_id):
         'username':   u.username,
         'avatar':     u.avatar,
         'bio':        u.bio or '',
+        'birthday':   u.birthday.isoformat() if u.birthday else None,
         'online':     online,
         'phone':      u.phone,
         'created_at': u.created_at.isoformat() if u.created_at else None,
@@ -1546,10 +1572,11 @@ def search_users():
 @login_required
 @rate_limit('update_profile', max_calls=10, window_sec=60)
 def update_profile():
-    data = request.get_json() or {}
-    name = data.get('name', '').strip()
-    bio  = data.get('bio', None)
-    uid  = current_user.id
+    data     = request.get_json() or {}
+    name     = data.get('name', '').strip()
+    bio      = data.get('bio', None)
+    birthday = data.get('birthday', None)
+    uid      = current_user.id
 
     u = db.session.get(User, uid)
     if not u:
@@ -1559,10 +1586,36 @@ def update_profile():
         u.name = name[:120]
     if bio is not None:
         u.bio = bio[:500]
+    if birthday is not None:
+        try:
+            from datetime import date
+            u.birthday = date.fromisoformat(birthday) if birthday else None
+        except Exception:
+            pass
 
     db.session.commit()
     u.invalidate_cache()
     return jsonify({'success': True})
+
+
+@app.route('/u/<username>')
+def user_qr_page(username):
+    """Страница для QR-кода — перенаправляет в приложение или показывает профиль."""
+    u = User.query.filter_by(username=username.lstrip('@')).first()
+    if not u:
+        return '<h2 style="font-family:sans-serif;text-align:center;margin-top:60px">Пользователь не найден</h2>', 404
+    # Если пользователь залогинен — открываем чат
+    if current_user.is_authenticated:
+        return redirect(url_for('index') + f'?open_chat={u.id}')
+    # Иначе показываем мини-визитку
+    avatar_html = f'<img src="{u.avatar}" style="width:100px;height:100px;border-radius:50%;object-fit:cover;border:3px solid #10b981">' if u.avatar and not u.avatar.startswith('/static/') else f'<div style="width:100px;height:100px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:700;color:white">{u.name[0].upper()}</div>'
+    return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{u.name} — WayChat</title>
+    <style>body{{margin:0;background:#0d0d0f;color:white;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:20px;box-sizing:border-box}}
+    .card{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:24px;padding:32px 24px;text-align:center;max-width:320px;width:100%}}
+    h1{{margin:16px 0 4px;font-size:24px;font-weight:800}} p{{color:#888;margin:0 0 20px}} a{{display:block;padding:14px;background:#10b981;border-radius:14px;color:white;text-decoration:none;font-weight:700;font-size:16px}}</style></head>
+    <body><div class="card">{avatar_html}<h1>{u.name}</h1><p>@{u.username}</p>
+    <a href="{url_for('index')}?open_chat={u.id}">Написать в WayChat</a></div></body></html>'''
 
 # ══════════════════════════════════════════════════════════
 #  АВАТАРЫ
@@ -1710,26 +1763,13 @@ def block_user(user_id):
 def get_moments():
     cached = _moments_cache.get('all')
     if cached:
-        resp = jsonify(cached)
-        resp.headers['Cache-Control'] = 'private, max-age=20'
-        return resp
+        return jsonify(cached)
 
-    uid    = current_user.id
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    uid     = current_user.id
+    cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
-
-    # Один запрос для всех view_count вместо N отдельных
-    view_counts = {}
-    moment_ids  = [m.Moment.id for m in moments]
-    if moment_ids:
-        # psycopg3 не поддерживает IN :ids с tuple — генерируем плейсхолдеры вручную
-        placeholders = ','.join(str(i) for i in moment_ids)
-        rows = db.session.execute(
-            text(f'SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id IN ({placeholders}) GROUP BY moment_id')
-        ).fetchall()
-        view_counts = {r[0]: r[1] for r in rows}
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
 
     data = [{
         'id':            m.Moment.id,
@@ -1741,14 +1781,12 @@ def get_moments():
         'geo_name':      m.Moment.geo_name or '',
         'timestamp':     to_moscow_str(m.Moment.timestamp),
         'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    view_counts.get(m.Moment.id, 0),
+        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
         'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
     _moments_cache.set('all', data)
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'private, max-age=20'
-    return resp
+    return jsonify(data)
 
 
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
@@ -2285,6 +2323,14 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS birthday DATE'))
+            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_msg_chat_id_id ON message(chat_id, id DESC)'))
+            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp)'))
+            conn.commit()
+    except Exception as e:
+        app.logger.warning(f'extra migration: {e}')
 
 # ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
