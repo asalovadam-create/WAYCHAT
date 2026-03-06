@@ -3890,37 +3890,6 @@ function showPartnerProfile() {
     }
 }
 
-function formatBirthday(dateStr) {
-    if (!dateStr) return '';
-    try {
-        const d = new Date(dateStr + 'T00:00:00');
-        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-        const year = d.getFullYear();
-        const now  = new Date();
-        const age  = now.getFullYear() - year - (now < new Date(now.getFullYear(), d.getMonth(), d.getDate()) ? 1 : 0);
-        return `${d.getDate()} ${months[d.getMonth()]} ${year} (${age} лет)`;
-    } catch(e) { return dateStr; }
-}
-
-function editBirthday() {
-    const cur = currentUser.birthday || '';
-    const ov  = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end';
-    ov.innerHTML = `
-        <div style="width:100%;background:var(--bg-2);border-radius:24px 24px 0 0;padding:20px 20px max(env(safe-area-inset-bottom,0px)+24px,32px)">
-            <div style="width:36px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;margin:0 auto 20px"></div>
-            <h3 style="margin:0 0 16px;font-size:18px;font-weight:700">День рождения</h3>
-            <input type="date" id="birthday-input" value="${cur}"
-                style="width:100%;padding:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:14px;color:white;font-size:16px;box-sizing:border-box;font-family:inherit;-webkit-appearance:none;color-scheme:dark">
-            <div style="display:flex;gap:10px;margin-top:16px">
-                <button onclick="this.closest('div[style*=inset]').remove()" style="flex:1;padding:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Отмена</button>
-                <button onclick="saveBirthday(document.getElementById('birthday-input').value);this.closest('div[style*=inset]').remove()" style="flex:2;padding:14px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Сохранить</button>
-            </div>
-        </div>`;
-    document.body.appendChild(ov);
-    ov.onclick = e => { if(e.target===ov) ov.remove(); };
-}
-
 async function saveBirthday(val) {
     if (!val) return;
     try {
@@ -3936,25 +3905,8 @@ async function saveBirthday(val) {
     } catch(e) {}
 }
 
-function showMyQR() {
-    const url      = `${location.origin}/u/${currentUser.username}`;
-    const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(url)}&bgcolor=0d0d0f&color=10b981&margin=10`;
-    const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.8);backdrop-filter:blur(16px);display:flex;align-items:center;justify-content:center';
-    ov.innerHTML = `
-        <div style="background:#161618;border:1px solid rgba(255,255,255,0.1);border-radius:28px;padding:32px 24px;text-align:center;max-width:300px;width:90%;position:relative">
-            <button onclick="this.closest('div[style*=inset]').remove()" style="position:absolute;top:14px;right:14px;width:30px;height:30px;background:rgba(255,255,255,0.08);border:none;border-radius:50%;color:white;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center">✕</button>
-            <div style="font-size:18px;font-weight:800;margin-bottom:4px">${currentUser.name}</div>
-            <div style="color:var(--text-2);font-size:14px;margin-bottom:20px">@${currentUser.username}</div>
-            <div style="background:white;border-radius:16px;padding:12px;display:inline-block;margin-bottom:20px">
-                <img src="${qrApiUrl}" width="200" height="200" style="display:block;border-radius:8px">
-            </div>
-            <div style="font-size:12px;color:var(--text-2);margin-bottom:16px;word-break:break-all">${url}</div>
-            <button onclick="navigator.clipboard.writeText('${url}').then(()=>showToast('Ссылка скопирована','success'))" style="width:100%;padding:13px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Скопировать ссылку</button>
-        </div>`;
-    ov.onclick = e => { if(e.target===ov) ov.remove(); };
-    document.body.appendChild(ov);
-}
+
+function renameContactFromProfile(id, currentName) {
     const newName = prompt(`Своё имя для контакта:`, contactCustomNames[id] || currentName);
     if (newName === null) return;
     if (newName.trim()) contactCustomNames[id] = newName.trim();
