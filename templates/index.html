@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-    <title>WayChat</title>
+    <title>VartoChat</title>
 
     <link rel="apple-touch-icon" sizes="180x180" href="/static/logo.png">
     <link rel="icon" type="image/png" sizes="512x512" href="/static/logo.png">
@@ -14,7 +14,7 @@
 
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="WayChat">
+    <meta name="apple-mobile-web-app-title" content="VartoChat">
     <meta name="theme-color" content="#000000">
 
     <meta name="mobile-web-app-capable" content="yes">
@@ -59,7 +59,7 @@
 <body class="bg-black">
 
     <div id="user-data-bridge"
-         data-user='{{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar} | tojson | safe }}'
+         data-user='{{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar, "bio": current_user.bio or "", "phone": current_user.phone or "", "birthday": current_user.birthday.isoformat() if current_user.birthday else None} | tojson | safe }}'
          style="display: none;">
     </div>
 
