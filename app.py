@@ -304,29 +304,28 @@ app.config.update(
 CORS(app, supports_credentials=True, origins=['*'])
 
 def upload_to_cloudinary(file_obj, folder='waychat'):
-    """Загружает файл в Cloudinary через прямой HTTP запрос без SDK."""
-    import hashlib, time as _time, urllib.request, urllib.parse
+    """Загружает файл в Cloudinary через SDK."""
     cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
     api_key    = os.environ.get('CLOUDINARY_API_KEY', '')
     api_secret = os.environ.get('CLOUDINARY_API_SECRET', '')
     if not all([cloud_name, api_key, api_secret]):
+        app.logger.error('Cloudinary env vars missing')
         return None
     try:
-        timestamp = str(int(_time.time()))
-        params_to_sign = f'folder={folder}&timestamp={timestamp}'
-        signature = hashlib.sha1(f'{params_to_sign}{api_secret}'.encode()).hexdigest()
-        
-        import cloudinary, cloudinary.uploader
-        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
+        import cloudinary
+        import cloudinary.uploader
+        cloudinary.config(
+            cloud_name = cloud_name,
+            api_key    = api_key,
+            api_secret = api_secret,
+            secure     = True
+        )
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
         result = cloudinary.uploader.upload(
             file_obj,
-            folder=folder,
-            resource_type='auto',
-            api_key=api_key,
-            timestamp=timestamp,
-            signature=signature,
+            folder        = folder,
+            resource_type = 'auto',
         )
         return result.get('secure_url')
     except Exception as e:
@@ -1665,11 +1664,10 @@ def upload_avatar():
             except Exception:
                 pass
 
-    filename = f'ava_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}'
     file.seek(0)
     url = upload_to_cloudinary(file, folder='waychat/avatars')
     if not url:
-        return jsonify({'success': False, 'error': 'Ошибка загрузки. Проверьте настройки Cloudinary.'}), 500
+        return jsonify({'success': False, 'error': 'Ошибка загрузки в Cloudinary'}), 500
     current_user.avatar = url
     db.session.commit()
     current_user.invalidate_cache()
@@ -1722,7 +1720,6 @@ def upload_media():
     if not ext:
         ext = {'image': 'jpg', 'video': 'mp4', 'audio': 'ogg'}.get(file_type, 'bin')
 
-    filename = f'msg_{current_user.id}_{uuid.uuid4().hex[:12]}.{ext}'
     file.seek(0)
     url = upload_to_cloudinary(file, folder='waychat/messages')
     if not url:
