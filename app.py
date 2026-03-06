@@ -307,13 +307,13 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
     try:
         import cloudinary
         import cloudinary.uploader
-        
+
         cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
         api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
         api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
-        
+
         if not all([cloud_name, api_key, api_secret]):
-            app.logger.error('Cloudinary env vars missing')
+            print('Cloudinary env vars missing')
             return None
 
         cloudinary.config(
@@ -321,23 +321,26 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
             api_key    = api_key,
             api_secret = api_secret,
             secure     = True,
-            signature_algorithm = 'sha256'
         )
-        
+
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
-            
+
         result = cloudinary.uploader.upload(
             file_obj,
-            folder        = folder,
-            resource_type = 'auto',
+            folder          = folder,
+            resource_type   = 'auto',
+            unique_filename = True,
         )
-        return result.get('secure_url')
+        url = result.get('secure_url')
+        print(f'Cloudinary OK: {url}')
+        return url
+
     except Exception as e:
-    import traceback
-    app.logger.error(f'Cloudinary upload error: {e}')
-    app.logger.error(f'Traceback: {traceback.format_exc()}')
-    return None
+        import traceback
+        print(f'Cloudinary ERROR: {e}')
+        print(traceback.format_exc())
+        return None
 
 # ══════════════════════════════════════════════════════════
 #  МОДЕЛИ
@@ -910,12 +913,17 @@ def vapid_public_key():
 
 @app.route('/sw.js')
 def service_worker():
-    from flask import send_from_directory
-    resp = send_from_directory(os.path.join(BASE_DIR, 'static'), 'sw.js')
-    resp.headers['Content-Type']  = 'application/javascript'
-    resp.headers['Cache-Control'] = 'no-cache, no-store'
-    resp.headers['Service-Worker-Allowed'] = '/'
-    return resp
+    from flask import Response
+    sw_path = os.path.join(BASE_DIR, 'sw.js')  # корень, не static
+    try:
+        with open(sw_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        resp = Response(content, mimetype='application/javascript')
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Service-Worker-Allowed'] = '/'
+        return resp
+    except FileNotFoundError:
+        return Response('// sw not found', mimetype='application/javascript', status=404)
 
 
 @app.route('/manifest.json')
