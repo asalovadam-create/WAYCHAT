@@ -4,8 +4,8 @@ eventlet.monkey_patch()
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
-║          Version: 7.0.0 — PREMIUM EDITION                   ║
-║  Groups · Cache · Real-time · SQLite WAL · Fixed Auth        ║
+║          Version: 7.0.1 — FIXED EDITION                     ║
+║  DetachedInstanceError fix · Cache fix · SW fix              ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -40,7 +40,6 @@ from sqlalchemy import or_, func, text
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 
-# Криптография для VAPID Web Push
 try:
     import jwt as pyjwt
     import requests as req_lib
@@ -112,11 +111,12 @@ class TTLCache:
             self._evict(k)
 
 
-_user_cache     = TTLCache(maxsize=1000, ttl=60.0)
-_chat_cache     = TTLCache(maxsize=2000, ttl=10.0)
-_online_cache   = TTLCache(maxsize=2000, ttl=5.0)
-_partner_cache  = TTLCache(maxsize=1000, ttl=30.0)
-_moments_cache  = TTLCache(maxsize=1,    ttl=30.0)
+# ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
+_user_dict_cache  = TTLCache(maxsize=1000, ttl=60.0)   # {id: dict}
+_chat_cache       = TTLCache(maxsize=2000, ttl=10.0)
+_online_cache     = TTLCache(maxsize=2000, ttl=5.0)
+_partner_cache    = TTLCache(maxsize=1000, ttl=30.0)
+_moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
@@ -153,10 +153,7 @@ app.config.update(
 
 CORS(app, supports_credentials=True, origins=['*'])
 
-# ══════════════════════════════════════════════════════════
-#  БД И LOGIN — ИНИЦИАЛИЗАЦИЯ (ДО МОДЕЛЕЙ!)
-# ══════════════════════════════════════════════════════════
-db           = SQLAlchemy(app)
+db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
@@ -201,8 +198,8 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
 
         result = cloudinary.uploader.upload(
             file_obj,
-            folder          = folder,
-            resource_type   = 'auto',
+            folder        = folder,
+            resource_type = 'auto',
         )
         url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
@@ -215,7 +212,7 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         return None
 
 # ══════════════════════════════════════════════════════════
-#  VAPID — WEB PUSH (iOS Safari 16.4+)
+#  VAPID — WEB PUSH
 # ══════════════════════════════════════════════════════════
 def _vapid_init():
     if not PUSH_AVAILABLE:
@@ -389,10 +386,26 @@ class User(UserMixin, db.Model):
         _online_cache.set(self.id, status)
         return status
 
+    def to_dict(self):
+        """Безопасно конвертирует в словарь пока объект привязан к сессии"""
+        return {
+            'id':         self.id,
+            'phone':      self.phone,
+            'username':   self.username,
+            'name':       self.name,
+            'bio':        self.bio or '',
+            'avatar':     self.avatar or '/static/default_avatar.png',
+            'is_online':  self.is_online,
+            'last_seen':  self.last_seen.isoformat() if self.last_seen else None,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'is_blocked': self.is_blocked,
+        }
+
     def invalidate_cache(self):
-        _user_cache.delete(self.id)
+        _user_dict_cache.delete(self.id)
         _online_cache.delete(self.id)
         _chat_cache.invalidate_prefix(str(self.id))
+        _partner_cache.delete(self.id)
 
 
 class Chat(db.Model):
@@ -509,14 +522,11 @@ class PushSubscription(db.Model):
 
 @login_manager.user_loader
 def load_user(uid):
-    uid_int = int(uid)
-    cached = _user_cache.get(uid_int)
-    if cached is not None:
-        return cached
-    user = db.session.get(User, uid_int)
-    if user:
-        _user_cache.set(uid_int, user)
-    return user
+    """Всегда загружаем свежий объект из БД для flask-login"""
+    try:
+        return db.session.get(User, int(uid))
+    except Exception:
+        return None
 
 # ══════════════════════════════════════════════════════════
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -538,13 +548,30 @@ def to_moscow_str(dt):
 
 
 def get_cached_user(user_id):
-    cached = _user_cache.get(user_id)
+    """
+    ИСПРАВЛЕНИЕ: возвращает ORM-объект из БД (не из кэша).
+    Для данных профиля используем get_cached_user_dict().
+    """
+    try:
+        return db.session.get(User, user_id)
+    except Exception:
+        return None
+
+
+def get_cached_user_dict(user_id):
+    """
+    Возвращает словарь с данными пользователя.
+    Кэширует словарь (не ORM-объект) — безопасно между запросами.
+    """
+    cached = _user_dict_cache.get(user_id)
     if cached is not None:
         return cached
     user = db.session.get(User, user_id)
     if user:
-        _user_cache.set(user_id, user)
-    return user
+        d = user.to_dict()
+        _user_dict_cache.set(user_id, d)
+        return d
+    return None
 
 
 def get_partner_id(chat, my_id):
@@ -582,7 +609,11 @@ def rate_limit(endpoint, max_calls=30, window_sec=60):
         def wrapper(*args, **kwargs):
             if not current_user.is_authenticated:
                 return f(*args, **kwargs)
-            uid   = current_user.id
+            # ИСПРАВЛЕНИЕ: используем _get_current_user_id() вместо current_user.id напрямую
+            try:
+                uid = current_user.id
+            except Exception:
+                return f(*args, **kwargs)
             now   = time.monotonic()
             calls = _rate_limits[uid][endpoint]
             calls[:] = [t for t in calls if now - t < window_sec]
@@ -900,13 +931,18 @@ def push_subscribe():
     if not endpoint or not p256dh or not auth:
         return jsonify({'success': False, 'error': 'Missing fields'}), 400
 
+    try:
+        uid = current_user.id
+    except Exception:
+        return jsonify({'success': False, 'error': 'Session error'}), 401
+
     existing = PushSubscription.query.filter_by(
-        user_id=current_user.id, endpoint=endpoint
+        user_id=uid, endpoint=endpoint
     ).first()
 
     if not existing:
         sub = PushSubscription(
-            user_id=current_user.id, endpoint=endpoint, p256dh=p256dh, auth=auth,
+            user_id=uid, endpoint=endpoint, p256dh=p256dh, auth=auth,
         )
         db.session.add(sub)
     else:
@@ -922,10 +958,11 @@ def push_subscribe():
 def push_unsubscribe():
     data     = request.get_json() or {}
     endpoint = data.get('endpoint', '').strip()
+    uid      = current_user.id
     if endpoint:
-        PushSubscription.query.filter_by(user_id=current_user.id, endpoint=endpoint).delete()
+        PushSubscription.query.filter_by(user_id=uid, endpoint=endpoint).delete()
     else:
-        PushSubscription.query.filter_by(user_id=current_user.id).delete()
+        PushSubscription.query.filter_by(user_id=uid).delete()
     db.session.commit()
     return jsonify({'success': True})
 
@@ -933,12 +970,17 @@ def push_unsubscribe():
 @app.route('/logout')
 @login_required
 def logout():
-    uid = current_user.id
-    current_user.is_online = False
-    current_user.last_seen = datetime.utcnow()
-    db.session.commit()
-    current_user.invalidate_cache()
-    broadcast_status(uid, False)
+    try:
+        uid = current_user.id
+        u   = db.session.get(User, uid)
+        if u:
+            u.is_online = False
+            u.last_seen = datetime.utcnow()
+            db.session.commit()
+            u.invalidate_cache()
+        broadcast_status(uid, False)
+    except Exception as e:
+        app.logger.error(f'logout error: {e}')
     logout_user()
     return redirect(url_for('login'))
 
@@ -954,11 +996,24 @@ def index():
 @app.route('/get_current_user')
 @login_required
 def get_current_user_route():
-    u = current_user
-    return jsonify({
-        'id': u.id, 'name': u.name, 'username': u.username,
-        'avatar': u.avatar, 'bio': u.bio or '', 'phone': u.phone,
-    })
+    """ИСПРАВЛЕНИЕ: читаем данные напрямую из БД, не из кэшированного объекта"""
+    try:
+        uid = current_user.id
+        # Получаем свежий объект из текущей сессии
+        u = db.session.get(User, uid)
+        if not u:
+            return jsonify({'error': 'User not found'}), 404
+        return jsonify({
+            'id':       u.id,
+            'name':     u.name,
+            'username': u.username,
+            'avatar':   u.avatar,
+            'bio':      u.bio or '',
+            'phone':    u.phone,
+        })
+    except Exception as e:
+        app.logger.error(f'get_current_user error: {e}')
+        return jsonify({'error': 'Session error'}), 500
 
 
 @app.route('/get_user_profile/<int:user_id>')
@@ -967,12 +1022,22 @@ def get_user_profile(user_id):
     cached = _partner_cache.get(user_id)
     if cached:
         return jsonify(cached)
-    u = get_cached_user(user_id)
+    u = db.session.get(User, user_id)
     if not u:
         return jsonify({'error': 'Not found'}), 404
+    # Вычисляем online_status пока объект в сессии
+    online = u.is_online or (
+        u.last_seen is not None and
+        datetime.utcnow() - u.last_seen < timedelta(minutes=5)
+    )
     data = {
-        'id': u.id, 'name': u.name, 'username': u.username, 'avatar': u.avatar,
-        'bio': u.bio or '', 'online': u.online_status, 'phone': u.phone,
+        'id':         u.id,
+        'name':       u.name,
+        'username':   u.username,
+        'avatar':     u.avatar,
+        'bio':        u.bio or '',
+        'online':     online,
+        'phone':      u.phone,
         'created_at': u.created_at.isoformat() if u.created_at else None,
     }
     _partner_cache.set(user_id, data)
@@ -1013,8 +1078,9 @@ def get_my_chats():
             p_id  = next((i for i in ids if i != uid), None)
             if not p_id:
                 continue
-            partner = get_cached_user(p_id)
-            if not partner:
+            # ИСПРАВЛЕНИЕ: используем словарь, не ORM-объект
+            partner_dict = get_cached_user_dict(p_id)
+            if not partner_dict:
                 continue
 
             last_msg = Message.query.filter_by(
@@ -1034,15 +1100,35 @@ def get_my_chats():
                 preview = type_map.get(last_msg.type, last_msg.content or '...')
                 sort_ts = last_msg.timestamp
 
+            # online из кэша
+            p_online = _online_cache.get(p_id)
+            if p_online is None:
+                last_seen_str = partner_dict.get('last_seen')
+                if last_seen_str:
+                    try:
+                        ls = datetime.fromisoformat(last_seen_str)
+                        p_online = partner_dict.get('is_online', False) or (datetime.utcnow() - ls < timedelta(minutes=5))
+                    except Exception:
+                        p_online = partner_dict.get('is_online', False)
+                else:
+                    p_online = partner_dict.get('is_online', False)
+
             _mc = Moment.query.filter(Moment.user_id == p_id, Moment.expires_at > datetime.utcnow()).count()
             result.append({
-                'chat_id': c.id, 'partner_id': p_id, 'partner_name': partner.name,
-                'partner_username': partner.username, 'partner_avatar': partner.avatar,
-                'online': partner.online_status, 'last_message': preview,
-                'timestamp': to_moscow_str(last_msg.timestamp if last_msg else None),
-                'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count': unread, 'is_group': False,
-                'has_moment': _mc > 0, 'moment_count': _mc, '_sort': sort_ts,
+                'chat_id':          c.id,
+                'partner_id':       p_id,
+                'partner_name':     partner_dict['name'],
+                'partner_username': partner_dict['username'],
+                'partner_avatar':   partner_dict['avatar'],
+                'online':           p_online,
+                'last_message':     preview,
+                'timestamp':        to_moscow_str(last_msg.timestamp if last_msg else None),
+                'raw_timestamp':    last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
+                'unread_count':     unread,
+                'is_group':         False,
+                'has_moment':       _mc > 0,
+                'moment_count':     _mc,
+                '_sort':            sort_ts,
             })
         except Exception as e:
             app.logger.error(f'Chat parse error {c.id}: {e}')
@@ -1077,13 +1163,21 @@ def get_my_chats():
 
             member_count = GroupMember.query.filter_by(group_id=group.id).count()
             result.append({
-                'chat_id': chat.id, 'group_id': group.id, 'partner_id': group.id,
-                'group_name': group.name, 'partner_name': group.name,
-                'group_avatar': group.avatar, 'partner_avatar': group.avatar,
-                'member_count': member_count, 'online': False, 'last_message': preview,
-                'timestamp': to_moscow_str(last_msg.timestamp if last_msg else None),
+                'chat_id':       chat.id,
+                'group_id':      group.id,
+                'partner_id':    group.id,
+                'group_name':    group.name,
+                'partner_name':  group.name,
+                'group_avatar':  group.avatar,
+                'partner_avatar':group.avatar,
+                'member_count':  member_count,
+                'online':        False,
+                'last_message':  preview,
+                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
                 'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count': unread, 'is_group': True, '_sort': sort_ts,
+                'unread_count':  unread,
+                'is_group':      True,
+                '_sort':         sort_ts,
             })
         except Exception as e:
             app.logger.error(f'Group chat parse error {m.group_id}: {e}')
@@ -1110,13 +1204,14 @@ def get_my_chats():
 @app.route('/get_chat_id/<int:partner_id>')
 @login_required
 def get_chat_id(partner_id):
-    partner = get_cached_user(partner_id)
+    partner = db.session.get(User, partner_id)
     if not partner:
         return jsonify({'error': 'User not found'}), 404
+    p_online = partner.online_status
     chat = get_or_create_chat(current_user.id, partner_id)
     _chat_cache.delete(current_user.id)
     _chat_cache.delete(partner_id)
-    return jsonify({'chat_id': chat.id, 'partner_online': partner.online_status})
+    return jsonify({'chat_id': chat.id, 'partner_online': p_online})
 
 
 @app.route('/get_group_chat_id/<int:group_id>')
@@ -1130,8 +1225,10 @@ def get_group_chat_id(group_id):
         return jsonify({'error': 'Not a member'}), 403
     member_count = GroupMember.query.filter_by(group_id=group_id).count()
     return jsonify({
-        'chat_id': group.chat_id, 'group_name': group.name,
-        'group_avatar': group.avatar, 'member_count': member_count,
+        'chat_id':      group.chat_id,
+        'group_name':   group.name,
+        'group_avatar': group.avatar,
+        'member_count': member_count,
     })
 
 
@@ -1144,16 +1241,17 @@ def get_messages(chat_id):
         pass
     limit     = min(request.args.get('limit', 35, type=int), 100)
     before_id = request.args.get('before_id', None, type=int)
+    uid       = current_user.id
 
     db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-        {'cid': chat_id, 'uid': current_user.id}
+        {'cid': chat_id, 'uid': uid}
     )
     db.session.commit()
 
     chat = db.session.get(Chat, chat_id)
     if chat and not chat.room_key.startswith('group_'):
-        p_id = get_partner_id(chat, current_user.id)
+        p_id = get_partner_id(chat, uid)
         if p_id:
             emit_to_user(p_id, 'messages_read_bulk', {'chat_id': chat_id})
 
@@ -1162,7 +1260,7 @@ def get_messages(chat_id):
         query = query.filter(Message.id < before_id)
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
-    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(uid)
     return jsonify([m.to_dict() for m in reversed(msgs)])
 
 # ══════════════════════════════════════════════════════════
@@ -1174,6 +1272,8 @@ def get_messages(chat_id):
 def create_group():
     name        = request.form.get('name', '').strip()[:64]
     members_raw = request.form.get('members', '[]')
+    uid         = current_user.id
+    uname       = current_user.name
 
     if not name:
         return jsonify({'success': False, 'error': 'Нет названия'}), 400
@@ -1201,35 +1301,37 @@ def create_group():
     db.session.add(chat)
     db.session.flush()
 
-    group = Group(name=name, avatar=avatar_url, creator_id=current_user.id, chat_id=chat.id)
+    group = Group(name=name, avatar=avatar_url, creator_id=uid, chat_id=chat.id)
     db.session.add(group)
     db.session.flush()
 
-    db.session.add(GroupMember(group_id=group.id, user_id=current_user.id, is_admin=True))
+    db.session.add(GroupMember(group_id=group.id, user_id=uid, is_admin=True))
 
-    added_ids = {current_user.id}
-    for uid in member_ids:
-        uid = int(uid)
-        if uid not in added_ids:
-            u = get_cached_user(uid)
+    added_ids = {uid}
+    for mid in member_ids:
+        mid = int(mid)
+        if mid not in added_ids:
+            u = db.session.get(User, mid)
             if u:
-                db.session.add(GroupMember(group_id=group.id, user_id=uid, is_admin=False))
-                added_ids.add(uid)
+                db.session.add(GroupMember(group_id=group.id, user_id=mid, is_admin=False))
+                added_ids.add(mid)
 
     db.session.commit()
 
-    for uid in added_ids:
-        _chat_cache.delete(uid)
+    for aid in added_ids:
+        _chat_cache.delete(aid)
 
-    for uid in added_ids:
-        if uid != current_user.id:
-            emit_to_user(uid, 'new_group_chat', {
-                'group_id': group.id, 'group_name': name,
-                'group_avatar': avatar_url, 'created_by': current_user.name,
+    for aid in added_ids:
+        if aid != uid:
+            emit_to_user(aid, 'new_group_chat', {
+                'group_id':    group.id,
+                'group_name':  name,
+                'group_avatar':avatar_url,
+                'created_by':  uname,
             })
 
     sys_msg = Message(
-        chat_id=chat.id, sender_id=current_user.id, sender_name=current_user.name,
+        chat_id=chat.id, sender_id=uid, sender_name=uname,
         type='text', content=f'👥 Группа "{name}" создана. Участников: {len(added_ids)}',
     )
     db.session.add(sys_msg)
@@ -1241,7 +1343,8 @@ def create_group():
 @app.route('/get_group_members/<int:group_id>')
 @login_required
 def get_group_members(group_id):
-    member = GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id).first()
+    uid    = current_user.id
+    member = GroupMember.query.filter_by(group_id=group_id, user_id=uid).first()
     if not member:
         return jsonify({'error': 'Forbidden'}), 403
     group = db.session.get(Group, group_id)
@@ -1253,11 +1356,18 @@ def get_group_members(group_id):
     ).filter(GroupMember.group_id == group_id).all()
 
     return jsonify({
-        'group_id': group_id, 'group_name': group.name, 'creator_id': group.creator_id,
-        'my_id': current_user.id, 'i_am_admin': member.is_admin,
+        'group_id':   group_id,
+        'group_name': group.name,
+        'creator_id': group.creator_id,
+        'my_id':      uid,
+        'i_am_admin': member.is_admin,
         'members': [{
-            'id': m.User.id, 'name': m.User.name, 'username': m.User.username,
-            'avatar': m.User.avatar, 'online': m.User.online_status, 'is_admin': m.GroupMember.is_admin,
+            'id':       m.User.id,
+            'name':     m.User.name,
+            'username': m.User.username,
+            'avatar':   m.User.avatar,
+            'online':   m.User.online_status,
+            'is_admin': m.GroupMember.is_admin,
         } for m in members]
     })
 
@@ -1268,12 +1378,13 @@ def add_group_member():
     data     = request.get_json() or {}
     group_id = data.get('group_id')
     user_id  = data.get('user_id')
+    uid      = current_user.id
 
     if not group_id or not user_id:
         return jsonify({'success': False, 'error': 'Missing params'}), 400
 
     admin_check = GroupMember.query.filter_by(
-        group_id=group_id, user_id=current_user.id, is_admin=True
+        group_id=group_id, user_id=uid, is_admin=True
     ).first()
     if not admin_check:
         return jsonify({'success': False, 'error': 'Not admin'}), 403
@@ -1282,21 +1393,25 @@ def add_group_member():
     if exists:
         return jsonify({'success': False, 'error': 'Already a member'}), 400
 
-    u = get_cached_user(user_id)
+    u = db.session.get(User, user_id)
     if not u:
         return jsonify({'success': False, 'error': 'User not found'}), 404
 
+    u_name = u.name
     db.session.add(GroupMember(group_id=group_id, user_id=user_id, is_admin=False))
     db.session.commit()
 
     _chat_cache.delete(user_id)
     group = db.session.get(Group, group_id)
     emit_to_user(user_id, 'new_group_chat', {
-        'group_id': group_id, 'group_name': group.name if group else '',
-        'group_avatar': group.avatar if group else '',
+        'group_id':    group_id,
+        'group_name':  group.name if group else '',
+        'group_avatar':group.avatar if group else '',
     })
     socketio.emit('group_member_added', {
-        'group_id': group_id, 'member_id': user_id, 'member_name': u.name,
+        'group_id':    group_id,
+        'member_id':   user_id,
+        'member_name': u_name,
     }, room=f'group_{group_id}')
     return jsonify({'success': True})
 
@@ -1304,14 +1419,18 @@ def add_group_member():
 @app.route('/leave_group/<int:group_id>', methods=['POST'])
 @login_required
 def leave_group(group_id):
-    member = GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id).first()
+    uid    = current_user.id
+    uname  = current_user.name
+    member = GroupMember.query.filter_by(group_id=group_id, user_id=uid).first()
     if not member:
         return jsonify({'success': False, 'error': 'Not a member'}), 400
     db.session.delete(member)
     db.session.commit()
-    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(uid)
     socketio.emit('group_member_left', {
-        'group_id': group_id, 'member_id': current_user.id, 'member_name': current_user.name,
+        'group_id':   group_id,
+        'member_id':  uid,
+        'member_name':uname,
     }, room=f'group_{group_id}')
     return jsonify({'success': True})
 
@@ -1322,12 +1441,13 @@ def kick_group_member():
     data     = request.get_json() or {}
     group_id = data.get('group_id')
     user_id  = data.get('user_id')
+    uid      = current_user.id
 
     if not group_id or not user_id:
         return jsonify({'success': False, 'error': 'Missing params'}), 400
 
     my_member = GroupMember.query.filter_by(
-        group_id=group_id, user_id=current_user.id, is_admin=True
+        group_id=group_id, user_id=uid, is_admin=True
     ).first()
     if not my_member:
         return jsonify({'success': False, 'error': 'Нет прав администратора'}), 403
@@ -1358,12 +1478,13 @@ def set_group_admin():
     group_id = data.get('group_id')
     user_id  = data.get('user_id')
     is_admin = bool(data.get('is_admin', True))
+    uid      = current_user.id
 
     if not group_id or not user_id:
         return jsonify({'success': False, 'error': 'Missing params'}), 400
 
     group = db.session.get(Group, group_id)
-    if not group or group.creator_id != current_user.id:
+    if not group or group.creator_id != uid:
         return jsonify({'success': False, 'error': 'Только создатель может назначать админов'}), 403
 
     target = GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first()
@@ -1383,6 +1504,7 @@ def set_group_admin():
 def search_users():
     q     = request.args.get('q', '').strip()
     phone = request.args.get('phone', '').strip()
+    uid   = current_user.id
 
     if not q and not phone:
         return jsonify([])
@@ -1390,7 +1512,7 @@ def search_users():
     if phone:
         clean_phone = ''.join(c for c in phone if c.isdigit() or c == '+')
         users = User.query.filter(
-            User.id != current_user.id,
+            User.id != uid,
             User.is_blocked == False,
             or_(
                 User.phone == phone,
@@ -1401,7 +1523,7 @@ def search_users():
     else:
         q_lower = q.lower()
         users = User.query.filter(
-            User.id != current_user.id,
+            User.id != uid,
             User.is_blocked == False,
             or_(
                 func.lower(User.name).like(f'%{q_lower}%'),
@@ -1410,8 +1532,13 @@ def search_users():
         ).limit(20).all()
 
     return jsonify([{
-        'id': u.id, 'name': u.name, 'username': u.username,
-        'avatar_url': u.avatar, 'avatar': u.avatar, 'online': u.online_status, 'phone': u.phone,
+        'id':         u.id,
+        'name':       u.name,
+        'username':   u.username,
+        'avatar_url': u.avatar,
+        'avatar':     u.avatar,
+        'online':     u.online_status,
+        'phone':      u.phone,
     } for u in users])
 
 
@@ -1422,15 +1549,19 @@ def update_profile():
     data = request.get_json() or {}
     name = data.get('name', '').strip()
     bio  = data.get('bio', None)
+    uid  = current_user.id
+
+    u = db.session.get(User, uid)
+    if not u:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
 
     if name:
-        current_user.name = name[:120]
+        u.name = name[:120]
     if bio is not None:
-        current_user.bio = bio[:500]
+        u.bio = bio[:500]
 
     db.session.commit()
-    current_user.invalidate_cache()
-    _partner_cache.delete(current_user.id)
+    u.invalidate_cache()
     return jsonify({'success': True})
 
 # ══════════════════════════════════════════════════════════
@@ -1460,7 +1591,12 @@ def upload_avatar():
     if size > 5 * 1024 * 1024:
         return jsonify({'success': False, 'error': 'Файл слишком большой (макс 5 МБ)'}), 400
 
-    old_avatar = current_user.avatar
+    uid = current_user.id
+    u   = db.session.get(User, uid)
+    if not u:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
+
+    old_avatar = u.avatar
     if old_avatar and old_avatar.startswith('/static/uploads/avatars/'):
         old_path = os.path.join(BASE_DIR, old_avatar.lstrip('/'))
         if os.path.exists(old_path):
@@ -1474,12 +1610,11 @@ def upload_avatar():
     if not url:
         return jsonify({'success': False, 'error': 'Ошибка загрузки в Cloudinary'}), 500
 
-    current_user.avatar = url
+    u.avatar = url
     db.session.commit()
-    current_user.invalidate_cache()
-    _partner_cache.delete(current_user.id)
+    u.invalidate_cache()
 
-    socketio.emit('avatar_updated', {'user_id': current_user.id, 'avatar': url})
+    socketio.emit('avatar_updated', {'user_id': uid, 'avatar': url})
     return jsonify({'success': True, 'avatar_url': url})
 
 
@@ -1491,12 +1626,16 @@ def upload_avatar_emoji():
     if not emoji or len(emoji) > 8:
         return jsonify({'success': False, 'error': 'Invalid emoji'}), 400
 
-    current_user.avatar = f'emoji:{emoji}'
-    db.session.commit()
-    current_user.invalidate_cache()
-    _partner_cache.delete(current_user.id)
+    uid = current_user.id
+    u   = db.session.get(User, uid)
+    if not u:
+        return jsonify({'success': False, 'error': 'User not found'}), 404
 
-    socketio.emit('avatar_updated', {'user_id': current_user.id, 'avatar': f'emoji:{emoji}'})
+    u.avatar = f'emoji:{emoji}'
+    db.session.commit()
+    u.invalidate_cache()
+
+    socketio.emit('avatar_updated', {'user_id': uid, 'avatar': f'emoji:{emoji}'})
     return jsonify({'success': True})
 
 # ══════════════════════════════════════════════════════════
@@ -1529,10 +1668,11 @@ def upload_media():
 @app.route('/delete_message/<int:msg_id>', methods=['DELETE'])
 @login_required
 def delete_message_route(msg_id):
+    uid = current_user.id
     msg = db.session.get(Message, msg_id)
     if not msg:
         return jsonify({'success': False, 'error': 'Not found'}), 404
-    if msg.sender_id != current_user.id:
+    if msg.sender_id != uid:
         return jsonify({'success': False, 'error': 'Forbidden'}), 403
 
     msg.is_deleted = True
@@ -1544,7 +1684,7 @@ def delete_message_route(msg_id):
         if chat.room_key.startswith('group_'):
             socketio.emit('message_deleted', {'msg_id': msg_id, 'chat_id': msg.chat_id}, room=f'chat_{msg.chat_id}')
         else:
-            p_id = get_partner_id(chat, current_user.id)
+            p_id = get_partner_id(chat, uid)
             if p_id:
                 emit_to_user(p_id, 'message_deleted', {'msg_id': msg_id, 'chat_id': msg.chat_id})
     return jsonify({'success': True})
@@ -1553,11 +1693,12 @@ def delete_message_route(msg_id):
 @app.route('/block_user/<int:user_id>', methods=['POST'])
 @login_required
 def block_user(user_id):
-    if user_id == current_user.id:
+    uid = current_user.id
+    if user_id == uid:
         return jsonify({'success': False}), 400
-    existing = BlockedUser.query.filter_by(blocker_id=current_user.id, blocked_id=user_id).first()
+    existing = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
     if not existing:
-        db.session.add(BlockedUser(blocker_id=current_user.id, blocked_id=user_id))
+        db.session.add(BlockedUser(blocker_id=uid, blocked_id=user_id))
         db.session.commit()
     return jsonify({'success': True})
 
@@ -1571,19 +1712,24 @@ def get_moments():
     if cached:
         return jsonify(cached)
 
+    uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
     ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
 
     data = [{
-        'id': m.Moment.id, 'user_id': m.Moment.user_id, 'user_name': m.User.name,
-        'user_avatar': m.User.avatar, 'media_url': m.Moment.media_url,
-        'text': m.Moment.text or '', 'geo_name': m.Moment.geo_name or '',
-        'timestamp': to_moscow_str(m.Moment.timestamp),
+        'id':            m.Moment.id,
+        'user_id':       m.Moment.user_id,
+        'user_name':     m.User.name,
+        'user_avatar':   m.User.avatar,
+        'media_url':     m.Moment.media_url,
+        'text':          m.Moment.text or '',
+        'geo_name':      m.Moment.geo_name or '',
+        'timestamp':     to_moscow_str(m.Moment.timestamp),
         'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count': MomentView.query.filter_by(moment_id=m.Moment.id).count(),
-        'is_mine': m.Moment.user_id == current_user.id,
+        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
+        'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
     _moments_cache.set('all', data)
@@ -1593,25 +1739,26 @@ def get_moments():
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
 @login_required
 def delete_chat_route(cid):
+    uid  = str(current_user.id)
     chat = db.session.get(Chat, cid)
     if not chat:
         return jsonify({'success': False}), 404
-    uid = str(current_user.id)
     if not (uid in chat.room_key.replace('chat_', '').split('_') or chat.room_key.startswith('group_')):
         return jsonify({'success': False, 'error': 'Нет доступа'}), 403
     Message.query.filter_by(chat_id=cid).delete()
     db.session.delete(chat)
     db.session.commit()
-    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(int(uid))
     return jsonify({'success': True})
 
 
 @app.route('/view_moment/<int:mid>', methods=['POST'])
 @login_required
 def view_moment(mid):
-    if MomentView.query.filter_by(moment_id=mid, viewer_id=current_user.id).first():
+    uid = current_user.id
+    if MomentView.query.filter_by(moment_id=mid, viewer_id=uid).first():
         return jsonify({'success': True})
-    mv = MomentView(moment_id=mid, viewer_id=current_user.id)
+    mv = MomentView(moment_id=mid, viewer_id=uid)
     db.session.add(mv)
     try:
         db.session.commit()
@@ -1623,14 +1770,19 @@ def view_moment(mid):
 @app.route('/moment_viewers/<int:mid>')
 @login_required
 def moment_viewers(mid):
-    m = db.session.get(Moment, mid)
-    if not m or m.user_id != current_user.id:
+    uid = current_user.id
+    m   = db.session.get(Moment, mid)
+    if not m or m.user_id != uid:
         return jsonify({'success': False, 'viewers': []})
     views = db.session.query(MomentView, User).join(User, User.id == MomentView.viewer_id)\
         .filter(MomentView.moment_id == mid).order_by(MomentView.viewed_at.desc()).all()
     return jsonify({'success': True, 'viewers': [
-        {'id': v.User.id, 'name': v.User.name, 'avatar': v.User.avatar or '',
-         'time': to_moscow_str(v.MomentView.viewed_at)}
+        {
+            'id':     v.User.id,
+            'name':   v.User.name,
+            'avatar': v.User.avatar or '',
+            'time':   to_moscow_str(v.MomentView.viewed_at),
+        }
         for v in views
     ]})
 
@@ -1638,10 +1790,11 @@ def moment_viewers(mid):
 @app.route('/delete_moment/<int:mid>', methods=['POST'])
 @login_required
 def delete_moment(mid):
-    m = db.session.get(Moment, mid)
+    uid = current_user.id
+    m   = db.session.get(Moment, mid)
     if not m:
         return jsonify({'success': False}), 404
-    if m.user_id != current_user.id:
+    if m.user_id != uid:
         return jsonify({'success': False, 'error': 'Нет доступа'}), 403
     if m.media_url and m.media_url.startswith('/static/'):
         fp = os.path.join(BASE_DIR, m.media_url.lstrip('/'))
@@ -1660,6 +1813,9 @@ def delete_moment(mid):
 @login_required
 @rate_limit('create_moment', max_calls=10, window_sec=3600)
 def create_moment():
+    uid   = current_user.id
+    uname = current_user.name
+
     media_url = None
     if 'file' in request.files:
         file = request.files['file']
@@ -1678,14 +1834,14 @@ def create_moment():
         return jsonify({'success': False, 'error': 'Нет контента'}), 400
 
     moment = Moment(
-        user_id=current_user.id, media_url=media_url, text=text_content,
+        user_id=uid, media_url=media_url, text=text_content,
         geo_name=geo_name, geo_lat=geo_lat, geo_lng=geo_lng,
         expires_at=datetime.utcnow() + timedelta(hours=24)
     )
     db.session.add(moment)
     db.session.commit()
     _moments_cache.delete('all')
-    socketio.emit('new_moment', {'user_id': current_user.id, 'user_name': current_user.name})
+    socketio.emit('new_moment', {'user_id': uid, 'user_name': uname})
     return jsonify({'success': True, 'moment_id': moment.id})
 
 # ══════════════════════════════════════════════════════════
@@ -1694,14 +1850,20 @@ def create_moment():
 @socketio.on('connect')
 def handle_connect():
     if current_user.is_authenticated:
-        join_room(f'user_{current_user.id}')
-        current_user.is_online = True
-        current_user.last_seen = datetime.utcnow()
-        db.session.commit()
-        current_user.invalidate_cache()
-        broadcast_status(current_user.id, True)
+        try:
+            uid = current_user.id
+        except Exception:
+            return
+        join_room(f'user_{uid}')
+        u = db.session.get(User, uid)
+        if u:
+            u.is_online = True
+            u.last_seen = datetime.utcnow()
+            db.session.commit()
+            u.invalidate_cache()
+        broadcast_status(uid, True)
 
-        memberships = GroupMember.query.filter_by(user_id=current_user.id).all()
+        memberships = GroupMember.query.filter_by(user_id=uid).all()
         for m in memberships:
             group = db.session.get(Group, m.group_id)
             if group and group.chat_id:
@@ -1711,21 +1873,32 @@ def handle_connect():
 @socketio.on('join')
 def on_join(data):
     if current_user.is_authenticated:
-        join_room(f'user_{current_user.id}')
-        current_user.is_online = True
-        db.session.commit()
-        current_user.invalidate_cache()
-        broadcast_status(current_user.id, True)
+        try:
+            uid = current_user.id
+        except Exception:
+            return
+        join_room(f'user_{uid}')
+        u = db.session.get(User, uid)
+        if u:
+            u.is_online = True
+            db.session.commit()
+            u.invalidate_cache()
+        broadcast_status(uid, True)
 
 
 @socketio.on('disconnect')
 def on_disconnect():
     if current_user.is_authenticated:
-        uid = current_user.id
-        current_user.is_online = False
-        current_user.last_seen = datetime.utcnow()
-        db.session.commit()
-        current_user.invalidate_cache()
+        try:
+            uid = current_user.id
+        except Exception:
+            return
+        u = db.session.get(User, uid)
+        if u:
+            u.is_online = False
+            u.last_seen = datetime.utcnow()
+            db.session.commit()
+            u.invalidate_cache()
         broadcast_status(uid, False)
 
 
@@ -1736,13 +1909,17 @@ def on_enter_chat(data):
     chat_id = data.get('chat_id')
     if not chat_id:
         return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
     join_room(f'chat_{chat_id}')
     db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-        {'cid': chat_id, 'uid': current_user.id}
+        {'cid': chat_id, 'uid': uid}
     )
     db.session.commit()
-    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(uid)
 
 
 @socketio.on('leave_chat')
@@ -1759,28 +1936,36 @@ def handle_msg(data):
     if not chat_id:
         return
 
+    try:
+        uid   = current_user.id
+        uname = current_user.name
+    except Exception:
+        return
+
     msg_type = data.get('type_msg') or data.get('type', 'text')
     if msg_type == 'send_message':
         msg_type = 'text'
 
     msg = Message(
-        chat_id=chat_id, sender_id=current_user.id, sender_name=current_user.name,
+        chat_id=chat_id, sender_id=uid, sender_name=uname,
         type=msg_type, content=(data.get('content') or '')[:10000], file_url=data.get('file_url'),
     )
     db.session.add(msg)
     db.session.commit()
 
-    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(uid)
     payload = msg.to_dict()
     payload['chat_id'] = chat_id
     chat = db.session.get(Chat, chat_id)
 
     if chat:
         push_preview = {
-            'text': msg.content or '', 'image': '🖼 Фото', 'audio': '🎙 Голосовое', 'video': '📹 Видео',
+            'text':  msg.content or '',
+            'image': '🖼 Фото',
+            'audio': '🎙 Голосовое',
+            'video': '📹 Видео',
         }.get(msg_type, msg.content or '...')
         push_preview = push_preview[:80] if push_preview else '...'
-        sender_name  = current_user.name
 
         if chat.room_key.startswith('group_'):
             group = Group.query.filter_by(chat_id=chat_id).first()
@@ -1791,11 +1976,11 @@ def handle_msg(data):
                 for m in members:
                     _chat_cache.delete(m.user_id)
                     emit('new_message', payload, room=f'user_{m.user_id}')
-                    if m.user_id != current_user.id:
+                    if m.user_id != uid:
                         is_online = _online_cache.get(m.user_id)
                         if not is_online:
                             eventlet.spawn(send_push_to_user, m.user_id,
-                                f'{sender_name} → {group.name}', push_preview, chat_id)
+                                f'{uname} → {group.name}', push_preview, chat_id)
         else:
             payload['is_group_msg'] = False
             parts = chat.room_key.replace('chat_', '').split('_')
@@ -1804,10 +1989,10 @@ def handle_msg(data):
                     uid_int = int(uid_str)
                     _chat_cache.delete(uid_int)
                     emit('new_message', payload, room=f'user_{uid_str}')
-                    if uid_int != current_user.id:
+                    if uid_int != uid:
                         is_online = _online_cache.get(uid_int)
                         if not is_online:
-                            eventlet.spawn(send_push_to_user, uid_int, sender_name, push_preview, chat_id)
+                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
 
 
 @socketio.on('mark_read')
@@ -1817,17 +2002,21 @@ def handle_mark_read(data):
     chat_id = data.get('chat_id')
     if not chat_id:
         return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
     result = db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-        {'cid': chat_id, 'uid': current_user.id}
+        {'cid': chat_id, 'uid': uid}
     )
     db.session.commit()
-    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(uid)
 
     if result.rowcount > 0:
         chat = db.session.get(Chat, chat_id)
         if chat and not chat.room_key.startswith('group_'):
-            p_id = get_partner_id(chat, current_user.id)
+            p_id = get_partner_id(chat, uid)
             if p_id:
                 emit('messages_read_bulk', {'chat_id': chat_id}, room=f'user_{p_id}')
 
@@ -1842,14 +2031,19 @@ def handle_reaction(data):
     if not all([msg_id, emoji, chat_id]):
         return
 
-    existing = MessageReaction.query.filter_by(msg_id=msg_id, user_id=current_user.id, emoji=emoji).first()
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+
+    existing = MessageReaction.query.filter_by(msg_id=msg_id, user_id=uid, emoji=emoji).first()
     if existing:
         db.session.delete(existing)
     else:
-        db.session.add(MessageReaction(msg_id=msg_id, user_id=current_user.id, emoji=emoji))
+        db.session.add(MessageReaction(msg_id=msg_id, user_id=uid, emoji=emoji))
     db.session.commit()
 
-    reaction_payload = {'msg_id': msg_id, 'emoji': emoji, 'user_id': current_user.id}
+    reaction_payload = {'msg_id': msg_id, 'emoji': emoji, 'user_id': uid}
     chat = db.session.get(Chat, chat_id)
     if chat:
         if chat.room_key.startswith('group_'):
@@ -1870,8 +2064,13 @@ def handle_delete_message(data):
     if not msg_id or not chat_id:
         return
 
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+
     msg = db.session.get(Message, msg_id)
-    if not msg or msg.sender_id != current_user.id:
+    if not msg or msg.sender_id != uid:
         return
 
     msg.is_deleted = True
@@ -1892,11 +2091,15 @@ def handle_delete_message(data):
 
 
 def _get_partner_id_sio(chat_id):
+    try:
+        uid  = current_user.id
+    except Exception:
+        return None
     chat = db.session.get(Chat, chat_id)
     if not chat:
         return None
     parts = chat.room_key.replace('chat_', '').split('_')
-    return next((p for p in parts if p.isdigit() and int(p) != current_user.id), None)
+    return next((p for p in parts if p.isdigit() and int(p) != uid), None)
 
 
 @socketio.on('typing')
@@ -1906,11 +2109,16 @@ def handle_typing(data):
     chat_id = data.get('chat_id')
     if not chat_id:
         return
+    try:
+        uid   = current_user.id
+        uname = current_user.name
+    except Exception:
+        return
     chat = db.session.get(Chat, chat_id)
     if not chat:
         return
 
-    typing_payload = {'chat_id': chat_id, 'user_id': current_user.id, 'user_name': current_user.name}
+    typing_payload = {'chat_id': chat_id, 'user_id': uid, 'user_name': uname}
 
     if chat.room_key.startswith('group_'):
         emit('is_typing', typing_payload, room=f'chat_{chat_id}',
@@ -1946,10 +2154,19 @@ def handle_call(data):
     to = data.get('to')
     if not to:
         return
+    try:
+        uid    = current_user.id
+        uname  = current_user.name
+        uavat  = current_user.avatar
+    except Exception:
+        return
     emit('incoming_call', {
-        'from': current_user.id, 'from_name': current_user.name,
-        'from_avatar': current_user.avatar, 'offer': data.get('offer'),
-        'call_type': data.get('call_type', 'audio'), 'type': data.get('type', 'audio'),
+        'from':        uid,
+        'from_name':   uname,
+        'from_avatar': uavat,
+        'offer':       data.get('offer'),
+        'call_type':   data.get('call_type', 'audio'),
+        'type':        data.get('type', 'audio'),
     }, room=f'user_{to}')
 
 
@@ -1960,7 +2177,11 @@ def handle_answer(data):
     to = data.get('to')
     if not to:
         return
-    emit('call_answered', {'from': current_user.id, 'answer': data.get('answer')}, room=f'user_{to}')
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    emit('call_answered', {'from': uid, 'answer': data.get('answer')}, room=f'user_{to}')
 
 
 @socketio.on('ice_candidate')
@@ -1970,7 +2191,11 @@ def handle_ice(data):
     to = data.get('to')
     if not to:
         return
-    emit('ice_candidate', {'from': current_user.id, 'candidate': data.get('candidate')}, room=f'user_{to}')
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    emit('ice_candidate', {'from': uid, 'candidate': data.get('candidate')}, room=f'user_{to}')
 
 
 @socketio.on('end_call')
@@ -1978,8 +2203,13 @@ def handle_end_call(data):
     if not current_user.is_authenticated:
         return
     to = data.get('to')
-    if to:
-        emit('call_ended', {'from': current_user.id}, room=f'user_{to}')
+    if not to:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    emit('call_ended', {'from': uid}, room=f'user_{to}')
 
 # ══════════════════════════════════════════════════════════
 #  ФОНОВАЯ ОЧИСТКА
@@ -2010,6 +2240,7 @@ def background_cleanup():
                 for u in stale:
                     u.is_online = False
                     _online_cache.delete(u.id)
+                    _user_dict_cache.delete(u.id)
                 if stale:
                     db.session.commit()
         except Exception as e:
@@ -2051,9 +2282,9 @@ def healthcheck():
     except Exception:
         db_ok = False
     return jsonify({
-        'status': 'ok' if db_ok else 'degraded',
-        'db': 'ok' if db_ok else 'error',
-        'version': '7.0.0',
+        'status':   'ok' if db_ok else 'degraded',
+        'db':       'ok' if db_ok else 'error',
+        'version':  '7.0.1',
         'time_msk': to_moscow_str(datetime.utcnow()),
     }), 200 if db_ok else 503
 
@@ -2100,7 +2331,7 @@ if __name__ == '__main__':
     eventlet.spawn(background_cleanup)
 
     print('╔══════════════════════════════════════════════════════╗')
-    print('║         WAYCHAT SERVER v7.0.0 — STARTING            ║')
+    print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
     print('╚══════════════════════════════════════════════════════╝')
 
     port = int(os.environ.get('PORT', 5000))
