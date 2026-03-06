@@ -334,8 +334,10 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         )
         return result.get('secure_url')
     except Exception as e:
-        app.logger.error(f'Cloudinary upload error: {e}')
-        return None
+    import traceback
+    app.logger.error(f'Cloudinary upload error: {e}')
+    app.logger.error(f'Traceback: {traceback.format_exc()}')
+    return None
 
 # ══════════════════════════════════════════════════════════
 #  МОДЕЛИ
