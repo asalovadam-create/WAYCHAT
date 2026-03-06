@@ -305,6 +305,14 @@ function initSocket() {
     socket.on('avatar_updated', (d) => {
         invalidateAvatarCache(d.user_id, d.avatar);
         updateAvatarInDOM(d.user_id, d.avatar);
+        // Обновляем свой аватар сразу если это я
+        if (currentUser && d.user_id === currentUser.id) {
+            currentUser.avatar = d.avatar;
+            const profileAva = document.getElementById('profile-avatar-img');
+            if (profileAva) profileAva.src = d.avatar;
+            const navAva = document.querySelector('.nav-avatar');
+            if (navAva) navAva.src = d.avatar;
+        }
     });
 
     socket.on('message_deleted', (d) => {
@@ -3025,9 +3033,7 @@ function cancelVoicePreview() {
 
 
 async function doLogout() {
-    try {
-        await fetch('/logout', { method: 'GET', credentials: 'include' });
-    } catch(e) {}
+    try { await fetch('/logout', {method:'GET',credentials:'include'}); } catch(e) {}
     window.location.href = '/login';
 }
 
