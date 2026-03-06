@@ -215,7 +215,7 @@ let contactCustomNames = JSON.parse(localStorage.getItem('waychat_contact_names'
 // Данные пользователя
 const currentUser = Object.assign({
     id: 0, name: 'Пользователь', username: 'user',
-    avatar: '/static/default_avatar.png', bio: '', phone: '', birthday: null
+    avatar: '/static/default_avatar.png', bio: '', phone: ''
 }, window.currentUser || {});
 
 // WebRTC конфиг
@@ -420,26 +420,6 @@ async function init() {
     setTimeout(syncProfileData, 300);
     setTimeout(_updatePermsSummary, 600);
     setTimeout(initPushNotifications, 500);
-
-    // Обработка ?open_chat= из QR-ссылки
-    const urlParams = new URLSearchParams(location.search);
-    const openChatUid = urlParams.get('open_chat');
-    if (openChatUid) {
-        history.replaceState({}, '', '/'); // убираем параметр из URL
-        setTimeout(async () => {
-            try {
-                const r = await apiFetch(`/get_user_profile/${openChatUid}`);
-                if (!r) return;
-                const u = await r.json();
-                if (u && u.id) {
-                    // Переключаемся на чаты и открываем диалог
-                    switchTab('chats');
-                    await new Promise(res => setTimeout(res, 300));
-                    openChat(u.id, u.name, u.avatar, false);
-                }
-            } catch(e) {}
-        }, 800);
-    }
 
     setInterval(() => {
         if (currentTab === 'chats' && !currentChatId) loadChats();
@@ -876,60 +856,26 @@ body {
 
         <!-- ══ НАСТРОЙКИ ══ -->
         <div id="settings-section" class="hidden">
-            <!-- Шапка профиля с фоном-аватаром -->
-            <div class="settings-hero" style="position:relative;overflow:hidden;min-height:280px">
-                <div style="position:absolute;inset:0;z-index:0">
-                    <div id="settings-bg" class="profile-bg-img" style="position:absolute;inset:-20px;background-size:cover;background-position:center;filter:blur(28px) brightness(0.55) saturate(1.8)"></div>
-                    <div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.1) 0%,rgba(0,0,0,0.7) 100%)"></div>
+            <div class="settings-hero">
+                <div style="position:absolute;top:0;left:0;right:0;height:380px;z-index:0;overflow:hidden;pointer-events:none">
+                    <div id="settings-bg" class="profile-bg-img"></div>
+                    <div class="profile-bg-fade"></div>
                 </div>
-                <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding:max(env(safe-area-inset-top,44px),44px) 16px 20px">
-                    <!-- Аватар -->
-                    <div style="position:relative;margin-bottom:14px">
-                        <div id="settings-ava-box" style="width:112px;height:112px;border-radius:50%;overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.6);border:3px solid rgba(255,255,255,0.2)">
-                            ${getAvatarHtml(currentUser, 'w-full h-full')}
+                <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding-top:60px">
+                    <div style="position:relative;margin-bottom:12px">
+                        <div id="settings-ava-box" style="border-radius:50%;overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.5);border:3px solid rgba(255,255,255,0.15)">
+                            ${getAvatarHtml(currentUser, 'w-28 h-28')}
                         </div>
-                        <div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%);display:flex;gap:8px">
-                            <button onclick="changeAvatar()" style="width:34px;height:34px;background:rgba(0,0,0,0.75);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.25);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
-                            <button onclick="setEmojiAvatar()" style="width:34px;height:34px;background:rgba(0,0,0,0.75);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.25);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
+                        <div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);display:flex;gap:10px">
+                            <button onclick="changeAvatar()" style="width:36px;height:36px;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white" class="active:scale-90">${ICONS.camera}</button>
+                            <button onclick="setEmojiAvatar()" style="width:36px;height:36px;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white" class="active:scale-90">${ICONS.smile}</button>
                         </div>
                     </div>
-                    <h2 id="settings-name" style="font-size:26px;font-weight:800;margin:0 0 2px;letter-spacing:-0.5px">${currentUser.name}</h2>
-                    <p style="color:rgba(255,255,255,0.6);font-size:14px;margin:0">@${currentUser.username}</p>
+                    <h2 id="settings-name" style="font-size:24px;font-weight:800;margin-top:8px;letter-spacing:-0.3px">${currentUser.name}</h2>
+                    <p style="color:var(--text-2);font-size:14px">@${currentUser.username}</p>
                 </div>
             </div>
-
             <div style="padding:0 16px 100px">
-                <!-- Инфо-карточка как в VK/Instagram -->
-                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:20px;overflow:hidden;margin:16px 0">
-                    <!-- Телефон -->
-                    <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
-                        <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">мобильный</div>
-                        <div style="font-size:16px;font-weight:600;color:#60a5fa">${currentUser.phone||''}</div>
-                    </div>
-                    <!-- Юзернейм + QR -->
-                    <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between">
-                        <div>
-                            <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">имя пользователя</div>
-                            <div style="font-size:16px;font-weight:600;color:#60a5fa">@${currentUser.username}</div>
-                        </div>
-                        <button onclick="showMyQR()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:8px 10px;cursor:pointer;color:white;display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;font-family:inherit">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1" stroke="white" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1" stroke="white" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1" stroke="white" stroke-width="2"/><rect x="14" y="14" width="3" height="3" fill="white"/><rect x="18" y="14" width="3" height="3" fill="white"/><rect x="14" y="18" width="3" height="3" fill="white"/><rect x="18" y="18" width="3" height="3" fill="white"/></svg>
-                            QR
-                        </button>
-                    </div>
-                    <!-- День рождения -->
-                    <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06);cursor:pointer" onclick="editBirthday()">
-                        <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">день рождения</div>
-                        <div style="font-size:16px;font-weight:500" id="settings-birthday-val">${currentUser.birthday ? formatBirthday(currentUser.birthday) : '<span style="color:var(--text-2)">Добавить</span>'}</div>
-                    </div>
-                    <!-- Bio -->
-                    <div style="padding:14px 16px;cursor:pointer" onclick="editBio()">
-                        <div style="font-size:11px;color:var(--text-2);margin-bottom:3px">о себе</div>
-                        <div style="font-size:15px" id="settings-bio-val">${currentUser.bio||'<span style="color:var(--text-2)">Добавить</span>'}</div>
-                    </div>
-                </div>
-
-                <!-- Редактирование профиля -->
                 <div style="margin-bottom:8px">
                     <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Профиль</p>
                     <div class="settings-section">
@@ -942,7 +888,7 @@ body {
                         <div class="settings-row" onclick="editBio()">
                             <div class="settings-icon" style="background:rgba(139,92,246,0.2);color:#a78bfa">${ICONS.edit}</div>
                             <div style="flex:1"><div style="font-size:15px;font-weight:500">Bio</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="settings-bio-val2">${currentUser.bio||'Не задано'}</div></div>
+                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="settings-bio-val">${currentUser.bio||'Не задано'}</div></div>
                             <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                         </div>
                         <div class="settings-row" onclick="copyUsername()">
@@ -987,7 +933,8 @@ body {
                             <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                             </div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Разрешения</div>
+                            <div style="flex:1">
+                                <div style="font-size:15px;font-weight:500">Разрешения</div>
                                 <div style="font-size:12px;color:var(--text-2)" id="perms-summary">Микрофон, камера, уведомления</div>
                             </div>
                             <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
@@ -1157,9 +1104,7 @@ function switchTab(tab) {
     vibrate(8);
 }
 
-// ══════════════════════════════════════════════════════════
-//  LOGOUT
-// ══════════════════════════════════════════════════════════
+// ══ LOGOUT ════════════════════════════════════════════════
 async function doLogout() {
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
@@ -1170,25 +1115,22 @@ async function doLogout() {
                 <div style="font-size:18px;font-weight:700;margin-bottom:6px">Выйти из аккаунта?</div>
                 <div style="font-size:14px;color:var(--text-2)">Вы сможете войти снова по номеру телефона</div>
             </div>
-            <button id="logout-confirm-btn" style="width:100%;padding:15px;background:#ef4444;border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Выйти</button>
-            <button onclick="this.closest('div[style]').remove()" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;font-weight:500;cursor:pointer;font-family:inherit">Отмена</button>
+            <button id="_logout_confirm" style="width:100%;padding:15px;background:#ef4444;border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Выйти</button>
+            <button id="_logout_cancel" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;font-weight:500;cursor:pointer;font-family:inherit">Отмена</button>
         </div>`;
     document.body.appendChild(ov);
-    ov.querySelector('#logout-confirm-btn').onclick = async () => {
-        try {
-            await apiFetch('/logout', { method: 'POST' });
-        } catch(e) {}
-        // Чистим локальный стейт
+    ov.querySelector('#_logout_cancel').onclick = () => ov.remove();
+    ov.querySelector('#_logout_confirm').onclick = async () => {
+        ov.querySelector('#_logout_confirm').textContent = 'Выходим...';
+        try { await apiFetch('/logout', {method:'POST'}); } catch(e) {}
         localStorage.clear();
         sessionStorage.clear();
-        window.location.href = '/login';
+        window.location.replace('/login');
     };
     ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
 }
 
-// ══════════════════════════════════════════════════════════
-//  ДЕНЬ РОЖДЕНИЯ
-// ══════════════════════════════════════════════════════════
+// ══ ДЕНЬ РОЖДЕНИЯ ════════════════════════════════════════
 function formatBirthday(iso) {
     if (!iso) return '';
     try {
@@ -1196,8 +1138,7 @@ function formatBirthday(iso) {
         const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
         const now = new Date();
         let age = now.getFullYear() - d.getFullYear();
-        const bDay = new Date(now.getFullYear(), d.getMonth(), d.getDate());
-        if (bDay > now) age--;
+        if (new Date(now.getFullYear(), d.getMonth(), d.getDate()) > now) age--;
         return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} (${age} лет)`;
     } catch(e) { return iso; }
 }
@@ -1208,147 +1149,70 @@ function editBirthday() {
     ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
     ov.innerHTML = `
         <div style="background:var(--surface);border-radius:24px 24px 0 0;padding:24px 20px max(calc(env(safe-area-inset-bottom)+20px),32px);width:100%;max-width:480px">
-            <div style="font-size:16px;font-weight:700;margin-bottom:16px">День рождения</div>
-            <input type="date" id="birthday-input" value="${current}" max="${new Date().toISOString().split('T')[0]}"
-                style="width:100%;padding:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:14px;color:white;font-size:16px;font-family:inherit;box-sizing:border-box;margin-bottom:14px;-webkit-appearance:none;color-scheme:dark">
-            <button id="bday-save" style="width:100%;padding:15px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Сохранить</button>
-            <button onclick="this.closest('div[style]').remove()" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;cursor:pointer;font-family:inherit">Отмена</button>
+            <div style="font-size:16px;font-weight:700;margin-bottom:16px">🎂 День рождения</div>
+            <input type="date" id="_bday_input" value="${current}" max="${new Date().toISOString().split('T')[0]}"
+                style="width:100%;padding:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:14px;color:white;font-size:16px;font-family:inherit;box-sizing:border-box;margin-bottom:14px;color-scheme:dark">
+            <button id="_bday_save" style="width:100%;padding:15px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Сохранить</button>
+            <button id="_bday_cancel" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;cursor:pointer;font-family:inherit">Отмена</button>
         </div>`;
     document.body.appendChild(ov);
-    ov.querySelector('#bday-save').onclick = async () => {
-        const val = ov.querySelector('#birthday-input').value;
-        const r = await apiFetch('/update_profile', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ birthday: val || null }) });
+    ov.querySelector('#_bday_cancel').onclick = () => ov.remove();
+    ov.querySelector('#_bday_save').onclick = async () => {
+        const val = ov.querySelector('#_bday_input').value;
+        const r = await apiFetch('/update_profile', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({birthday: val||null})});
         if (r) {
             currentUser.birthday = val || null;
             const el = document.getElementById('settings-birthday-val');
             if (el) el.innerHTML = val ? formatBirthday(val) : '<span style="color:var(--text-2)">Добавить</span>';
-            showToast('День рождения сохранён','success');
+            showToast('Сохранено','success');
         }
         ov.remove();
     };
     ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
 }
 
-// ══════════════════════════════════════════════════════════
-//  QR-КОД ПРОФИЛЯ
-// ══════════════════════════════════════════════════════════
+// ══ QR-КОД ═══════════════════════════════════════════════
 function showMyQR() {
     const url = `${location.origin}/u/${currentUser.username}`;
-    const ov  = document.createElement('div');
+    const qr = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}&bgcolor=161618&color=ffffff&margin=12`;
+    const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(16px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px';
-
-    // Генерируем QR через qrcode.js CDN
     ov.innerHTML = `
-        <div style="background:white;border-radius:24px;padding:24px;display:flex;flex-direction:column;align-items:center;max-width:300px;width:100%">
-            <div id="qr-canvas-wrap" style="margin-bottom:16px"></div>
-            <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:4px">${currentUser.name}</div>
-            <div style="font-size:13px;color:#666;margin-bottom:16px">@${currentUser.username}</div>
-            <div style="font-size:11px;color:#999;word-break:break-all;text-align:center">${url}</div>
-        </div>
-        <button onclick="this.parentElement.remove()" style="margin-top:20px;padding:14px 40px;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);border-radius:16px;color:white;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit">Закрыть</button>
-        <button onclick="navigator.share&&navigator.share({title:'WayChat',url:'${url}'})||navigator.clipboard.writeText('${url}').then(()=>showToast('Ссылка скопирована','success'))" style="margin-top:10px;padding:14px 40px;background:var(--accent);border:none;border-radius:16px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">Поделиться</button>`;
-
+        <div style="background:#161618;border:1px solid rgba(255,255,255,0.1);border-radius:28px;padding:28px 24px;text-align:center;max-width:300px;width:100%">
+            <img src="${qr}" width="200" height="200" style="border-radius:16px;display:block;margin:0 auto 16px">
+            <div style="font-size:17px;font-weight:800;color:#fff;margin-bottom:4px">${currentUser.name}</div>
+            <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:20px">@${currentUser.username}</div>
+            <button id="_qr_share" style="width:100%;padding:13px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:8px">Поделиться</button>
+            <button id="_qr_close" style="width:100%;padding:13px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:15px;cursor:pointer;font-family:inherit">Закрыть</button>
+        </div>`;
     document.body.appendChild(ov);
+    ov.querySelector('#_qr_close').onclick = () => ov.remove();
+    ov.querySelector('#_qr_share').onclick = () => {
+        if (navigator.share) navigator.share({title: currentUser.name + ' в WayChat', url});
+        else navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована','success'));
+    };
     ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
-
-    // Подгружаем QR библиотеку и рисуем
-    if (!window.QRCode) {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-        s.onload = () => _drawQR(url, ov.querySelector('#qr-canvas-wrap'));
-        document.head.appendChild(s);
-    } else {
-        _drawQR(url, ov.querySelector('#qr-canvas-wrap'));
-    }
-}
-
-function _drawQR(url, wrap) {
-    if (!wrap) return;
-    new QRCode(wrap, { text: url, width: 220, height: 220, colorDark: '#000', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
-}
-
-function openQRScanner() {
-    showToast('Наведите камеру на QR-код WayChat','info',3000);
-    // Используем браузерное сканирование через BarcodeDetector (Chrome/Android)
-    // На iOS — открываем стандартную камеру
-    if ('BarcodeDetector' in window) {
-        _startBarcodeScanner();
-    } else {
-        // Fallback — копируем ссылку
-        showToast('Сканирование QR поддерживается в Chrome. Попробуйте навести стандартную камеру.','info',4000);
-    }
-}
-
-async function _startBarcodeScanner() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        const ov = document.createElement('div');
-        ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center';
-        const vid = document.createElement('video');
-        vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
-        vid.srcObject = stream; vid.autoplay = true; vid.playsInline = true;
-        const frame = document.createElement('div');
-        frame.style.cssText = 'position:absolute;width:240px;height:240px;border:3px solid var(--accent);border-radius:20px;box-shadow:0 0 0 9999px rgba(0,0,0,0.5)';
-        const closeBtn = document.createElement('button');
-        closeBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,20px),20px);right:16px;background:rgba(0,0,0,0.6);border:none;color:white;width:40px;height:40px;border-radius:50%;font-size:20px;cursor:pointer';
-        closeBtn.textContent = '✕';
-        closeBtn.onclick = () => { stream.getTracks().forEach(t=>t.stop()); ov.remove(); };
-        ov.appendChild(vid); ov.appendChild(frame); ov.appendChild(closeBtn);
-        document.body.appendChild(ov);
-
-        const detector = new BarcodeDetector({ formats: ['qr_code'] });
-        const scan = async () => {
-            if (!document.body.contains(ov)) return;
-            try {
-                const codes = await detector.detect(vid);
-                if (codes.length) {
-                    const val = codes[0].rawValue;
-                    stream.getTracks().forEach(t=>t.stop()); ov.remove();
-                    // Если ссылка на профиль WayChat
-                    const m = val.match(/\/u\/([^/?#]+)/);
-                    if (m) {
-                        const r = await apiFetch(`/get_user_by_username/${m[1]}`);
-                        const d = r ? await r.json() : null;
-                        if (d?.id) { openChatWith(d.id, d.name); return; }
-                    }
-                    // Иначе открываем как ссылку
-                    window.open(val, '_blank');
-                    return;
-                }
-            } catch(e) {}
-            requestAnimationFrame(scan);
-        };
-        requestAnimationFrame(scan);
-    } catch(e) {
-        showToast('Нет доступа к камере','error');
-    }
 }
 
 function updateSettingsUI() {
-    // Блюр-фон из аватара
-    const bgBlur = document.getElementById('settings-bg-blur');
-    if (bgBlur) {
+    const bg = document.getElementById('settings-bg');
+    if (bg) {
         const src = currentUser.avatar && !currentUser.avatar.startsWith('emoji:') && !currentUser.avatar.includes('default') ? currentUser.avatar : '';
-        bgBlur.style.backgroundImage = src ? `url('${src}')` : '';
-        if (!src) bgBlur.style.background = 'linear-gradient(135deg, var(--accent), #000)';
+        bg.style.backgroundImage = src ? `url('${src}')` : '';
+        if (!src) bg.style.background = 'linear-gradient(135deg, var(--accent), #000)';
     }
     const nm = document.getElementById('settings-name');
     if (nm) nm.textContent = currentUser.name;
     const nv = document.getElementById('settings-name-val');
     if (nv) nv.textContent = currentUser.name;
     const bv = document.getElementById('settings-bio-val');
-    if (bv) bv.innerHTML = currentUser.bio || '<span style="color:var(--text-2)">Добавить</span>';
-    const bdv = document.getElementById('settings-birthday-val');
-    if (bdv) bdv.innerHTML = currentUser.birthday ? formatBirthday(currentUser.birthday) : '<span style="color:var(--text-2)">Добавить</span>';
+    if (bv) bv.textContent = currentUser.bio || 'Не задано';
     const tn = document.getElementById('current-theme-name');
     if (tn) tn.textContent = THEMES[activeTheme]?.name || 'Изумруд';
     const wsl = document.getElementById('ws-status-label');
     if (wsl) wsl.textContent = wsConnected ? 'Онлайн' : 'Переподключение...';
     const cl = document.getElementById('contacts-count-label');
     if (cl) cl.textContent = `${savedContacts.length} контактов`;
-    // Обновляем аватар в настройках
-    const avaBox = document.getElementById('settings-ava-box');
-    if (avaBox) avaBox.innerHTML = getAvatarHtml(currentUser, 'w-full h-full');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2953,9 +2817,11 @@ async function _sendVideoCircle(mime) {
         const r = await apiFetch('/upload_media',{method:'POST',body:fd});
         const d = await r.json();
         if(d.url) {
-            await apiFetch('/send_message',{
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({chat_id:currentChatId, media_url:d.url, media_type:'video_circle', text:''})
+            socket.emit('send_message', {
+                chat_id: currentChatId,
+                media_url: d.url,
+                media_type: 'video_circle',
+                text: ''
             });
             showToast('Видео-кружок отправлен 🎥','success');
         }
@@ -3890,22 +3756,6 @@ function showPartnerProfile() {
     }
 }
 
-async function saveBirthday(val) {
-    if (!val) return;
-    try {
-        const r = await apiFetch('/update_profile', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({birthday: val})});
-        if (!r) return;
-        const d = await r.json();
-        if (d.success) {
-            currentUser.birthday = val;
-            const el  = document.getElementById('settings-birthday-val');
-            if (el) el.innerHTML = formatBirthday(val);
-            showToast('День рождения сохранён 🎂','success');
-        }
-    } catch(e) {}
-}
-
-
 function renameContactFromProfile(id, currentName) {
     const newName = prompt(`Своё имя для контакта:`, contactCustomNames[id] || currentName);
     if (newName === null) return;
@@ -4725,8 +4575,26 @@ function _runMomentsViewer(list, startIdx) {
         if (m.media_url) {
             if (m.media_url.match(/\.(mp4|mov|webm)/i)) {
                 const vid = document.createElement('video');
-                vid.src = m.media_url; vid.autoplay=true; vid.loop=false; vid.playsInline=true; vid.muted=false;
+                vid.src = m.media_url;
+                vid.autoplay = false; // запустим сами после загрузки
+                vid.loop = false; vid.playsInline = true; vid.muted = false;
                 vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
+                // Показываем спиннер пока грузится
+                const spinner = document.createElement('div');
+                spinner.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:1';
+                spinner.innerHTML = '<div style="width:44px;height:44px;border:3px solid rgba(255,255,255,0.2);border-top-color:white;border-radius:50%;animation:spin 0.8s linear infinite"></div>';
+                bg.appendChild(spinner);
+                vid.addEventListener('canplay', () => {
+                    spinner.remove();
+                    vid.play().catch(()=>{});
+                    // Запускаем прогресс только после начала воспроизведения
+                    const realDur = vid.duration > 0 ? Math.min(vid.duration * 1000, 30000) : 7000;
+                    const fill = document.getElementById('mpf');
+                    if (fill) { fill.style.transition = 'width '+realDur/1000+'s linear'; fill.style.width = '100%'; }
+                    clearTimeout(autoTimer);
+                    autoTimer = setTimeout(() => next(), realDur + 100);
+                    vid.addEventListener('ended', () => next(), {once:true});
+                }, {once:true});
                 bg.appendChild(vid);
             } else {
                 const img = document.createElement('img');
@@ -4805,14 +4673,17 @@ function _runMomentsViewer(list, startIdx) {
             else next();
         };
 
-        // Запускаем прогресс
+        // Запускаем прогресс только для фото/текста (видео запускает своё в canplay)
         clearTimeout(autoTimer);
-        const dur = m.media_url ? 7000 : 5000;
-        requestAnimationFrame(() => {
-            const fill = document.getElementById('mpf');
-            if (fill) { fill.style.transition='width '+dur/1000+'s linear'; fill.style.width='100%'; }
-        });
-        autoTimer = setTimeout(() => next(), dur+100);
+        const isVideo = m.media_url && m.media_url.match(/\.(mp4|mov|webm)/i);
+        if (!isVideo) {
+            const dur = m.media_url ? 5000 : 4000;
+            requestAnimationFrame(() => {
+                const fill = document.getElementById('mpf');
+                if (fill) { fill.style.transition='width '+dur/1000+'s linear'; fill.style.width='100%'; }
+            });
+            autoTimer = setTimeout(() => next(), dur+100);
+        }
     }
 
     function next() { clearTimeout(autoTimer); if (idx<list.length-1){idx++;render();}else{ov.remove();} }
