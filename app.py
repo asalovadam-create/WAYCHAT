@@ -557,6 +557,22 @@ def to_moscow_str(dt):
     return moscow_dt.strftime('%d.%m')
 
 
+def get_current_uid():
+    """Возвращает ID текущего пользователя без lazy-load SQLAlchemy."""
+    try:
+        return int(current_user.get_id())
+    except Exception:
+        return None
+
+
+def get_user_fresh(user_id):
+    """Свежий объект User из текущей сессии."""
+    try:
+        return db.session.get(User, user_id)
+    except Exception:
+        return None
+
+
 def get_cached_user(user_id):
     """
     ИСПРАВЛЕНИЕ: возвращает ORM-объект из БД (не из кэша).
