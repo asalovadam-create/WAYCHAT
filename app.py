@@ -203,7 +203,6 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
             file_obj,
             folder          = folder,
             resource_type   = 'auto',
-            unique_filename = True,
         )
         url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
