@@ -304,17 +304,30 @@ app.config.update(
 CORS(app, supports_credentials=True, origins=['*'])
 
 def upload_to_cloudinary(file_obj, folder='waychat'):
-    """Загружает файл в Cloudinary, возвращает URL или None."""
-    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME')
-    api_key    = os.environ.get('CLOUDINARY_API_KEY')
-    api_secret = os.environ.get('CLOUDINARY_API_SECRET')
+    """Загружает файл в Cloudinary через прямой HTTP запрос без SDK."""
+    import hashlib, time as _time, urllib.request, urllib.parse
+    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
+    api_key    = os.environ.get('CLOUDINARY_API_KEY', '')
+    api_secret = os.environ.get('CLOUDINARY_API_SECRET', '')
     if not all([cloud_name, api_key, api_secret]):
         return None
     try:
-        import cloudinary
-        import cloudinary.uploader
-        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret)
-        result = cloudinary.uploader.upload(file_obj, folder=folder, resource_type='auto')
+        timestamp = str(int(_time.time()))
+        params_to_sign = f'folder={folder}&timestamp={timestamp}'
+        signature = hashlib.sha1(f'{params_to_sign}{api_secret}'.encode()).hexdigest()
+        
+        import cloudinary, cloudinary.uploader
+        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
+        if hasattr(file_obj, 'seek'):
+            file_obj.seek(0)
+        result = cloudinary.uploader.upload(
+            file_obj,
+            folder=folder,
+            resource_type='auto',
+            api_key=api_key,
+            timestamp=timestamp,
+            signature=signature,
+        )
         return result.get('secure_url')
     except Exception as e:
         app.logger.error(f'Cloudinary upload error: {e}')
@@ -1654,14 +1667,9 @@ def upload_avatar():
 
     filename = f'ava_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}'
     file.seek(0)
-    cloud_url = upload_to_cloudinary(file, folder='waychat/avatars')
-    if cloud_url:
-        url = cloud_url
-    else:
-        filepath = os.path.join(AVATARS_FOLDER, filename)
-        file.seek(0)
-        file.save(filepath)
-        url = '/static/uploads/avatars/' + filename
+    url = upload_to_cloudinary(file, folder='waychat/avatars')
+    if not url:
+        return jsonify({'success': False, 'error': 'Ошибка загрузки. Проверьте настройки Cloudinary.'}), 500
     current_user.avatar = url
     db.session.commit()
     current_user.invalidate_cache()
@@ -1716,14 +1724,9 @@ def upload_media():
 
     filename = f'msg_{current_user.id}_{uuid.uuid4().hex[:12]}.{ext}'
     file.seek(0)
-    cloud_url = upload_to_cloudinary(file, folder='waychat/messages')
-    if cloud_url:
-        url = cloud_url
-    else:
-        filepath = os.path.join(MESSAGES_FOLDER, filename)
-        file.seek(0)
-        file.save(filepath)
-        url = '/static/uploads/messages/' + filename
+    url = upload_to_cloudinary(file, folder='waychat/messages')
+    if not url:
+        return jsonify({'success': False, 'error': 'Ошибка загрузки файла'}), 500
     return jsonify({'success': True, 'url': url, 'type': file_type})
 
 
@@ -1870,14 +1873,9 @@ def create_moment():
             ext      = (file.filename.rsplit('.', 1)[-1] if '.' in file.filename else 'jpg').lower()
             filename = f'moment_{current_user.id}_{uuid.uuid4().hex[:8]}.{ext}'
             file.seek(0)
-            cloud_url = upload_to_cloudinary(file, folder='waychat/moments')
-            if cloud_url:
-                media_url = cloud_url
-            else:
-                filepath = os.path.join(MOMENTS_FOLDER, filename)
-                file.seek(0)
-                file.save(filepath)
-                media_url = '/static/uploads/moments/' + filename
+            media_url = upload_to_cloudinary(file, folder='waychat/moments')
+            if not media_url:
+                return jsonify({'success': False, 'error': 'Ошибка загрузки медиа'}), 500
 
     text_content = request.form.get('text', '').strip()[:500]
     geo_name     = request.form.get('geo_name','').strip()[:200] or None
@@ -2332,6 +2330,10 @@ def too_large(e):
 @app.errorhandler(500)
 def server_error(e):
     app.logger.error(f'500: {e}')
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
     return jsonify({'error': 'Внутренняя ошибка'}), 500
 
 
