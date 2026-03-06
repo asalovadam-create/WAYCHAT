@@ -157,6 +157,23 @@ db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
+# ══ АВТО-МИГРАЦИЯ ══════════════════════════════════════════
+# Выполняется СРАЗУ при импорте модуля (работает с gunicorn).
+# Добавляем колонки которых может не хватать в боевой БД.
+def _run_startup_migrations():
+    try:
+        with db.engine.connect() as conn:
+            conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS birthday DATE'))
+            conn.commit()
+    except Exception as _e:
+        app.logger.warning(f'startup migration birthday: {_e}')
+
+with app.app_context():
+    try:
+        _run_startup_migrations()
+    except Exception as _e:
+        app.logger.warning(f'startup migration failed: {_e}')
+
 socketio = SocketIO(
     app,
     async_mode           = 'eventlet',
@@ -986,7 +1003,7 @@ def logout():
     logout_user()
     session.clear()
     if request.method == 'POST':
-        return jsonify({'success': True, 'redirect': url_for('login')})
+        return jsonify({'success': True})
     return redirect(url_for('login'))
 
 # ══════════════════════════════════════════════════════════
@@ -1021,16 +1038,6 @@ def get_current_user_route():
         return jsonify({'error': 'Session error'}), 500
 
 
-@app.route('/get_user_by_username/<username>')
-@login_required
-def get_user_by_username(username):
-    username = username.lstrip('@').lower()
-    u = User.query.filter_by(username=username).first()
-    if not u:
-        return jsonify({'error': 'Пользователь не найден'}), 404
-    return jsonify({'id': u.id, 'name': u.name, 'username': u.username, 'avatar': u.avatar})
-
-
 @app.route('/get_user_profile/<int:user_id>')
 @login_required
 def get_user_profile(user_id):
@@ -1060,6 +1067,16 @@ def get_user_profile(user_id):
     resp = make_response(jsonify(data))
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
+
+
+@app.route('/get_user_by_username/<username>')
+@login_required
+def get_user_by_username(username):
+    username = username.lstrip('@').lower()
+    u = User.query.filter_by(username=username).first()
+    if not u:
+        return jsonify({'error': 'Пользователь не найден'}), 404
+    return jsonify({'id': u.id, 'name': u.name, 'username': u.username, 'avatar': u.avatar})
 
 # ══════════════════════════════════════════════════════════
 #  ЧАТЫ
@@ -1565,7 +1582,6 @@ def update_profile():
     data     = request.get_json() or {}
     name     = data.get('name', '').strip()
     bio      = data.get('bio', None)
-    birthday = data.get('birthday', None)
     uid      = current_user.id
 
     u = db.session.get(User, uid)
@@ -1579,7 +1595,7 @@ def update_profile():
     if 'birthday' in data:
         try:
             from datetime import date as _date
-            u.birthday = _date.fromisoformat(birthday) if birthday else None
+            u.birthday = _date.fromisoformat(data['birthday']) if data['birthday'] else None
         except Exception:
             pass
 
@@ -1741,9 +1757,9 @@ def get_moments():
         User, Moment.user_id == User.id
     ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
 
-    # Один запрос для всех view_count
-    view_counts = {}
+    # Один запрос для всех view_count вместо N запросов
     moment_ids = [m.Moment.id for m in moments]
+    view_counts = {}
     if moment_ids:
         placeholders = ','.join(str(i) for i in moment_ids)
         rows = db.session.execute(
@@ -2303,14 +2319,6 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS birthday DATE'))
-            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_msg_chat_id_id ON message(chat_id, id DESC)'))
-            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp)'))
-            conn.commit()
-    except Exception as e:
-        app.logger.warning(f'extra migration: {e}')
 
 # ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
