@@ -177,7 +177,6 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
     try:
         import cloudinary
         import cloudinary.uploader
-        import cloudinary.config as cld_config_module
 
         cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
         api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
