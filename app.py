@@ -218,13 +218,6 @@ def _vapid_init():
     if not PUSH_AVAILABLE:
         return None, None
 
-    # ── Сначала проверяем переменные окружения (для Render/облака) ──
-    env_pub  = os.environ.get('VAPID_PUBLIC_KEY',  '').strip()
-    env_priv = os.environ.get('VAPID_PRIVATE_KEY', '').strip()
-    if env_pub and env_priv:
-        return env_pub, env_priv
-
-    # ── Fallback: файл (для локальной разработки) ──
     key_file = os.path.join(BASE_DIR, 'instance', 'vapid_keys.json')
     os.makedirs(os.path.dirname(key_file), exist_ok=True)
 
@@ -904,32 +897,6 @@ def register_step2_page():
 def vapid_public_key():
     pub, _ = _get_vapid_keys()
     return jsonify({'publicKey': pub or ''})
-
-
-@app.route('/vapid-generate-keys')
-def vapid_generate_keys():
-    """Вспомогательный маршрут для генерации VAPID ключей.
-    Запустите ОДИН РАЗ, сохраните ключи в переменные окружения Render:
-    VAPID_PUBLIC_KEY и VAPID_PRIVATE_KEY, затем удалите этот маршрут.
-    """
-    if not PUSH_AVAILABLE:
-        return jsonify({'error': 'cryptography/jwt not installed'}), 500
-    try:
-        key  = ec.generate_private_key(ec.SECP256R1(), default_backend())
-        pub  = key.public_key()
-        pub_bytes  = pub.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-        priv_value = key.private_numbers().private_value.to_bytes(32, 'big')
-        pub_b64  = base64.urlsafe_b64encode(pub_bytes).rstrip(b'=').decode()
-        priv_b64 = base64.urlsafe_b64encode(priv_value).rstrip(b'=').decode()
-        return jsonify({
-            'message': 'Сохраните эти ключи в переменные окружения Render!',
-            'VAPID_PUBLIC_KEY':  pub_b64,
-            'VAPID_PRIVATE_KEY': priv_b64,
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-
 
 
 @app.route('/sw.js')
@@ -1686,14 +1653,6 @@ def upload_media():
         return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
 
     mime      = file.content_type or mimetypes.guess_type(file.filename)[0] or ''
-    # Нормализуем MIME — некоторые браузеры шлют application/octet-stream для видео
-    if not mime or mime == 'application/octet-stream':
-        fname_low = file.filename.lower()
-        if any(fname_low.endswith(e) for e in ('.mp4','.mov','.webm','.avi','.m4v','.3gp')):
-            mime = 'video/mp4'
-        elif any(fname_low.endswith(e) for e in ('.jpg','.jpeg','.png','.gif','.webp','.heic')):
-            mime = 'image/jpeg'
-
     file_type = 'file'
     if mime.startswith('image/'):   file_type = 'image'
     elif mime.startswith('video/'): file_type = 'video'
@@ -1757,7 +1716,7 @@ def get_moments():
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
 
     data = [{
         'id':            m.Moment.id,
