@@ -304,10 +304,10 @@ app.config.update(
 CORS(app, supports_credentials=True, origins=['*'])
 
 def upload_to_cloudinary(file_obj, folder='waychat'):
-    """Загружает файл в Cloudinary через SDK."""
     cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '')
     api_key    = os.environ.get('CLOUDINARY_API_KEY', '')
     api_secret = os.environ.get('CLOUDINARY_API_SECRET', '')
+    app.logger.error(f"DEBUG: key={api_key} secret={api_secret[:10]}...")
     if not all([cloud_name, api_key, api_secret]):
         app.logger.error('Cloudinary env vars missing')
         return None
