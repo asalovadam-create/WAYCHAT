@@ -1239,7 +1239,7 @@ def get_messages(chat_id):
         db.session.rollback()
     except Exception:
         pass
-    limit     = min(request.args.get('limit', 25, type=int), 50)
+    limit     = min(request.args.get('limit', 35, type=int), 100)
     before_id = request.args.get('before_id', None, type=int)
     uid       = current_user.id
 
@@ -1261,11 +1261,7 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-
-    resp = jsonify([m.to_dict() for m in reversed(msgs)])
-    # Короткий кэш — браузер не будет перегружать при быстрой навигации
-    resp.headers['Cache-Control'] = 'private, max-age=5'
-    return resp
+    return jsonify([m.to_dict() for m in reversed(msgs)])
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -1718,19 +1714,20 @@ def get_moments():
         resp.headers['Cache-Control'] = 'private, max-age=20'
         return resp
 
-    uid     = current_user.id
-    cutoff  = datetime.utcnow() - timedelta(hours=24)
+    uid    = current_user.id
+    cutoff = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
     ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
 
-    # Считаем view_count одним запросом вместо N запросов
-    moment_ids = [m.Moment.id for m in moments]
+    # Один запрос для всех view_count вместо N отдельных
     view_counts = {}
+    moment_ids  = [m.Moment.id for m in moments]
     if moment_ids:
+        # psycopg3 не поддерживает IN :ids с tuple — генерируем плейсхолдеры вручную
+        placeholders = ','.join(str(i) for i in moment_ids)
         rows = db.session.execute(
-            text('SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id IN :ids GROUP BY moment_id'),
-            {'ids': tuple(moment_ids) if len(moment_ids) > 1 else (moment_ids[0], moment_ids[0])}
+            text(f'SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id IN ({placeholders}) GROUP BY moment_id')
         ).fetchall()
         view_counts = {r[0]: r[1] for r in rows}
 
@@ -2288,15 +2285,6 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
-    # Индексы для быстрой пагинации сообщений
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_msg_chat_id_id ON message(chat_id, id DESC)'))
-            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_msg_chat_del ON message(chat_id, is_deleted, id DESC)'))
-            conn.execute(text('CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp)'))
-            conn.commit()
-    except Exception as e:
-        app.logger.warning(f'index migration: {e}')
 
 # ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
