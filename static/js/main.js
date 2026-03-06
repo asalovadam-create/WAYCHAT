@@ -731,12 +731,8 @@ body {
 .settings-row:last-child { border-bottom:none; }
 .settings-row:active { background:rgba(255,255,255,0.05); }
 .settings-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0; }
-.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:none; }
+.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:0.5px solid rgba(255,255,255,0.08); }
 .img-bubble img { display:block;width:100%; }
-/* Bubble без отступов и фона когда внутри медиа */
-.bubble.media-bubble { padding:3px !important; background:transparent !important; border:none !important; box-shadow:none !important; }
-.bubble.media-bubble .img-bubble { max-width:280px; border-radius:16px; overflow:hidden; }
-.bubble.media-bubble .msg-time { padding:4px 6px 2px; font-size:11px; color:var(--text-2); }
 
 /* МОДАЛЬНЫЕ */
 .modal-overlay { position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end;animation:fadeIn 0.2s ease; }
@@ -1914,12 +1910,17 @@ function buildMessageRow(msg, animate = true) {
         return circRow;
     }
 
-    const isMediaMsg = (type === 'image' || type === 'video');
     let contentHtml = '';
     if (type === 'image') {
         contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
     } else if (type === 'video') {
-        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline preload="metadata" style="max-width:280px;width:100%;display:block;background:#111;border-radius:16px"></video>`;
+        // Генерируем обложку через Cloudinary
+        let posterAttr = '';
+        if (msg.file_url && msg.file_url.includes('cloudinary.com')) {
+            const posterUrl = msg.file_url.replace('/upload/', '/upload/so_0,w_400/').replace(/\.(mp4|webm|mov|avi)(\?.*)?$/, '.jpg');
+            posterAttr = `poster="${posterUrl}"`;
+        }
+        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline preload="metadata" ${posterAttr} style="max-width:280px;width:100%;display:block;background:#111;border-radius:16px"></video>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
@@ -1966,7 +1967,7 @@ function buildMessageRow(msg, animate = true) {
     row.innerHTML = `
         ${avatarHtml}
         <div style="flex:1;display:flex;flex-direction:column;${isMe?'align-items:flex-end':'align-items:flex-start'}">
-            <div class="bubble${isMediaMsg ? ' media-bubble' : ''}">
+            <div class="bubble">
                 ${senderNameHtml}
                 ${contentHtml}
                 <div class="msg-time">
@@ -2269,14 +2270,45 @@ function hideReactionPicker() {
 function addReactionToMsg(msgId, emoji, isMe) {
     const bar = document.getElementById(`reactions-${msgId}`);
     if (!bar) { console.warn('no reactions bar for', msgId); return; }
+
+    // Если это моя реакция — убираем предыдущую мою реакцию (1 реакция от юзера)
+    if (isMe) {
+        bar.querySelectorAll('.reaction-chip.mine').forEach(chip => {
+            if (chip.dataset.emoji !== emoji) {
+                // Снимаем старую реакцию визуально
+                const cnt = chip.querySelector('.rcnt');
+                const count = parseInt(cnt?.textContent || '1') - 1;
+                if (count <= 0) {
+                    chip.style.animation = 'reactionOut .2s ease forwards';
+                    setTimeout(() => chip.remove(), 200);
+                } else {
+                    if (cnt) cnt.textContent = count;
+                    chip.classList.remove('mine');
+                }
+            }
+        });
+    }
+
     const existing = bar.querySelector(`[data-emoji="${CSS.escape(emoji)}"]`);
     if (existing) {
+        if (isMe && existing.classList.contains('mine')) {
+            // Повторный клик — убираем реакцию
+            const cnt = existing.querySelector('.rcnt');
+            const count = parseInt(cnt?.textContent || '1') - 1;
+            if (count <= 0) {
+                existing.style.animation = 'reactionOut .2s ease forwards';
+                setTimeout(() => existing.remove(), 200);
+            } else {
+                if (cnt) cnt.textContent = count;
+                existing.classList.remove('mine');
+            }
+            return;
+        }
         // Увеличиваем счётчик
         const cnt = existing.querySelector('.rcnt');
         const newCount = parseInt(cnt?.textContent || '1') + 1;
         if (cnt) cnt.textContent = newCount;
         if (isMe) existing.classList.add('mine');
-        // Анимация
         existing.style.transform = 'scale(1.3)';
         setTimeout(() => { existing.style.transform = ''; }, 200);
     } else {
@@ -2294,10 +2326,11 @@ function addReactionToMsg(msgId, emoji, isMe) {
         bar.appendChild(chip);
     }
 
-    // Убедимся что CSS анимации есть
+    // CSS анимации
     if (!document.getElementById('reaction-anim-style')) {
         const st = document.createElement('style'); st.id='reaction-anim-style';
-        st.textContent = '@keyframes reactionIn{from{opacity:0;transform:scale(0.5)}to{opacity:1;transform:scale(1)}}';
+        st.textContent = '@keyframes reactionIn{from{opacity:0;transform:scale(0.5)}to{opacity:1;transform:scale(1)}}'
+            + '@keyframes reactionOut{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(0.5)}}';
         document.head.appendChild(st);
     }
 }
@@ -2584,6 +2617,7 @@ function _doStartVideoCircleUI() {
 
     vibrate(40);
     _videoChunks = []; _videoSec = 0;
+    let _locked = false; // режим "зафиксировано" — можно отпустить палец
 
     // Показываем UI кружка
     const overlay = document.createElement('div');
@@ -2610,6 +2644,14 @@ function _doStartVideoCircleUI() {
     circ.setAttribute('stroke-dasharray','295'); circ.setAttribute('stroke-dashoffset','295');
     circ.id = 'vc-progress';
     progress.appendChild(circ); circle.appendChild(progress);
+
+    // Иконка замка (появляется при свайпе вверх)
+    const lockHint = document.createElement('div');
+    lockHint.style.cssText = 'position:absolute;top:-50px;left:50%;transform:translateX(-50%);font-size:13px;color:rgba(255,255,255,0.7);background:rgba(0,0,0,0.5);border-radius:20px;padding:5px 12px;display:flex;align-items:center;gap:5px;opacity:0;transition:opacity 0.2s';
+    lockHint.innerHTML = '🔒 Свайп вверх чтобы зафиксировать';
+    circle.appendChild(lockHint);
+    setTimeout(() => { lockHint.style.opacity = '1'; }, 800);
+    setTimeout(() => { lockHint.style.opacity = '0'; }, 3500);
 
     // Таймер
     const timerEl = document.createElement('div');
@@ -2664,12 +2706,33 @@ function _doStartVideoCircleUI() {
     btns.appendChild(flashBtn);  btns.appendChild(stopBtn);
     overlay.appendChild(btns);
 
+    // Статус-подсказка
     const hint = document.createElement('div');
+    hint.id = 'vc-hint';
     hint.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5)';
-    hint.textContent = 'Отпустите или нажмите ⏹ чтобы отправить';
+    hint.textContent = 'Держите или свайп ↑ чтобы зафиксировать';
     overlay.appendChild(hint);
 
     document.body.appendChild(overlay);
+
+    // Свайп вверх на overlay — фиксируем запись
+    let _swipeStartY = null;
+    overlay.addEventListener('touchstart', e => { _swipeStartY = e.touches[0].clientY; }, { passive: true });
+    overlay.addEventListener('touchmove', e => {
+        if (_swipeStartY === null || _locked) return;
+        const dy = _swipeStartY - e.touches[0].clientY;
+        if (dy > 60) {
+            _locked = true;
+            vibrate([30, 30, 60]);
+            hint.textContent = '🔒 Зафиксировано — руки свободны';
+            hint.style.color = 'var(--accent)';
+            circle.style.borderColor = '#facc15';
+            circle.style.boxShadow = '0 0 0 0 rgba(250,204,21,0.6)';
+            // Уведомляем _pressEnd что запись зафиксирована
+            window._vcLocked = true;
+        }
+    }, { passive: true });
+
 
     // Добавляем CSS анимацию
     if (!document.getElementById('vc-style')) {
@@ -3012,9 +3075,13 @@ function setupVoiceRecording() {
 
         if (_holdDone) {
             if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
+            else if (_videoRecorder && _videoRecorder.state !== 'inactive') {
+                // Если запись зафиксирована свайпом — не останавливаем при отпускании
+                if (!window._vcLocked) _stopVideoCircle();
+            }
         }
         _holdDone = false;
+        window._vcLocked = false;
     }
 
     btn.addEventListener('mousedown',   _pressStart, { passive: false });
@@ -4409,20 +4476,20 @@ function renderMomentsList(container, moments) {
 
         // Аватар с SVG-кольцом (разрезы по количеству моментов)
         const avaWrap = document.createElement('div');
-        avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:60px;height:60px';
+        avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:52px;height:52px';
 
         // Аватар внутри
         const avaInner = document.createElement('div');
-        avaInner.style.cssText = 'position:absolute;inset:4px;border-radius:50%;overflow:hidden';
+        avaInner.style.cssText = 'position:absolute;inset:3px;border-radius:50%;overflow:hidden';
         avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
         avaWrap.appendChild(avaInner);
 
         // SVG кольцо с разрезами (серое если просмотрено)
         const NS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(NS, 'svg');
-        svg.setAttribute('width','60'); svg.setAttribute('height','60'); svg.setAttribute('viewBox','0 0 60 60');
+        svg.setAttribute('width','52'); svg.setAttribute('height','52'); svg.setAttribute('viewBox','0 0 52 52');
         svg.style.cssText = 'position:absolute;inset:0;pointer-events:none';
-        const CX=30, CY=30, R=28;
+        const CX=26, CY=26, R=24;
         const GAP_DEG = cnt > 1 ? 5 : 0;
         const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
         const ringColor = (!isMe && _viewedMomentUsers.has(uid)) ? '#555' : 'var(--accent)';
