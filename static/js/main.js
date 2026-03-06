@@ -655,7 +655,8 @@ body {
 .msg-row.out .bubble { background:var(--accent);border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 12px rgba(16,185,129,0.25); }
 .msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3); }
 
-.msg-time { font-size:11px;opacity:0.6;display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:4px;white-space:nowrap; }
+/* Время — под текстом, прижато вправо */
+.msg-time { font-size:11px;opacity:0.55;display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:2px;white-space:nowrap;line-height:1; }
 .status-icon { display:flex;align-items:center; }
 
 /* РЕАКЦИИ */
@@ -1727,7 +1728,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 // ══════════════════════════════════════════════════════════
 //  ЗАГРУЗКА СООБЩЕНИЙ — КЭШ + ПАГИНАЦИЯ (30-40 за раз)
 // ══════════════════════════════════════════════════════════
-const MESSAGES_PER_PAGE = 35;
+const MESSAGES_PER_PAGE = 25;
 
 async function loadMessages(initial = false) {
     if (!currentChatId || loadingMessages || (!initial && !hasMoreMessages)) return;
@@ -1914,19 +1915,19 @@ function buildMessageRow(msg, animate = true) {
     if (type === 'image') {
         contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
     } else if (type === 'video') {
-        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
+        let posterAttr = '';
+        if (msg.file_url && msg.file_url.includes('cloudinary.com')) {
+            const posterUrl = msg.file_url.replace('/upload/', '/upload/so_0,w_400/').replace(/\.(mp4|webm|mov|avi|m4v)(\?.*)?$/, '.jpg');
+            posterAttr = `poster="${posterUrl}"`;
+        }
+        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline preload="metadata" ${posterAttr} style="max-width:280px;width:100%;display:block;border-radius:14px;background:#0a0a0a;border:0.5px solid rgba(255,255,255,0.10)"></video>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
         const text = msg.content || msg.text || '';
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const linkedColor = isMe ? 'rgba(255,255,255,0.85)' : 'var(--accent)';
-        const linked = safe.replace(/(https?:\/\/[^\s<"']+)/g, (match) => {
-            // Санируем URL — убираем javascript: и data: схемы (на всякий случай после escaping)
-            const href = match.replace(/['"]/g, '');
-            if (!/^https?:\/\//i.test(href)) return escHtml(match);
-            return `<a href="${href}" target="_blank" rel="noopener noreferrer" style="color:${linkedColor};text-decoration:underline">${href}</a>`;
-        });
+        const linked = safe.replace(/(https?:\/\/[^\s<]+)/g, `<a href="$1" target="_blank" rel="noopener" style="color:${linkedColor};text-decoration:underline">$1</a>`);
         contentHtml = `<div style="white-space:pre-wrap;word-break:break-word">${linked}</div>`;
     }
 
@@ -4375,6 +4376,16 @@ async function loadMoments() {
         if (!r) return;
         const moments = await r.json();
         momentsCache = moments; momentsLastLoad = now; currentMoments = moments;
+
+        // Кэшируем аватары пользователей из моментов
+        moments.forEach(m => {
+            if (m.user_avatar && m.user_id && !chatPartnerAvatarSrc[m.user_id]) {
+                chatPartnerAvatarSrc[m.user_id] = m.user_avatar;
+            }
+            // Предзагружаем первые медиа каждого пользователя
+            if (m.media_url) _preloadMomentMedia(m.media_url);
+        });
+
         renderMomentsList(container, moments);
     } catch(e) {
         if (!momentsCache) container.innerHTML = `<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>`;
@@ -4470,9 +4481,30 @@ function openUserMomentsViewer(userId) {
     _runMomentsViewer(list, 0);
 }
 
+// Кэш предзагруженных медиа моментов: url → HTMLImageElement | HTMLVideoElement
+const _momentMediaCache = new Map();
+
+function _preloadMomentMedia(url) {
+    if (!url || _momentMediaCache.has(url)) return;
+    const isCloudinaryVideo = url.includes('/video/upload/');
+    const isVideo = isCloudinaryVideo || /\.(mp4|mov|webm|avi|m4v)/i.test(url);
+    if (isVideo) {
+        const v = document.createElement('video');
+        v.src = url; v.preload = 'metadata'; v.muted = true;
+        _momentMediaCache.set(url, v);
+    } else {
+        const img = new Image();
+        img.src = url;
+        _momentMediaCache.set(url, img);
+    }
+}
+
 function _runMomentsViewer(list, startIdx) {
     let idx = startIdx;
     let autoTimer = null;
+
+    // Предзагружаем первые 3 медиа сразу
+    list.slice(0, Math.min(3, list.length)).forEach(m => { if (m.media_url) _preloadMomentMedia(m.media_url); });
 
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:#000;touch-action:none';
@@ -4482,18 +4514,37 @@ function _runMomentsViewer(list, startIdx) {
         const m = list[idx];
         const isMe = m.user_id === currentUser?.id;
 
+        // Предзагружаем следующие 2 медиа
+        [idx+1, idx+2].forEach(i => { if (list[i]?.media_url) _preloadMomentMedia(list[i].media_url); });
+
         // Медиа-фон
         const bg = document.createElement('div');
         bg.style.cssText = 'position:absolute;inset:0';
+
+        let momentVid = null;
+
         if (m.media_url) {
-            if (m.media_url.match(/\.(mp4|mov|webm)/i)) {
-                const vid = document.createElement('video');
-                vid.src = m.media_url; vid.autoplay=true; vid.loop=false; vid.playsInline=true; vid.muted=false;
+            const isCloudinaryVideo = m.media_url.includes('/video/upload/');
+            const isVideo = isCloudinaryVideo || /\.(mp4|mov|webm|avi|m4v)/i.test(m.media_url);
+
+            if (isVideo) {
+                // Берём из кэша если есть — уже начал загрузку
+                let vid = _momentMediaCache.get(m.media_url);
+                if (!vid || vid.tagName !== 'VIDEO') {
+                    vid = document.createElement('video');
+                    vid.src = m.media_url;
+                }
+                vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
                 vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
                 bg.appendChild(vid);
+                momentVid = vid;
             } else {
+                // Фото — берём из кэша
+                let cached = _momentMediaCache.get(m.media_url);
                 const img = document.createElement('img');
-                img.src = m.media_url; img.style.cssText='width:100%;height:100%;object-fit:cover';
+                img.src = m.media_url;
+                if (cached && cached.complete) img.src = cached.src; // уже загружено
+                img.style.cssText = 'width:100%;height:100%;object-fit:cover';
                 bg.appendChild(img);
             }
         } else {
@@ -4530,10 +4581,17 @@ function _runMomentsViewer(list, startIdx) {
         xBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); ov.remove(); };
         ov.appendChild(xBtn);
 
-        // Инфо снизу
+        // Инфо снизу — аватар из кэша
         const bar2 = document.createElement('div');
         bar2.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:3;padding:20px 16px max(calc(env(safe-area-inset-bottom,0px)+20px),30px);background:linear-gradient(to top,rgba(0,0,0,0.75),transparent);display:flex;align-items:center;gap:12px';
-        bar2.innerHTML = getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-11 h-11');
+
+        // Аватар — сразу из кэша, не чёрный
+        const cachedAva = chatPartnerAvatarSrc?.[m.user_id];
+        const avaHtmlStr = cachedAva
+            ? `<img src="${cachedAva}" style="width:44px;height:44px;border-radius:50%;object-fit:cover;flex-shrink:0;border:2px solid rgba(255,255,255,0.3)">`
+            : getAvatarHtml({id:m.user_id, name:m.user_name, avatar:m.user_avatar}, 'w-11 h-11');
+        bar2.innerHTML = avaHtmlStr;
+
         const it = document.createElement('div');
         it.innerHTML = '<div style="font-weight:700;font-size:15px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.6)">'+escHtml(m.user_name)+'</div>'
             +'<div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:1px">'+m.timestamp+(m.geo_name?' · 📍'+m.geo_name:'')+'</div>';
@@ -4542,15 +4600,12 @@ function _runMomentsViewer(list, startIdx) {
         if (isMe) {
             const acts = document.createElement('div');
             acts.style.cssText = 'margin-left:auto;display:flex;gap:8px;align-items:center';
-
-            // Кнопка "Кто смотрел"
             const viewBtn = document.createElement('button');
             viewBtn.style.cssText = 'background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:12px;color:#fff;padding:7px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px';
             const vc = m.view_count || 0;
             viewBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg> ' + vc;
             viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id); };
             acts.appendChild(viewBtn);
-
             const del = document.createElement('button');
             del.style.cssText = 'background:rgba(239,68,68,0.22);border:1px solid rgba(239,68,68,0.5);border-radius:12px;color:#fff;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit';
             del.textContent = 'Удалить';
@@ -4568,14 +4623,33 @@ function _runMomentsViewer(list, startIdx) {
             else next();
         };
 
-        // Запускаем прогресс
+        // Таймер — для видео используем реальную длину
         clearTimeout(autoTimer);
-        const dur = m.media_url ? 7000 : 5000;
-        requestAnimationFrame(() => {
-            const fill = document.getElementById('mpf');
-            if (fill) { fill.style.transition='width '+dur/1000+'s linear'; fill.style.width='100%'; }
-        });
-        autoTimer = setTimeout(() => next(), dur+100);
+
+        function _startProgress(dur) {
+            requestAnimationFrame(() => {
+                const fill = document.getElementById('mpf');
+                if (fill) { fill.style.transition='width '+dur/1000+'s linear'; fill.style.width='100%'; }
+            });
+            autoTimer = setTimeout(() => next(), dur + 200);
+        }
+
+        if (momentVid) {
+            if (momentVid.readyState >= 1 && momentVid.duration) {
+                _startProgress(Math.max(momentVid.duration * 1000, 3000));
+            } else {
+                momentVid.addEventListener('loadedmetadata', () => {
+                    clearTimeout(autoTimer);
+                    _startProgress(Math.max(momentVid.duration * 1000, 3000));
+                }, { once: true });
+                autoTimer = setTimeout(() => {
+                    _startProgress(momentVid.duration ? momentVid.duration * 1000 : 10000);
+                }, 3000);
+            }
+            momentVid.addEventListener('ended', () => { clearTimeout(autoTimer); next(); }, { once: true });
+        } else {
+            _startProgress(m.media_url ? 6000 : 5000);
+        }
     }
 
     function next() { clearTimeout(autoTimer); if (idx<list.length-1){idx++;render();}else{ov.remove();} }
