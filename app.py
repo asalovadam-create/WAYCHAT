@@ -969,7 +969,7 @@ def push_unsubscribe():
     return jsonify({'success': True})
 
 
-@app.route('/logout')
+@app.route('/logout', methods=['GET', 'POST'])
 @login_required
 def logout():
     try:
@@ -984,6 +984,9 @@ def logout():
     except Exception as e:
         app.logger.error(f'logout error: {e}')
     logout_user()
+    session.clear()
+    if request.method == 'POST':
+        return jsonify({'success': True, 'redirect': url_for('login')})
     return redirect(url_for('login'))
 
 # ══════════════════════════════════════════════════════════
@@ -1028,20 +1031,7 @@ def get_user_by_username(username):
     return jsonify({'id': u.id, 'name': u.name, 'username': u.username, 'avatar': u.avatar})
 
 
-@app.route('/logout', methods=['POST', 'GET'])
-@login_required
-def logout():
-    try:
-        current_user.is_online = False
-        current_user.last_seen = datetime.utcnow()
-        db.session.commit()
-        current_user.invalidate_cache()
-        broadcast_status(current_user.id, False)
-    except Exception:
-        pass
-    logout_user()
-    session.clear()
-    return jsonify({'success': True, 'redirect': url_for('login_page')})
+@app.route('/get_user_profile/<int:user_id>')
 @login_required
 def get_user_profile(user_id):
     cached = _partner_cache.get(user_id)
@@ -1586,36 +1576,16 @@ def update_profile():
         u.name = name[:120]
     if bio is not None:
         u.bio = bio[:500]
-    if birthday is not None:
+    if 'birthday' in data:
         try:
-            from datetime import date
-            u.birthday = date.fromisoformat(birthday) if birthday else None
+            from datetime import date as _date
+            u.birthday = _date.fromisoformat(birthday) if birthday else None
         except Exception:
             pass
 
     db.session.commit()
     u.invalidate_cache()
     return jsonify({'success': True})
-
-
-@app.route('/u/<username>')
-def user_qr_page(username):
-    """Страница для QR-кода — перенаправляет в приложение или показывает профиль."""
-    u = User.query.filter_by(username=username.lstrip('@')).first()
-    if not u:
-        return '<h2 style="font-family:sans-serif;text-align:center;margin-top:60px">Пользователь не найден</h2>', 404
-    # Если пользователь залогинен — открываем чат
-    if current_user.is_authenticated:
-        return redirect(url_for('index') + f'?open_chat={u.id}')
-    # Иначе показываем мини-визитку
-    avatar_html = f'<img src="{u.avatar}" style="width:100px;height:100px;border-radius:50%;object-fit:cover;border:3px solid #10b981">' if u.avatar and not u.avatar.startswith('/static/') else f'<div style="width:100px;height:100px;border-radius:50%;background:#10b981;display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:700;color:white">{u.name[0].upper()}</div>'
-    return f'''<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>{u.name} — WayChat</title>
-    <style>body{{margin:0;background:#0d0d0f;color:white;font-family:-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:20px;box-sizing:border-box}}
-    .card{{background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:24px;padding:32px 24px;text-align:center;max-width:320px;width:100%}}
-    h1{{margin:16px 0 4px;font-size:24px;font-weight:800}} p{{color:#888;margin:0 0 20px}} a{{display:block;padding:14px;background:#10b981;border-radius:14px;color:white;text-decoration:none;font-weight:700;font-size:16px}}</style></head>
-    <body><div class="card">{avatar_html}<h1>{u.name}</h1><p>@{u.username}</p>
-    <a href="{url_for('index')}?open_chat={u.id}">Написать в WayChat</a></div></body></html>'''
 
 # ══════════════════════════════════════════════════════════
 #  АВАТАРЫ
@@ -1769,7 +1739,17 @@ def get_moments():
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
+
+    # Один запрос для всех view_count
+    view_counts = {}
+    moment_ids = [m.Moment.id for m in moments]
+    if moment_ids:
+        placeholders = ','.join(str(i) for i in moment_ids)
+        rows = db.session.execute(
+            text(f'SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id IN ({placeholders}) GROUP BY moment_id')
+        ).fetchall()
+        view_counts = {r[0]: r[1] for r in rows}
 
     data = [{
         'id':            m.Moment.id,
@@ -1781,7 +1761,7 @@ def get_moments():
         'geo_name':      m.Moment.geo_name or '',
         'timestamp':     to_moscow_str(m.Moment.timestamp),
         'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
+        'view_count':    view_counts.get(m.Moment.id, 0),
         'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
