@@ -153,7 +153,12 @@ app.config.update(
 
 CORS(app, supports_credentials=True, origins=['*'])
 
-db            = SQLAlchemy(app)
+# ══ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ DetachedInstanceError ══
+# expire_on_commit=False — объекты НЕ протухают после commit()
+# Без этого SQLAlchemy помечает все атрибуты как "expired" после
+# каждого commit(), и следующее обращение к атрибуту вызывает
+# lazy-load, который падает если сессия уже закрыта.
+db            = SQLAlchemy(app, session_options={'expire_on_commit': False})
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
@@ -528,6 +533,23 @@ def load_user(uid):
     except Exception:
         return None
 
+def get_current_uid():
+    """Возвращает ID пользователя через get_id() - без lazy-load SQLAlchemy."""
+    try:
+        return int(current_user.get_id())
+    except Exception:
+        return None
+
+
+def get_user_fresh(user_id):
+    """Свежий объект User из текущей сессии."""
+    try:
+        return db.session.get(User, user_id)
+    except Exception:
+        return None
+
+
+
 # ══════════════════════════════════════════════════════════
 #  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ══════════════════════════════════════════════════════════
@@ -611,7 +633,7 @@ def rate_limit(endpoint, max_calls=30, window_sec=60):
                 return f(*args, **kwargs)
             # ИСПРАВЛЕНИЕ: используем _get_current_user_id() вместо current_user.id напрямую
             try:
-                uid = current_user.id
+                uid = get_current_uid()
             except Exception:
                 return f(*args, **kwargs)
             now   = time.monotonic()
@@ -932,7 +954,7 @@ def push_subscribe():
         return jsonify({'success': False, 'error': 'Missing fields'}), 400
 
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return jsonify({'success': False, 'error': 'Session error'}), 401
 
@@ -958,7 +980,7 @@ def push_subscribe():
 def push_unsubscribe():
     data     = request.get_json() or {}
     endpoint = data.get('endpoint', '').strip()
-    uid      = current_user.id
+    uid = get_current_uid()
     if endpoint:
         PushSubscription.query.filter_by(user_id=uid, endpoint=endpoint).delete()
     else:
@@ -971,7 +993,7 @@ def push_unsubscribe():
 @login_required
 def logout():
     try:
-        uid = current_user.id
+        uid = get_current_uid()
         u   = db.session.get(User, uid)
         if u:
             u.is_online = False
@@ -998,8 +1020,9 @@ def index():
 def get_current_user_route():
     """ИСПРАВЛЕНИЕ: читаем данные напрямую из БД, не из кэшированного объекта"""
     try:
-        uid = current_user.id
-        # Получаем свежий объект из текущей сессии
+        uid = get_current_uid()
+        if not uid:
+            return jsonify({'error': 'Not authenticated'}), 401
         u = db.session.get(User, uid)
         if not u:
             return jsonify({'error': 'User not found'}), 404
@@ -1055,7 +1078,9 @@ def get_my_chats():
         db.session.rollback()
     except Exception:
         pass
-    uid = current_user.id
+    uid = get_current_uid()
+    if not uid:
+        return jsonify([])
     cached = _chat_cache.get(uid)
     if cached:
         return jsonify(cached)
@@ -1208,8 +1233,8 @@ def get_chat_id(partner_id):
     if not partner:
         return jsonify({'error': 'User not found'}), 404
     p_online = partner.online_status
-    chat = get_or_create_chat(current_user.id, partner_id)
-    _chat_cache.delete(current_user.id)
+    chat = get_or_create_chat(uid, partner_id)
+    _chat_cache.delete(uid)
     _chat_cache.delete(partner_id)
     return jsonify({'chat_id': chat.id, 'partner_online': p_online})
 
@@ -1220,7 +1245,7 @@ def get_group_chat_id(group_id):
     group = db.session.get(Group, group_id)
     if not group:
         return jsonify({'error': 'Group not found'}), 404
-    member = GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id).first()
+    member = GroupMember.query.filter_by(group_id=group_id, user_id=uid).first()
     if not member:
         return jsonify({'error': 'Not a member'}), 403
     member_count = GroupMember.query.filter_by(group_id=group_id).count()
@@ -1241,7 +1266,7 @@ def get_messages(chat_id):
         pass
     limit     = min(request.args.get('limit', 35, type=int), 100)
     before_id = request.args.get('before_id', None, type=int)
-    uid       = current_user.id
+    uid = get_current_uid()
 
     db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
@@ -1272,7 +1297,7 @@ def get_messages(chat_id):
 def create_group():
     name        = request.form.get('name', '').strip()[:64]
     members_raw = request.form.get('members', '[]')
-    uid         = current_user.id
+    uid = get_current_uid()
     uname       = current_user.name
 
     if not name:
@@ -1343,7 +1368,7 @@ def create_group():
 @app.route('/get_group_members/<int:group_id>')
 @login_required
 def get_group_members(group_id):
-    uid    = current_user.id
+    uid = get_current_uid()
     member = GroupMember.query.filter_by(group_id=group_id, user_id=uid).first()
     if not member:
         return jsonify({'error': 'Forbidden'}), 403
@@ -1378,7 +1403,7 @@ def add_group_member():
     data     = request.get_json() or {}
     group_id = data.get('group_id')
     user_id  = data.get('user_id')
-    uid      = current_user.id
+    uid = get_current_uid()
 
     if not group_id or not user_id:
         return jsonify({'success': False, 'error': 'Missing params'}), 400
@@ -1419,7 +1444,7 @@ def add_group_member():
 @app.route('/leave_group/<int:group_id>', methods=['POST'])
 @login_required
 def leave_group(group_id):
-    uid    = current_user.id
+    uid = get_current_uid()
     uname  = current_user.name
     member = GroupMember.query.filter_by(group_id=group_id, user_id=uid).first()
     if not member:
@@ -1441,7 +1466,7 @@ def kick_group_member():
     data     = request.get_json() or {}
     group_id = data.get('group_id')
     user_id  = data.get('user_id')
-    uid      = current_user.id
+    uid = get_current_uid()
 
     if not group_id or not user_id:
         return jsonify({'success': False, 'error': 'Missing params'}), 400
@@ -1478,7 +1503,7 @@ def set_group_admin():
     group_id = data.get('group_id')
     user_id  = data.get('user_id')
     is_admin = bool(data.get('is_admin', True))
-    uid      = current_user.id
+    uid = get_current_uid()
 
     if not group_id or not user_id:
         return jsonify({'success': False, 'error': 'Missing params'}), 400
@@ -1504,7 +1529,7 @@ def set_group_admin():
 def search_users():
     q     = request.args.get('q', '').strip()
     phone = request.args.get('phone', '').strip()
-    uid   = current_user.id
+    uid = get_current_uid()
 
     if not q and not phone:
         return jsonify([])
@@ -1549,7 +1574,7 @@ def update_profile():
     data = request.get_json() or {}
     name = data.get('name', '').strip()
     bio  = data.get('bio', None)
-    uid  = current_user.id
+    uid = get_current_uid()
 
     u = db.session.get(User, uid)
     if not u:
@@ -1591,7 +1616,7 @@ def upload_avatar():
     if size > 5 * 1024 * 1024:
         return jsonify({'success': False, 'error': 'Файл слишком большой (макс 5 МБ)'}), 400
 
-    uid = current_user.id
+    uid = get_current_uid()
     u   = db.session.get(User, uid)
     if not u:
         return jsonify({'success': False, 'error': 'User not found'}), 404
@@ -1626,7 +1651,7 @@ def upload_avatar_emoji():
     if not emoji or len(emoji) > 8:
         return jsonify({'success': False, 'error': 'Invalid emoji'}), 400
 
-    uid = current_user.id
+    uid = get_current_uid()
     u   = db.session.get(User, uid)
     if not u:
         return jsonify({'success': False, 'error': 'User not found'}), 404
@@ -1668,7 +1693,7 @@ def upload_media():
 @app.route('/delete_message/<int:msg_id>', methods=['DELETE'])
 @login_required
 def delete_message_route(msg_id):
-    uid = current_user.id
+    uid = get_current_uid()
     msg = db.session.get(Message, msg_id)
     if not msg:
         return jsonify({'success': False, 'error': 'Not found'}), 404
@@ -1693,7 +1718,7 @@ def delete_message_route(msg_id):
 @app.route('/block_user/<int:user_id>', methods=['POST'])
 @login_required
 def block_user(user_id):
-    uid = current_user.id
+    uid = get_current_uid()
     if user_id == uid:
         return jsonify({'success': False}), 400
     existing = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
@@ -1712,7 +1737,9 @@ def get_moments():
     if cached:
         return jsonify(cached)
 
-    uid     = current_user.id
+    uid = get_current_uid()
+    if not uid:
+        return jsonify([])
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
@@ -1739,7 +1766,7 @@ def get_moments():
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
 @login_required
 def delete_chat_route(cid):
-    uid  = str(current_user.id)
+    uid  = str(get_current_uid())
     chat = db.session.get(Chat, cid)
     if not chat:
         return jsonify({'success': False}), 404
@@ -1755,7 +1782,7 @@ def delete_chat_route(cid):
 @app.route('/view_moment/<int:mid>', methods=['POST'])
 @login_required
 def view_moment(mid):
-    uid = current_user.id
+    uid = get_current_uid()
     if MomentView.query.filter_by(moment_id=mid, viewer_id=uid).first():
         return jsonify({'success': True})
     mv = MomentView(moment_id=mid, viewer_id=uid)
@@ -1770,7 +1797,7 @@ def view_moment(mid):
 @app.route('/moment_viewers/<int:mid>')
 @login_required
 def moment_viewers(mid):
-    uid = current_user.id
+    uid = get_current_uid()
     m   = db.session.get(Moment, mid)
     if not m or m.user_id != uid:
         return jsonify({'success': False, 'viewers': []})
@@ -1790,7 +1817,7 @@ def moment_viewers(mid):
 @app.route('/delete_moment/<int:mid>', methods=['POST'])
 @login_required
 def delete_moment(mid):
-    uid = current_user.id
+    uid = get_current_uid()
     m   = db.session.get(Moment, mid)
     if not m:
         return jsonify({'success': False}), 404
@@ -1813,7 +1840,7 @@ def delete_moment(mid):
 @login_required
 @rate_limit('create_moment', max_calls=10, window_sec=3600)
 def create_moment():
-    uid   = current_user.id
+    uid = get_current_uid()
     uname = current_user.name
 
     media_url = None
@@ -1851,7 +1878,7 @@ def create_moment():
 def handle_connect():
     if current_user.is_authenticated:
         try:
-            uid = current_user.id
+            uid = get_current_uid()
         except Exception:
             return
         join_room(f'user_{uid}')
@@ -1874,7 +1901,7 @@ def handle_connect():
 def on_join(data):
     if current_user.is_authenticated:
         try:
-            uid = current_user.id
+            uid = get_current_uid()
         except Exception:
             return
         join_room(f'user_{uid}')
@@ -1890,7 +1917,7 @@ def on_join(data):
 def on_disconnect():
     if current_user.is_authenticated:
         try:
-            uid = current_user.id
+            uid = get_current_uid()
         except Exception:
             return
         u = db.session.get(User, uid)
@@ -1910,7 +1937,7 @@ def on_enter_chat(data):
     if not chat_id:
         return
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
     join_room(f'chat_{chat_id}')
@@ -1937,7 +1964,7 @@ def handle_msg(data):
         return
 
     try:
-        uid   = current_user.id
+        uid = get_current_uid()
         uname = current_user.name
     except Exception:
         return
@@ -2003,7 +2030,7 @@ def handle_mark_read(data):
     if not chat_id:
         return
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
     result = db.session.execute(
@@ -2032,7 +2059,7 @@ def handle_reaction(data):
         return
 
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
 
@@ -2065,7 +2092,7 @@ def handle_delete_message(data):
         return
 
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
 
@@ -2092,7 +2119,7 @@ def handle_delete_message(data):
 
 def _get_partner_id_sio(chat_id):
     try:
-        uid  = current_user.id
+        uid = get_current_uid()
     except Exception:
         return None
     chat = db.session.get(Chat, chat_id)
@@ -2110,7 +2137,7 @@ def handle_typing(data):
     if not chat_id:
         return
     try:
-        uid   = current_user.id
+        uid = get_current_uid()
         uname = current_user.name
     except Exception:
         return
@@ -2155,7 +2182,7 @@ def handle_call(data):
     if not to:
         return
     try:
-        uid    = current_user.id
+        uid = get_current_uid()
         uname  = current_user.name
         uavat  = current_user.avatar
     except Exception:
@@ -2178,7 +2205,7 @@ def handle_answer(data):
     if not to:
         return
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
     emit('call_answered', {'from': uid, 'answer': data.get('answer')}, room=f'user_{to}')
@@ -2192,7 +2219,7 @@ def handle_ice(data):
     if not to:
         return
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
     emit('ice_candidate', {'from': uid, 'candidate': data.get('candidate')}, room=f'user_{to}')
@@ -2206,7 +2233,7 @@ def handle_end_call(data):
     if not to:
         return
     try:
-        uid = current_user.id
+        uid = get_current_uid()
     except Exception:
         return
     emit('call_ended', {'from': uid}, room=f'user_{to}')
