@@ -181,6 +181,7 @@ let chatPartnerAvatarSrc = {};
 // ══ КЭШИ МОМЕНТОВ ══
 let momentsCache      = null;
 let momentsLastLoad   = 0;
+let _viewedMomentUsers = new Set(); // uid пользователей чьи моменты уже просмотрены
 
 // ══ КЭШ СООБЩЕНИЙ — главная фича ══
 // { chatId: { messages: [], loadedAll: bool, lastFetch: timestamp } }
@@ -263,13 +264,12 @@ function initSocket() {
         socket.emit('join', { user_id: currentUser.id });
         loadChats();
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
-        if (wsReconnected) showToast('Подключено', 'success', 1500);
         wsReconnected = true;
     });
 
     socket.on('disconnect', () => { wsConnected = false; updateConnStatus(false); });
     socket.on('connect_error', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('reconnect', () => { wsConnected = true; updateConnStatus(true); showToast('Переподключено', 'success', 1500); });
+    socket.on('reconnect', () => { wsConnected = true; updateConnStatus(true); });
 
     socket.on('new_message', onNewMessage);
 
@@ -417,9 +417,9 @@ async function init() {
     setupGlobalGestures();
     // Микрофон запрашивается только при необходимости (запись голоса/видео)
     initSocket();
-    setTimeout(syncProfileData, 800);
-    setTimeout(_updatePermsSummary, 1200);
-    setTimeout(initPushNotifications, 800);
+    setTimeout(syncProfileData, 300);
+    setTimeout(_updatePermsSummary, 600);
+    setTimeout(initPushNotifications, 500);
 
     setInterval(() => {
         if (currentTab === 'chats' && !currentChatId) loadChats();
@@ -1469,12 +1469,21 @@ function updatePartnerOnlineStatus(userId, isOnline) {
 // ══════════════════════════════════════════════════════════
 async function apiFetch(url, options = {}) {
     const headers = { ...(options.headers || {}) };
-    const res = await fetch(url, { ...options, headers, credentials: 'include' });
-    if (res.status === 401 || (res.redirected && res.url.includes('/login'))) {
-        location.href = '/login';
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 10000); // 10с таймаут
+    try {
+        const res = await fetch(url, { ...options, headers, credentials: 'include', signal: controller.signal });
+        clearTimeout(tid);
+        if (res.status === 401 || (res.redirected && res.url.includes('/login'))) {
+            location.href = '/login';
+            return null;
+        }
+        return res;
+    } catch(e) {
+        clearTimeout(tid);
+        if (e.name === 'AbortError') console.warn('apiFetch timeout:', url);
         return null;
     }
-    return res;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -4347,7 +4356,7 @@ async function loadMoments() {
     const container = document.getElementById('full-moments-list');
     if (!container) return;
     const now = Date.now();
-    if (momentsCache && (now - momentsLastLoad) < 60000) { renderMomentsList(container, momentsCache); return; }
+    if (momentsCache && (now - momentsLastLoad) < 30000) { renderMomentsList(container, momentsCache); return; }
     if (!momentsCache) container.innerHTML = `<div style="text-align:center;opacity:0.3;padding:20px;font-size:14px">Загрузка...</div>`;
     try {
         const r = await apiFetch('/get_moments');
@@ -4396,7 +4405,7 @@ function renderMomentsList(container, moments) {
         avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
         avaWrap.appendChild(avaInner);
 
-        // SVG кольцо с разрезами
+        // SVG кольцо с разрезами (серое если просмотрено)
         const NS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(NS, 'svg');
         svg.setAttribute('width','60'); svg.setAttribute('height','60'); svg.setAttribute('viewBox','0 0 60 60');
@@ -4404,6 +4413,7 @@ function renderMomentsList(container, moments) {
         const CX=30, CY=30, R=28;
         const GAP_DEG = cnt > 1 ? 5 : 0;
         const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
+        const ringColor = (!isMe && _viewedMomentUsers.has(uid)) ? '#555' : 'var(--accent)';
         for (let i=0; i<cnt; i++) {
             const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
             const tr = d => d*Math.PI/180;
@@ -4411,7 +4421,7 @@ function renderMomentsList(container, moments) {
             const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
             const path = document.createElementNS(NS, 'path');
             path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
-            path.setAttribute('stroke','var(--accent)'); path.setAttribute('stroke-width','2');
+            path.setAttribute('stroke', ringColor); path.setAttribute('stroke-width','3.5');
             path.setAttribute('fill','none'); path.setAttribute('stroke-linecap','round');
             svg.appendChild(path);
         }
@@ -4438,6 +4448,13 @@ function renderMomentsList(container, moments) {
 function openUserMomentsViewer(userId) {
     const list = currentMoments.filter(m => m.user_id === userId);
     if (!list.length) return;
+    // Помечаем как просмотренные
+    if (userId !== currentUser?.id) {
+        _viewedMomentUsers.add(userId);
+        // Перерисовываем список чтобы кольцо стало серым
+        const container = document.getElementById('full-moments-list');
+        if (container && momentsCache) renderMomentsList(container, momentsCache);
+    }
     _runMomentsViewer(list, 0);
 }
 
@@ -5567,8 +5584,8 @@ function _openChatByChatId(chatId) {
     }, 300);
 }
 
-window.addEventListener('online',  () => showToast('Соединение восстановлено', 'success'));
-window.addEventListener('offline', () => showToast('Нет интернета', 'warning'));
+window.addEventListener('online',  () => updateConnStatus(true));
+window.addEventListener('offline', () => updateConnStatus(false));
 
 document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
