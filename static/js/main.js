@@ -856,118 +856,140 @@ body {
 
         <!-- ══ НАСТРОЙКИ ══ -->
         <div id="settings-section" class="hidden">
-            <div class="settings-hero">
-                <div style="position:absolute;top:0;left:0;right:0;height:380px;z-index:0;overflow:hidden;pointer-events:none">
-                    <div id="settings-bg" class="profile-bg-img"></div>
-                    <div class="profile-bg-fade"></div>
-                </div>
-                <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding-top:60px">
+            <!-- ШАПКА с блюр-аватаром -->
+            <div style="position:relative;overflow:hidden;min-height:260px;flex-shrink:0">
+                <div id="settings-bg" style="position:absolute;inset:-20px;background-size:cover;background-position:center;filter:blur(36px) brightness(0.5) saturate(1.6);transform:scale(1.1)"></div>
+                <div style="position:absolute;inset:0;background:linear-gradient(to bottom,transparent 40%,var(--bg) 100%)"></div>
+                <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding-top:max(calc(env(safe-area-inset-top)+20px),52px);padding-bottom:20px">
                     <div style="position:relative;margin-bottom:12px">
-                        <div id="settings-ava-box" style="border-radius:50%;overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.5);border:3px solid rgba(255,255,255,0.15)">
-                            ${getAvatarHtml(currentUser, 'w-28 h-28')}
+                        <div id="settings-ava-box" style="width:96px;height:96px;border-radius:50%;overflow:hidden;box-shadow:0 6px 32px rgba(0,0,0,0.6);border:3px solid rgba(255,255,255,0.2)">
+                            ${getAvatarHtml(currentUser,'w-full h-full')}
                         </div>
-                        <div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);display:flex;gap:10px">
-                            <button onclick="changeAvatar()" style="width:36px;height:36px;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white" class="active:scale-90">${ICONS.camera}</button>
-                            <button onclick="setEmojiAvatar()" style="width:36px;height:36px;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white" class="active:scale-90">${ICONS.smile}</button>
+                        <div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);display:flex;gap:8px">
+                            <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(10,10,10,0.8);backdrop-filter:blur(16px);border:1.5px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
+                            <button onclick="setEmojiAvatar()" style="width:32px;height:32px;background:rgba(10,10,10,0.8);backdrop-filter:blur(16px);border:1.5px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
                         </div>
                     </div>
-                    <h2 id="settings-name" style="font-size:24px;font-weight:800;margin-top:8px;letter-spacing:-0.3px">${currentUser.name}</h2>
-                    <p style="color:var(--text-2);font-size:14px">@${currentUser.username}</p>
+                    <h2 id="settings-name" style="font-size:24px;font-weight:800;margin:10px 0 2px;letter-spacing:-0.4px">${currentUser.name}</h2>
+                    <p style="color:rgba(255,255,255,0.55);font-size:14px;margin:0">@${currentUser.username}</p>
                 </div>
             </div>
+
             <div style="padding:0 16px 100px">
-                <div style="margin-bottom:8px">
-                    <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Профиль</p>
-                    <div class="settings-section">
-                        <div class="settings-row" onclick="editName()">
-                            <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.profile}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Имя</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="settings-name-val">${currentUser.name}</div></div>
-                            <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                <!-- TG-стиль инфо-карточка -->
+                <div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:20px;overflow:hidden;margin-bottom:20px">
+                    <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
+                        <div style="font-size:11px;color:var(--text-2);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.4px">мобильный</div>
+                        <div style="font-size:16px;font-weight:600;color:#60a5fa">${currentUser.phone||'—'}</div>
+                    </div>
+                    <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:space-between">
+                        <div>
+                            <div style="font-size:11px;color:var(--text-2);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.4px">имя пользователя</div>
+                            <div style="font-size:16px;font-weight:600;color:#60a5fa">@${currentUser.username}</div>
                         </div>
-                        <div class="settings-row" onclick="editBio()">
-                            <div class="settings-icon" style="background:rgba(139,92,246,0.2);color:#a78bfa">${ICONS.edit}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Bio</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="settings-bio-val">${currentUser.bio||'Не задано'}</div></div>
-                            <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                        <button onclick="showMyQR()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:8px 12px;cursor:pointer;color:white;font-size:12px;font-weight:700;font-family:inherit;display:flex;align-items:center;gap:6px">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="white" stroke-width="2"/><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="white" stroke-width="2"/><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="white" stroke-width="2"/><rect x="5" y="5" width="3" height="3" fill="white"/><rect x="16" y="5" width="3" height="3" fill="white"/><rect x="5" y="16" width="3" height="3" fill="white"/><rect x="14" y="14" width="3" height="3" fill="white"/><rect x="18" y="18" width="3" height="3" fill="white"/></svg>
+                            QR
+                        </button>
+                    </div>
+                    <div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06);cursor:pointer" onclick="editBirthday()">
+                        <div style="font-size:11px;color:var(--text-2);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.4px">день рождения</div>
+                        <div id="settings-birthday-val" style="font-size:15px;font-weight:500">${currentUser.birthday ? formatBirthday(currentUser.birthday) : '<span style="color:var(--text-2)">Добавить</span>'}</div>
+                    </div>
+                    <div style="padding:14px 16px;cursor:pointer" onclick="editBio()">
+                        <div style="font-size:11px;color:var(--text-2);margin-bottom:3px;text-transform:uppercase;letter-spacing:0.4px">о себе</div>
+                        <div id="settings-bio-val" style="font-size:15px;line-height:1.4">${currentUser.bio||'<span style="color:var(--text-2)">Добавить bio</span>'}</div>
+                    </div>
+                </div>
+
+                <!-- ПРОФИЛЬ -->
+                <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Профиль</p>
+                <div class="settings-section" style="margin-bottom:16px">
+                    <div class="settings-row" onclick="editName()">
+                        <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.profile}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Имя</div>
+                        <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="settings-name-val">${currentUser.name}</div></div>
+                        <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                    <div class="settings-row" onclick="editBio()">
+                        <div class="settings-icon" style="background:rgba(139,92,246,0.2);color:#a78bfa">${ICONS.edit}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Bio</div>
+                        <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="settings-bio-val2">${currentUser.bio||'Не задано'}</div></div>
+                        <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                    <div class="settings-row" onclick="copyUsername()">
+                        <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">${ICONS.globe}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Юзернейм</div>
+                        <div style="font-size:13px;color:var(--text-2);margin-top:1px">@${currentUser.username}</div></div>
+                        <span style="font-size:12px;color:var(--text-2);font-weight:500">Скопировать</span>
+                    </div>
+                </div>
+
+                <!-- КОНТАКТЫ -->
+                <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Контакты</p>
+                <div class="settings-section" style="margin-bottom:16px">
+                    <div class="settings-row" onclick="openContactsModal()">
+                        <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">${ICONS.users}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Сохранённые контакты</div>
+                        <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="contacts-count-label">${savedContacts.length} контактов</div></div>
+                        <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                </div>
+
+                <!-- ОФОРМЛЕНИЕ -->
+                <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Оформление</p>
+                <div class="settings-section" style="margin-bottom:16px">
+                    <div class="settings-row" onclick="openThemePicker()">
+                        <div class="settings-icon" style="background:var(--accent-10)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="var(--accent)" stroke-width="2"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg></div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Цвет темы</div>
+                        <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="current-theme-name">${THEMES[activeTheme]?.name||'Изумруд'}</div></div>
+                        <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);box-shadow:var(--glow);border:2px solid rgba(255,255,255,0.2)"></div>
+                    </div>
+                    <div class="settings-row" onclick="openNetworkInfo()">
+                        <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.globe}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Подключение</div>
+                        <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="ws-status-label">${wsConnected?'Онлайн':'Подключение...'}</div></div>
+                    </div>
+                </div>
+
+                <!-- УВЕДОМЛЕНИЯ -->
+                <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Уведомления</p>
+                <div class="settings-section" style="margin-bottom:16px">
+                    <div class="settings-row" onclick="openPermissionsSettings()">
+                        <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                         </div>
-                        <div class="settings-row" onclick="copyUsername()">
-                            <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">${ICONS.globe}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Юзернейм</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px">@${currentUser.username}</div></div>
-                            <span style="font-size:12px;color:var(--text-2)">Скопировать</span>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Разрешения</div>
+                        <div style="font-size:12px;color:var(--text-2)" id="perms-summary">Микрофон, камера, уведомления</div></div>
+                        <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                    <div class="settings-row" onclick="toggleNotifications()">
+                        <div class="settings-icon" style="background:rgba(239,68,68,0.2);color:#f87171">${ICONS.bell}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Push-уведомления</div></div>
+                        <div id="notif-toggle" style="width:48px;height:28px;border-radius:14px;background:var(--accent);position:relative;cursor:pointer">
+                            <div style="position:absolute;top:3px;right:3px;width:22px;height:22px;background:white;border-radius:50%;transition:right 0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
                         </div>
                     </div>
                 </div>
-                <div style="margin-bottom:8px">
-                    <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Контакты</p>
-                    <div class="settings-section">
-                        <div class="settings-row" onclick="openContactsModal()">
-                            <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">${ICONS.users}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Сохранённые контакты</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="contacts-count-label">${savedContacts.length} контактов</div></div>
-                            <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                        </div>
+
+                <!-- АККАУНТ -->
+                <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Аккаунт</p>
+                <div class="settings-section" style="margin-bottom:16px">
+                    <div class="settings-row" onclick="openPrivacySettings()">
+                        <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.lock}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">Конфиденциальность</div></div>
+                        <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </div>
+                    <div class="settings-row" onclick="showAbout()">
+                        <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">${ICONS.info}</div>
+                        <div style="flex:1"><div style="font-size:15px;font-weight:500">О приложении</div>
+                        <div style="font-size:12px;color:var(--text-2)">WayChat v7.0</div></div>
+                        <svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                     </div>
                 </div>
-                <div style="margin-bottom:8px">
-                    <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Оформление</p>
-                    <div class="settings-section">
-                        <div class="settings-row" onclick="openThemePicker()">
-                            <div class="settings-icon" style="background:var(--accent-10)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="var(--accent)" stroke-width="2"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg></div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Цвет темы</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="current-theme-name">${THEMES[activeTheme]?.name||'Изумруд'}</div></div>
-                            <div style="width:22px;height:22px;border-radius:50%;background:var(--accent);box-shadow:var(--glow);border:2px solid rgba(255,255,255,0.2)"></div>
-                        </div>
-                        <div class="settings-row" onclick="openNetworkInfo()">
-                            <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.globe}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Подключение</div>
-                            <div style="font-size:13px;color:var(--text-2);margin-top:1px" id="ws-status-label">${wsConnected?'Онлайн':'Подключение...'}</div></div>
-                        </div>
-                    </div>
-                </div>
-                <div style="margin-bottom:8px">
-                    <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Уведомления</p>
-                    <div class="settings-section">
-                        <div class="settings-row" onclick="openPermissionsSettings()">
-                            <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                            </div>
-                            <div style="flex:1">
-                                <div style="font-size:15px;font-weight:500">Разрешения</div>
-                                <div style="font-size:12px;color:var(--text-2)" id="perms-summary">Микрофон, камера, уведомления</div>
-                            </div>
-                            <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                        </div>
-                    </div>
-                    <div class="settings-section">
-                        <div class="settings-row" onclick="toggleNotifications()">
-                            <div class="settings-icon" style="background:rgba(239,68,68,0.2);color:#f87171">${ICONS.bell}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Push-уведомления</div></div>
-                            <div id="notif-toggle" style="width:48px;height:28px;border-radius:14px;background:var(--accent);position:relative;cursor:pointer">
-                                <div style="position:absolute;top:3px;right:3px;width:22px;height:22px;background:white;border-radius:50%;transition:right 0.2s;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div style="margin-bottom:8px">
-                    <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Аккаунт</p>
-                    <div class="settings-section">
-                        <div class="settings-row" onclick="openPrivacySettings()">
-                            <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.lock}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">Конфиденциальность</div></div>
-                            <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                        </div>
-                        <div class="settings-row" onclick="showAbout()">
-                            <div class="settings-icon" style="background:rgba(16,185,129,0.2);color:#10b981">${ICONS.info}</div>
-                            <div style="flex:1"><div style="font-size:15px;font-weight:500">О приложении</div>
-                            <div style="font-size:12px;color:var(--text-2)">WayChat v7.0</div></div>
-                            <span style="color:var(--text-2)"><svg width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                        </div>
-                    </div>
-                </div>
-                <button onclick="doLogout()" style="width:100%;padding:14px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:16px;color:#ef4444;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:10px">
-                    <span style="color:#ef4444">${ICONS.logout}</span> Выйти из аккаунта
+
+                <button onclick="doLogout()" style="width:100%;padding:15px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:16px;color:#ef4444;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:10px">
+                    <span>${ICONS.logout}</span> Выйти из аккаунта
                 </button>
             </div>
         </div>
@@ -1104,33 +1126,29 @@ function switchTab(tab) {
     vibrate(8);
 }
 
-// ══ LOGOUT ════════════════════════════════════════════════
+// ══ LOGOUT ══════════════════════════════════════════════
 async function doLogout() {
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
-    ov.innerHTML = `
-        <div style="background:var(--surface);border-radius:24px 24px 0 0;padding:24px 20px max(calc(env(safe-area-inset-bottom)+20px),32px);width:100%;max-width:480px">
-            <div style="text-align:center;margin-bottom:20px">
-                <div style="font-size:36px;margin-bottom:10px">👋</div>
-                <div style="font-size:18px;font-weight:700;margin-bottom:6px">Выйти из аккаунта?</div>
-                <div style="font-size:14px;color:var(--text-2)">Вы сможете войти снова по номеру телефона</div>
-            </div>
-            <button id="_logout_confirm" style="width:100%;padding:15px;background:#ef4444;border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Выйти</button>
-            <button id="_logout_cancel" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;font-weight:500;cursor:pointer;font-family:inherit">Отмена</button>
-        </div>`;
+    ov.innerHTML = `<div style="background:var(--surface);border-radius:24px 24px 0 0;padding:24px 20px max(calc(env(safe-area-inset-bottom)+20px),32px);width:100%;max-width:480px">
+        <div style="text-align:center;margin-bottom:20px"><div style="font-size:36px;margin-bottom:10px">👋</div>
+        <div style="font-size:18px;font-weight:700;margin-bottom:6px">Выйти из аккаунта?</div>
+        <div style="font-size:14px;color:var(--text-2)">Вы сможете войти снова по номеру телефона</div></div>
+        <button id="_lout_ok" style="width:100%;padding:15px;background:#ef4444;border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Выйти</button>
+        <button id="_lout_no" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;cursor:pointer;font-family:inherit">Отмена</button>
+    </div>`;
     document.body.appendChild(ov);
-    ov.querySelector('#_logout_cancel').onclick = () => ov.remove();
-    ov.querySelector('#_logout_confirm').onclick = async () => {
-        ov.querySelector('#_logout_confirm').textContent = 'Выходим...';
+    ov.querySelector('#_lout_no').onclick = () => ov.remove();
+    ov.querySelector('#_lout_ok').onclick = async () => {
+        ov.querySelector('#_lout_ok').textContent = 'Выходим...';
         try { await apiFetch('/logout', {method:'POST'}); } catch(e) {}
-        localStorage.clear();
-        sessionStorage.clear();
+        localStorage.clear(); sessionStorage.clear();
         window.location.replace('/login');
     };
-    ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+    ov.addEventListener('click', e => { if (e.target===ov) ov.remove(); });
 }
 
-// ══ ДЕНЬ РОЖДЕНИЯ ════════════════════════════════════════
+// ══ ДЕНЬ РОЖДЕНИЯ ══════════════════════════════════════
 function formatBirthday(iso) {
     if (!iso) return '';
     try {
@@ -1142,75 +1160,81 @@ function formatBirthday(iso) {
         return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} (${age} лет)`;
     } catch(e) { return iso; }
 }
-
 function editBirthday() {
-    const current = currentUser.birthday || '';
     const ov = document.createElement('div');
     ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
-    ov.innerHTML = `
-        <div style="background:var(--surface);border-radius:24px 24px 0 0;padding:24px 20px max(calc(env(safe-area-inset-bottom)+20px),32px);width:100%;max-width:480px">
-            <div style="font-size:16px;font-weight:700;margin-bottom:16px">🎂 День рождения</div>
-            <input type="date" id="_bday_input" value="${current}" max="${new Date().toISOString().split('T')[0]}"
-                style="width:100%;padding:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:14px;color:white;font-size:16px;font-family:inherit;box-sizing:border-box;margin-bottom:14px;color-scheme:dark">
-            <button id="_bday_save" style="width:100%;padding:15px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Сохранить</button>
-            <button id="_bday_cancel" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;cursor:pointer;font-family:inherit">Отмена</button>
-        </div>`;
+    ov.innerHTML = `<div style="background:var(--surface);border-radius:24px 24px 0 0;padding:24px 20px max(calc(env(safe-area-inset-bottom)+20px),32px);width:100%;max-width:480px">
+        <div style="font-size:16px;font-weight:700;margin-bottom:16px">🎂 День рождения</div>
+        <input type="date" id="_bday_in" value="${currentUser.birthday||''}" max="${new Date().toISOString().split('T')[0]}"
+            style="width:100%;padding:14px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:14px;color:white;font-size:16px;font-family:inherit;box-sizing:border-box;margin-bottom:14px;color-scheme:dark">
+        <button id="_bday_ok" style="width:100%;padding:15px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:10px">Сохранить</button>
+        <button id="_bday_no" style="width:100%;padding:15px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:16px;cursor:pointer;font-family:inherit">Отмена</button>
+    </div>`;
     document.body.appendChild(ov);
-    ov.querySelector('#_bday_cancel').onclick = () => ov.remove();
-    ov.querySelector('#_bday_save').onclick = async () => {
-        const val = ov.querySelector('#_bday_input').value;
-        const r = await apiFetch('/update_profile', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({birthday: val||null})});
-        if (r) {
-            currentUser.birthday = val || null;
-            const el = document.getElementById('settings-birthday-val');
-            if (el) el.innerHTML = val ? formatBirthday(val) : '<span style="color:var(--text-2)">Добавить</span>';
-            showToast('Сохранено','success');
-        }
+    ov.querySelector('#_bday_no').onclick = () => ov.remove();
+    ov.querySelector('#_bday_ok').onclick = async () => {
+        const val = ov.querySelector('#_bday_in').value;
+        const r = await apiFetch('/update_profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({birthday:val||null})});
+        if (r) { currentUser.birthday=val||null; updateSettingsUI(); showToast('Сохранено','success'); }
         ov.remove();
     };
-    ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+    ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
 }
 
-// ══ QR-КОД ═══════════════════════════════════════════════
+// ══ QR-КОД ═════════════════════════════════════════════
 function showMyQR() {
     const url = `${location.origin}/u/${currentUser.username}`;
     const qr = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(url)}&bgcolor=161618&color=ffffff&margin=12`;
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.75);backdrop-filter:blur(16px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px';
-    ov.innerHTML = `
-        <div style="background:#161618;border:1px solid rgba(255,255,255,0.1);border-radius:28px;padding:28px 24px;text-align:center;max-width:300px;width:100%">
-            <img src="${qr}" width="200" height="200" style="border-radius:16px;display:block;margin:0 auto 16px">
-            <div style="font-size:17px;font-weight:800;color:#fff;margin-bottom:4px">${currentUser.name}</div>
-            <div style="font-size:13px;color:rgba(255,255,255,0.5);margin-bottom:20px">@${currentUser.username}</div>
-            <button id="_qr_share" style="width:100%;padding:13px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:8px">Поделиться</button>
-            <button id="_qr_close" style="width:100%;padding:13px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:15px;cursor:pointer;font-family:inherit">Закрыть</button>
-        </div>`;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.78);backdrop-filter:blur(16px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px';
+    ov.innerHTML = `<div style="background:#161618;border:1px solid rgba(255,255,255,0.1);border-radius:28px;padding:28px 24px;text-align:center;max-width:300px;width:100%">
+        <img src="${qr}" width="200" height="200" style="border-radius:16px;display:block;margin:0 auto 16px">
+        <div style="font-size:17px;font-weight:800;color:#fff;margin-bottom:4px">${currentUser.name}</div>
+        <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-bottom:20px">@${currentUser.username}</div>
+        <button id="_qr_share" style="width:100%;padding:13px;background:var(--accent);border:none;border-radius:14px;color:white;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;margin-bottom:8px">Поделиться</button>
+        <button id="_qr_close" style="width:100%;padding:13px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:14px;color:white;font-size:15px;cursor:pointer;font-family:inherit">Закрыть</button>
+    </div>`;
     document.body.appendChild(ov);
     ov.querySelector('#_qr_close').onclick = () => ov.remove();
     ov.querySelector('#_qr_share').onclick = () => {
-        if (navigator.share) navigator.share({title: currentUser.name + ' в WayChat', url});
-        else navigator.clipboard.writeText(url).then(() => showToast('Ссылка скопирована','success'));
+        if (navigator.share) navigator.share({title:currentUser.name+' в WayChat',url});
+        else navigator.clipboard.writeText(url).then(()=>showToast('Ссылка скопирована','success'));
     };
-    ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+    ov.addEventListener('click', e => { if(e.target===ov) ov.remove(); });
 }
 
 function updateSettingsUI() {
+    // Блюр-фон из аватара
     const bg = document.getElementById('settings-bg');
     if (bg) {
         const src = currentUser.avatar && !currentUser.avatar.startsWith('emoji:') && !currentUser.avatar.includes('default') ? currentUser.avatar : '';
         bg.style.backgroundImage = src ? `url('${src}')` : '';
-        if (!src) bg.style.background = 'linear-gradient(135deg, var(--accent), #000)';
+        if (!src) bg.style.background = 'linear-gradient(135deg,var(--accent),#000)';
     }
+    // Аватар
+    const avaBox = document.getElementById('settings-ava-box');
+    if (avaBox) avaBox.innerHTML = getAvatarHtml(currentUser,'w-full h-full');
+    // Имя
     const nm = document.getElementById('settings-name');
     if (nm) nm.textContent = currentUser.name;
     const nv = document.getElementById('settings-name-val');
     if (nv) nv.textContent = currentUser.name;
+    // Bio (инфо-карточка)
     const bv = document.getElementById('settings-bio-val');
-    if (bv) bv.textContent = currentUser.bio || 'Не задано';
+    if (bv) bv.innerHTML = currentUser.bio || '<span style="color:var(--text-2)">Добавить bio</span>';
+    // Bio (секция профиль)
+    const bv2 = document.getElementById('settings-bio-val2');
+    if (bv2) bv2.textContent = currentUser.bio || 'Не задано';
+    // День рождения
+    const bdv = document.getElementById('settings-birthday-val');
+    if (bdv) bdv.innerHTML = currentUser.birthday ? formatBirthday(currentUser.birthday) : '<span style="color:var(--text-2)">Добавить</span>';
+    // Тема
     const tn = document.getElementById('current-theme-name');
     if (tn) tn.textContent = THEMES[activeTheme]?.name || 'Изумруд';
+    // Статус соединения
     const wsl = document.getElementById('ws-status-label');
     if (wsl) wsl.textContent = wsConnected ? 'Онлайн' : 'Переподключение...';
+    // Контакты
     const cl = document.getElementById('contacts-count-label');
     if (cl) cl.textContent = `${savedContacts.length} контактов`;
 }
@@ -1978,6 +2002,7 @@ function buildMessageRow(msg, animate = true) {
         circ.style.cssText = 'width:180px;height:180px;border-radius:50%;overflow:hidden;border:2.5px solid var(--accent);cursor:pointer;position:relative;box-shadow:0 4px 20px rgba(16,185,129,0.3)';
         const v = document.createElement('video');
         v.src = src; v.playsInline = true; v.loop = true; v.muted = false;
+        v.preload = 'metadata'; // предзагружаем метаданные для быстрого старта
         v.style.cssText = 'width:100%;height:100%;object-fit:cover';
         const playIcon = document.createElement('div');
         playIcon.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);transition:opacity .2s';
@@ -2002,7 +2027,7 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'image') {
-        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
+        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="eager" decoding="async" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
@@ -2817,12 +2842,7 @@ async function _sendVideoCircle(mime) {
         const r = await apiFetch('/upload_media',{method:'POST',body:fd});
         const d = await r.json();
         if(d.url) {
-            socket.emit('send_message', {
-                chat_id: currentChatId,
-                media_url: d.url,
-                media_type: 'video_circle',
-                text: ''
-            });
+            socket.emit('send_message',{chat_id:currentChatId,media_url:d.url,media_type:'video_circle',text:''});
             showToast('Видео-кружок отправлен 🎥','success');
         }
     } catch(e) { showToast('Ошибка отправки','error'); }
@@ -3097,9 +3117,11 @@ function setupVoiceRecording() {
             return;
         }
 
+        // Если запись уже идёт (кружок открыт) — отпускание НЕ останавливает запись
+        // Пользователь управляет через кнопки внутри UI кружка
         if (_holdDone) {
-            if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
+            if (isRecording) stopRecording(); // голосовое — останавливаем
+            // видео-кружок — НЕ останавливаем при отпускании, только через кнопку ⏹
         }
         _holdDone = false;
     }
@@ -4574,28 +4596,48 @@ function _runMomentsViewer(list, startIdx) {
         bg.style.cssText = 'position:absolute;inset:0';
         if (m.media_url) {
             if (m.media_url.match(/\.(mp4|mov|webm)/i)) {
+                // Обложка через Cloudinary (замена /upload/ → /upload/so_0,w_400/ + .jpg)
+                const posterUrl = m.media_url.includes('/upload/')
+                    ? m.media_url.replace('/upload/', '/upload/so_0,w_400/').replace(/\.[^.]+$/, '.jpg')
+                    : '';
+
                 const vid = document.createElement('video');
                 vid.src = m.media_url;
-                vid.autoplay = false; // запустим сами после загрузки
+                vid.preload = 'auto'; // максимальная предзагрузка
+                vid.autoplay = false;
                 vid.loop = false; vid.playsInline = true; vid.muted = false;
-                vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
-                // Показываем спиннер пока грузится
+                vid.style.cssText = 'width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
+
+                // Блюр-постер пока видео не готово
+                const poster = document.createElement('div');
+                poster.style.cssText = `position:absolute;inset:0;z-index:1;transition:opacity 0.4s;${posterUrl ? `background-image:url('${posterUrl}');background-size:cover;background-position:center;filter:blur(8px) brightness(0.6)` : 'background:#111'}`;
+
+                // Спиннер поверх постера
                 const spinner = document.createElement('div');
-                spinner.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:1';
-                spinner.innerHTML = '<div style="width:44px;height:44px;border:3px solid rgba(255,255,255,0.2);border-top-color:white;border-radius:50%;animation:spin 0.8s linear infinite"></div>';
-                bg.appendChild(spinner);
+                spinner.style.cssText = 'position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center';
+                spinner.innerHTML = '<div style="width:48px;height:48px;border:3px solid rgba(255,255,255,0.15);border-top-color:white;border-radius:50%;animation:spin 0.75s linear infinite"></div>';
+                if (!document.getElementById('_spin_css')) {
+                    const s=document.createElement('style');s.id='_spin_css';
+                    s.textContent='@keyframes spin{to{transform:rotate(360deg)}}';
+                    document.head.appendChild(s);
+                }
+
+                bg.appendChild(vid); bg.appendChild(poster); bg.appendChild(spinner);
+
                 vid.addEventListener('canplay', () => {
-                    spinner.remove();
+                    vid.style.opacity = '1';
+                    poster.style.opacity = '0';
+                    spinner.style.opacity = '0';
                     vid.play().catch(()=>{});
-                    // Запускаем прогресс только после начала воспроизведения
+                    setTimeout(() => { poster.remove(); spinner.remove(); }, 400);
+
                     const realDur = vid.duration > 0 ? Math.min(vid.duration * 1000, 30000) : 7000;
                     const fill = document.getElementById('mpf');
-                    if (fill) { fill.style.transition = 'width '+realDur/1000+'s linear'; fill.style.width = '100%'; }
+                    if (fill) { fill.style.transition='width '+realDur/1000+'s linear'; fill.style.width='100%'; }
                     clearTimeout(autoTimer);
-                    autoTimer = setTimeout(() => next(), realDur + 100);
+                    autoTimer = setTimeout(() => next(), realDur + 150);
                     vid.addEventListener('ended', () => next(), {once:true});
                 }, {once:true});
-                bg.appendChild(vid);
             } else {
                 const img = document.createElement('img');
                 img.src = m.media_url; img.style.cssText='width:100%;height:100%;object-fit:cover';
@@ -4673,10 +4715,10 @@ function _runMomentsViewer(list, startIdx) {
             else next();
         };
 
-        // Запускаем прогресс только для фото/текста (видео запускает своё в canplay)
+        // Прогресс для фото/текста. Видео запускает свой таймер в canplay.
         clearTimeout(autoTimer);
-        const isVideo = m.media_url && m.media_url.match(/\.(mp4|mov|webm)/i);
-        if (!isVideo) {
+        const isVid = m.media_url && m.media_url.match(/\.(mp4|mov|webm)/i);
+        if (!isVid) {
             const dur = m.media_url ? 5000 : 4000;
             requestAnimationFrame(() => {
                 const fill = document.getElementById('mpf');
