@@ -303,6 +303,24 @@ app.config.update(
 
 CORS(app, supports_credentials=True, origins=['*'])
 
+def upload_to_cloudinary(file_obj, folder='waychat'):
+    """Загружает файл в Cloudinary, возвращает URL или None."""
+    cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME')
+    api_key    = os.environ.get('CLOUDINARY_API_KEY')
+    api_secret = os.environ.get('CLOUDINARY_API_SECRET')
+    if not all([cloud_name, api_key, api_secret]):
+        return None
+    try:
+        import cloudinary
+        import cloudinary.uploader
+        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret)
+        result = cloudinary.uploader.upload(file_obj, folder=folder, resource_type='auto')
+        return result.get('secure_url')
+    except Exception as e:
+        app.logger.error(f'Cloudinary upload error: {e}')
+        return None
+
+
 @app.teardown_appcontext
 def shutdown_session(exception=None):
     if exception:
@@ -2314,10 +2332,6 @@ def too_large(e):
 @app.errorhandler(500)
 def server_error(e):
     app.logger.error(f'500: {e}')
-    try:
-        db.session.rollback()
-    except Exception:
-        pass
     return jsonify({'error': 'Внутренняя ошибка'}), 500
 
 
