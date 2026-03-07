@@ -4,8 +4,8 @@ eventlet.monkey_patch()
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
-║          Version: 7.0.2 — RENDER FIX EDITION                ║
-║  Cookie Secure fix · db.create_all fix · gunicorn fix        ║
+║          Version: 7.0.1 — FIXED EDITION                     ║
+║  DetachedInstanceError fix · Cache fix · SW fix              ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -141,15 +141,12 @@ app.config.update(
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
-    # FIX: на Render всегда HTTPS — куки должны быть Secure=True иначе iPhone их блокирует
     SESSION_COOKIE_SAMESITE  = 'Lax',
-    SESSION_COOKIE_SECURE    = True,
+    SESSION_COOKIE_SECURE    = False,
     SESSION_COOKIE_HTTPONLY  = True,
     REMEMBER_COOKIE_SAMESITE = 'Lax',
-    REMEMBER_COOKIE_SECURE   = True,
+    REMEMBER_COOKIE_SECURE   = False,
     REMEMBER_COOKIE_DURATION = timedelta(days=30),
-    SESSION_PERMANENT        = True,
-    PERMANENT_SESSION_LIFETIME = timedelta(days=30),
     SESSION_PROTECTION       = None,
     JSON_SORT_KEYS           = False,
 )
@@ -383,7 +380,6 @@ class User(UserMixin, db.Model):
     ban_reason    = db.Column(db.String(500),  default='')      # причина
     last_ip       = db.Column(db.String(64),   default='')      # последний IP
     reg_ip        = db.Column(db.String(64),   default='')      # IP при регистрации
-    birthday      = db.Column(db.Date,         nullable=True)   # дата рождения
 
     @property
     def online_status(self):
@@ -1336,58 +1332,6 @@ def get_messages(chat_id):
     _chat_cache.delete(uid)
     return jsonify([m.to_dict() for m in reversed(msgs)])
 
-
-
-# ══════════════════════════════════════════════════════════
-#  HTTP ОТПРАВКА СООБЩЕНИЯ (video_circle и другие через fetch)
-# ══════════════════════════════════════════════════════════
-@app.route("/send_message", methods=["POST"])
-@login_required
-@rate_limit("send_http_msg", max_calls=60, window_sec=60)
-def send_message_http():
-    data     = request.get_json() or {}
-    chat_id  = data.get("chat_id")
-    media_url= (data.get("media_url") or "").strip()
-    msg_type = data.get("media_type") or data.get("type", "text")
-    content  = (data.get("text") or data.get("content") or "")[:10000]
-    if not chat_id:
-        return jsonify({"success": False, "error": "chat_id required"}), 400
-    uid   = current_user.id
-    uname = current_user.name
-    chat  = db.session.get(Chat, chat_id)
-    if not chat:
-        return jsonify({"success": False, "error": "Chat not found"}), 404
-    msg = Message(chat_id=chat_id, sender_id=uid, sender_name=uname,
-        type=msg_type, content=content, file_url=media_url or None)
-    db.session.add(msg)
-    db.session.commit()
-    _chat_cache.delete(uid)
-    payload = msg.to_dict()
-    payload["chat_id"] = chat_id
-    if chat.room_key.startswith("group_"):
-        group = Group.query.filter_by(chat_id=chat_id).first()
-        if group:
-            payload["is_group_msg"] = True
-            payload["group_id"] = group.id
-            members = GroupMember.query.filter_by(group_id=group.id).all()
-            for m in members:
-                _chat_cache.delete(m.user_id)
-                socketio.emit("new_message", payload, room=f"user_{m.user_id}")
-    else:
-        payload["is_group_msg"] = False
-        parts = chat.room_key.replace("chat_", "").split("_")
-        for uid_str in parts:
-            if uid_str.isdigit():
-                uid_int = int(uid_str)
-                _chat_cache.delete(uid_int)
-                socketio.emit("new_message", payload, room=f"user_{uid_str}")
-                if uid_int != uid:
-                    is_online = _online_cache.get(uid_int)
-                    if not is_online:
-                        push_preview = "🎥 Видео-кружок" if msg_type == "video_circle" else (content[:80] or "...")
-                        eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
-    return jsonify({"success": True, "msg_id": msg.id})
-
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
 # ══════════════════════════════════════════════════════════
@@ -1912,7 +1856,7 @@ def moment_viewers(mid):
     ]})
 
 
-@app.route('/delete_moment/<int:mid>', methods=['POST'])
+@app.route('/delete_moment/<int:mid>', methods=['POST', 'DELETE'])
 @login_required
 def delete_moment(mid):
     uid = current_user.id
@@ -2794,27 +2738,18 @@ def shutdown_session(exception=None):
     db.session.remove()
 
 # ══════════════════════════════════════════════════════════
-#  ИНИЦИАЛИЗАЦИЯ БД — запускается при импорте модуля (gunicorn тоже)
+#  ЗАПУСК
 # ══════════════════════════════════════════════════════════
-def _init_app():
-    try:
+if __name__ == '__main__':
+    with app.app_context():
         os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
         db.create_all()
         run_migrations()
-        eventlet.spawn(background_cleanup)
-        print('✅ WayChat DB ready')
-    except Exception as e:
-        print(f'❌ DB init error: {e}')
 
-with app.app_context():
-    _init_app()
+    eventlet.spawn(background_cleanup)
 
-# ══════════════════════════════════════════════════════════
-#  ЗАПУСК (только python app.py напрямую)
-# ══════════════════════════════════════════════════════════
-if __name__ == '__main__':
     print('╔══════════════════════════════════════════════════════╗')
-    print('║         WAYCHAT SERVER v7.0.2 — STARTING            ║')
+    print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
     print('╚══════════════════════════════════════════════════════╝')
 
     port = int(os.environ.get('PORT', 5000))
