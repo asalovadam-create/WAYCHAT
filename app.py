@@ -196,11 +196,18 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
 
-        # Определяем тип ресурса явно — 'auto' иногда не работает для видео
-        mime = getattr(file_obj, 'content_type', None) or getattr(file_obj, 'mimetype', '') or ''
-        if not mime and hasattr(file_obj, 'filename'):
-            import mimetypes
-            mime = mimetypes.guess_type(file_obj.filename or '')[0] or ''
+        # Определяем тип ресурса явно
+        mime = ''
+        if hasattr(file_obj, 'content_type') and file_obj.content_type:
+            mime = file_obj.content_type
+        elif hasattr(file_obj, 'mimetype') and file_obj.mimetype:
+            mime = file_obj.mimetype
+        elif hasattr(file_obj, 'filename') and file_obj.filename:
+            import mimetypes as _mt
+            mime = _mt.guess_type(file_obj.filename)[0] or ''
+
+        print(f'Cloudinary upload: mime={mime!r}, folder={folder!r}')
+
         if mime.startswith('video/') or mime.startswith('audio/'):
             res_type = 'video'
         else:
@@ -210,6 +217,7 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
             file_obj,
             folder        = folder,
             resource_type = res_type,
+            chunk_size    = 6 * 1024 * 1024,  # 6MB чанки для больших видео
         )
         url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
