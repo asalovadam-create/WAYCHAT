@@ -785,7 +785,7 @@ body {
 
 /* ПРОФИЛЬ ПАРТНЁРА */
 .partner-profile-overlay { position:fixed;inset:0;z-index:5500;background:#0f0f0f;display:flex;flex-direction:column;overflow-y:auto;animation:slideUp 0.28s cubic-bezier(.4,0,.2,1); }
-@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
 
 /* КОНТАКТЫ */
 .contact-item { display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;cursor:pointer;transition:background 0.15s; }
@@ -4481,12 +4481,28 @@ async function _publishMomentEditor(ov, file, url) {
 // ══════════════════════════════════════════════════════════
 //  МОМЕНТЫ
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+//  МОМЕНТЫ — полная переработка
+// ══════════════════════════════════════════════════════════
+
+// Глобальный стейт загрузки момента
+let _momentUploading = false;
+let _momentUploadFile = null;
+let _momentUploadCaption = '';
+let _momentUploadGeo = null;
+
 async function loadMoments() {
     const container = document.getElementById('full-moments-list');
     if (!container) return;
     const now = Date.now();
-    if (momentsCache && (now - momentsLastLoad) < 30000) { renderMomentsList(container, momentsCache); return; }
-    if (!momentsCache) container.innerHTML = `<div style="text-align:center;opacity:0.3;padding:20px;font-size:14px">Загрузка...</div>`;
+    if (momentsCache && (now - momentsLastLoad) < 30000) {
+        renderMomentsList(container, momentsCache);
+        return;
+    }
+    if (!momentsCache) {
+        container.innerHTML = '<div style="display:flex;gap:14px;padding:8px 0">'
+            + _skeletonMomentRow() + _skeletonMomentRow() + _skeletonMomentRow() + '</div>';
+    }
     try {
         const r = await apiFetch('/get_moments');
         if (!r) return;
@@ -4494,19 +4510,36 @@ async function loadMoments() {
         momentsCache = moments; momentsLastLoad = now; currentMoments = moments;
         renderMomentsList(container, moments);
     } catch(e) {
-        if (!momentsCache) container.innerHTML = `<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>`;
+        if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
     }
 }
 
+function _skeletonMomentRow() {
+    return '<div style="display:flex;align-items:center;gap:14px;padding:10px 2px">'
+        + '<div style="width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.07);flex-shrink:0;animation:pulse 1.4s ease-in-out infinite"></div>'
+        + '<div style="flex:1">'
+        + '<div style="height:14px;width:120px;background:rgba(255,255,255,0.07);border-radius:7px;margin-bottom:8px;animation:pulse 1.4s ease-in-out infinite"></div>'
+        + '<div style="height:11px;width:70px;background:rgba(255,255,255,0.05);border-radius:6px;animation:pulse 1.4s ease-in-out infinite 0.2s"></div>'
+        + '</div></div>';
+}
+
 function renderMomentsList(container, moments) {
-    if (!moments?.length) {
+    container.innerHTML = '';
+
+    // Карточка загрузки (если есть активная загрузка)
+    if (_momentUploading && _momentUploadFile) {
+        _renderUploadingCard(container);
+    }
+
+    if (!moments?.length && !_momentUploading) {
         container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:48px 20px;font-size:15px">Моментов пока нет</div>';
         return;
     }
-    currentMoments = moments;
-    container.innerHTML = '';
 
-    // Группируем по пользователю (порядок первого появления сохраняется)
+    if (!moments?.length) return;
+    currentMoments = moments;
+
+    // Группируем по пользователю
     const userOrder = [];
     const byUser = new Map();
     moments.forEach(m => {
@@ -4519,30 +4552,33 @@ function renderMomentsList(container, moments) {
         const first = list[0];
         const cnt   = list.length;
         const isMe  = uid === currentUser?.id;
+        const viewed = !isMe && _viewedMomentUsers.has(uid);
 
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:10px 2px;cursor:pointer;border-radius:18px;margin-bottom:2px;-webkit-tap-highlight-color:transparent';
+        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:10px 2px;cursor:pointer;border-radius:18px;margin-bottom:2px;-webkit-tap-highlight-color:transparent;transition:background 0.15s';
         row.onclick = () => openUserMomentsViewer(uid);
+        row.onpointerdown = () => row.style.background = 'rgba(255,255,255,0.04)';
+        row.onpointerup = () => row.style.background = '';
+        row.onpointercancel = () => row.style.background = '';
 
-        // Аватар с SVG-кольцом (разрезы по количеству моментов)
+        // Аватар с SVG кольцом
         const avaWrap = document.createElement('div');
-        avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:60px;height:60px';
+        avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:62px;height:62px';
 
-        // Аватар внутри
         const avaInner = document.createElement('div');
         avaInner.style.cssText = 'position:absolute;inset:4px;border-radius:50%;overflow:hidden';
         avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
         avaWrap.appendChild(avaInner);
 
-        // SVG кольцо с разрезами (серое если просмотрено)
+        // SVG кольцо
         const NS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(NS, 'svg');
-        svg.setAttribute('width','60'); svg.setAttribute('height','60'); svg.setAttribute('viewBox','0 0 60 60');
+        svg.setAttribute('width','62'); svg.setAttribute('height','62'); svg.setAttribute('viewBox','0 0 62 62');
         svg.style.cssText = 'position:absolute;inset:0;pointer-events:none';
-        const CX=30, CY=30, R=28;
-        const GAP_DEG = cnt > 1 ? 5 : 0;
+        const CX=31, CY=31, R=29;
+        const GAP_DEG = cnt > 1 ? 6 : 0;
         const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
-        const ringColor = (!isMe && _viewedMomentUsers.has(uid)) ? '#555' : 'var(--accent)';
+        const ringColor = viewed ? 'rgba(255,255,255,0.2)' : 'var(--accent)';
         for (let i=0; i<cnt; i++) {
             const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
             const tr = d => d*Math.PI/180;
@@ -4550,37 +4586,180 @@ function renderMomentsList(container, moments) {
             const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
             const path = document.createElementNS(NS, 'path');
             path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
-            path.setAttribute('stroke', ringColor); path.setAttribute('stroke-width','3.5');
-            path.setAttribute('fill','none'); path.setAttribute('stroke-linecap','round');
+            path.setAttribute('stroke', ringColor);
+            path.setAttribute('stroke-width', viewed ? '2.5' : '3.5');
+            path.setAttribute('fill','none');
+            path.setAttribute('stroke-linecap','round');
             svg.appendChild(path);
         }
         avaWrap.appendChild(svg);
         row.appendChild(avaWrap);
 
-        // Инфо
+        // Инфо справа
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0';
-        const previewText = first.text || (first.media_url ? (first.media_url.match(/\.(mp4|mov|webm)/i) ? '🎥 Видео' : '📷 Фото') : '');
-        info.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between">'
-            + '<div style="font-weight:700;font-size:15px">' + first.user_name + (isMe?' (Вы)':'') + '</div>'
-            + '<div style="display:flex;align-items:center;gap:6px">'
-            + (cnt>1 ? '<span style="font-size:11px;background:var(--accent);color:white;border-radius:10px;padding:2px 8px;font-weight:700">'+cnt+'</span>' : '')
+        const mediaLabel = first.media_url
+            ? (first.media_url.match(/\.(mp4|mov|webm)/i) ? '🎥 Видео' : '📷 Фото')
+            : '';
+        const preview = first.text || mediaLabel;
+        info.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+            + '<div style="font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(first.user_name) + (isMe?' <span style="font-size:12px;color:var(--text-2);font-weight:500">(Вы)</span>':'') + '</div>'
+            + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">'
+            + (cnt>1 ? '<span style="font-size:11px;background:var(--accent);color:black;border-radius:10px;padding:2px 7px;font-weight:800">'+cnt+'</span>' : '')
             + '<span style="font-size:12px;color:var(--text-2)">'+first.timestamp+'</span>'
             + '</div></div>'
-            + '<div style="font-size:13px;color:var(--text-2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+previewText+'</div>';
+            + '<div style="font-size:13px;color:var(--text-2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:'+(viewed?'0.45':'0.8')+'">'+(preview||'')+'</div>';
         row.appendChild(info);
         container.appendChild(row);
     });
 }
 
-// ── Просмотр всех моментов пользователя с листанием ──
+function _renderUploadingCard(container) {
+    const card = document.createElement('div');
+    card.id = 'moment-uploading-card';
+    card.style.cssText = 'display:flex;align-items:center;gap:14px;padding:12px 14px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:18px;margin-bottom:10px';
+
+    // Превью (блюр обложка)
+    const preview = document.createElement('div');
+    preview.style.cssText = 'width:62px;height:62px;border-radius:14px;overflow:hidden;flex-shrink:0;position:relative;background:#111';
+    if (_momentUploadFile) {
+        const isVid = _momentUploadFile.type.startsWith('video');
+        if (isVid) {
+            // Для видео генерируем превью через canvas
+            const vid = document.createElement('video');
+            vid.muted = true;
+            vid.playsInline = true;
+            vid.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(3px)';
+            vid.src = URL.createObjectURL(_momentUploadFile);
+            preview.appendChild(vid);
+        } else {
+            const img = document.createElement('img');
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(3px)';
+            img.src = URL.createObjectURL(_momentUploadFile);
+            preview.appendChild(img);
+        }
+        // Прогресс-кольцо поверх
+        const ring = document.createElement('div');
+        ring.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45)';
+        ring.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2.5"/><circle id="upload-ring" cx="16" cy="16" r="13" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="81.68" stroke-dashoffset="81.68" transform="rotate(-90 16 16)" style="transition:stroke-dashoffset 0.3s"/></svg>';
+        preview.appendChild(ring);
+    }
+    card.appendChild(preview);
+
+    // Текст + прогресс бар
+    const info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0';
+    info.innerHTML = '<div style="font-weight:700;font-size:14px;color:#fff;margin-bottom:6px">Публикация момента...</div>'
+        + '<div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden">'
+        + '<div id="moment-upload-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s;border-radius:2px"></div>'
+        + '</div>'
+        + '<div id="moment-upload-pct" style="font-size:11px;color:var(--text-2);margin-top:4px">0%</div>';
+    card.appendChild(info);
+    container.insertBefore(card, container.firstChild);
+}
+
+function _updateUploadProgress(pct) {
+    const bar = document.getElementById('moment-upload-bar');
+    const pctEl = document.getElementById('moment-upload-pct');
+    const ring = document.getElementById('upload-ring');
+    if (bar) bar.style.width = pct + '%';
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (ring) ring.style.strokeDashoffset = (81.68 * (1 - pct/100)).toFixed(2);
+}
+
+// Публикация момента с отслеживанием прогресса через XMLHttpRequest
+async function _publishMomentEditor(ov, file, url) {
+    const caption = (document.getElementById('me-cap')?.value||'').trim();
+    const geo = _meGeo;
+
+    // Запоминаем файл для карточки загрузки
+    _momentUploading = true;
+    _momentUploadFile = file;
+    _momentUploadCaption = caption;
+    _momentUploadGeo = geo;
+
+    // Закрываем редактор и переключаемся на вкладку моментов
+    ov.remove();
+    URL.revokeObjectURL(url);
+    _meFile = null; _meGeo = null;
+
+    // Переключаемся на вкладку Моменты
+    switchTab('moments');
+
+    // Рендерим список с карточкой загрузки
+    const container = document.getElementById('full-moments-list');
+    if (container) {
+        momentsCache = momentsCache || [];
+        renderMomentsList(container, momentsCache);
+    }
+
+    // Загружаем через XHR с прогрессом
+    return new Promise((resolve) => {
+        const fd = new FormData();
+        fd.append('file', file);
+        if (caption) fd.append('text', caption);
+        if (geo) {
+            fd.append('geo_name', geo.name);
+            fd.append('geo_lat', geo.lat);
+            fd.append('geo_lng', geo.lng);
+        }
+
+        const xhr = new XMLHttpRequest();
+        xhr.withCredentials = true;
+
+        xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 90); // до 90% — загрузка на сервер
+                _updateUploadProgress(pct);
+            }
+        };
+
+        xhr.onload = () => {
+            _updateUploadProgress(100);
+            setTimeout(() => {
+                _momentUploading = false;
+                _momentUploadFile = null;
+                momentsCache = null;
+                loadMoments();
+                if (xhr.status === 200) {
+                    try {
+                        const data = JSON.parse(xhr.responseText);
+                        if (data.success) {
+                            showToast('Момент опубликован! 🎉', 'success');
+                        } else {
+                            showToast('Ошибка: ' + (data.error || 'неизвестная'), 'error');
+                        }
+                    } catch(e) {
+                        showToast('Момент опубликован! 🎉', 'success');
+                    }
+                } else {
+                    showToast('Ошибка загрузки (' + xhr.status + ')', 'error');
+                }
+                resolve();
+            }, 600);
+        };
+
+        xhr.onerror = () => {
+            _momentUploading = false;
+            _momentUploadFile = null;
+            showToast('Ошибка сети при загрузке', 'error');
+            momentsCache = null;
+            loadMoments();
+            resolve();
+        };
+
+        xhr.open('POST', '/create_moment');
+        xhr.send(fd);
+    });
+}
+
+// ── Просмотр моментов пользователя ──
 function openUserMomentsViewer(userId) {
     const list = currentMoments.filter(m => m.user_id === userId);
     if (!list.length) return;
-    // Помечаем как просмотренные
     if (userId !== currentUser?.id) {
         _viewedMomentUsers.add(userId);
-        // Перерисовываем список чтобы кольцо стало серым
+        try { localStorage.setItem('wc_viewed_moments', JSON.stringify([..._viewedMomentUsers])); } catch(e) {}
         const container = document.getElementById('full-moments-list');
         if (container && momentsCache) renderMomentsList(container, momentsCache);
     }
@@ -4590,149 +4769,175 @@ function openUserMomentsViewer(userId) {
 function _runMomentsViewer(list, startIdx) {
     let idx = startIdx;
     let autoTimer = null;
+    let mediaLoaded = false;
 
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:#000;touch-action:none';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
 
     function render() {
         ov.innerHTML = '';
+        mediaLoaded = false;
+        clearTimeout(autoTimer);
         const m = list[idx];
         const isMe = m.user_id === currentUser?.id;
 
-        // Медиа-фон с блюром при загрузке
+        // ── Фон ──
         const bg = document.createElement('div');
         bg.style.cssText = 'position:absolute;inset:0;background:#000';
 
         if (m.media_url) {
-            const isVideo = m.media_url.match(/\.(mp4|mov|webm)/i);
+            const isVideo = /\.(mp4|mov|webm)/i.test(m.media_url);
 
-            // Блюр-обложка (показывается пока грузится)
+            // Размытая обложка — сразу видна
             const blurBg = document.createElement('div');
-            blurBg.style.cssText = 'position:absolute;inset:0;background-image:url('+JSON.stringify(m.media_url)+');background-size:cover;background-position:center;filter:blur(20px) brightness(0.4);transform:scale(1.1);transition:opacity 0.4s';
+            blurBg.id = 'mb-blur';
+            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(m.media_url)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.5s ease';
             bg.appendChild(blurBg);
 
-            // Спиннер загрузки
-            const spinner = document.createElement('div');
-            spinner.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:2';
-            spinner.innerHTML = '<div style="width:44px;height:44px;border:3px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite"></div>';
-            bg.appendChild(spinner);
+            // Спиннер
+            const spin = document.createElement('div');
+            spin.id = 'mb-spin';
+            spin.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3';
+            spin.innerHTML = '<div style="width:48px;height:48px;border:3px solid rgba(255,255,255,0.15);border-top-color:rgba(255,255,255,0.9);border-radius:50%;animation:spin 0.75s linear infinite"></div>';
+            bg.appendChild(spin);
+
+            function onReady() {
+                if (mediaLoaded) return;
+                mediaLoaded = true;
+                const media = bg.querySelector('video,img');
+                if (media) {
+                    media.style.opacity = '1';
+                    blurBg.style.opacity = '0';
+                    spin.style.display = 'none';
+                }
+                // Стартуем прогресс только после загрузки
+                const dur = isVideo
+                    ? Math.min((bg.querySelector('video')?.duration||7)*1000, 30000)
+                    : 6000;
+                const fill = document.getElementById('mpf');
+                if (fill) {
+                    fill.style.transition = 'width '+(dur/1000)+'s linear';
+                    fill.style.width = '100%';
+                }
+                autoTimer = setTimeout(() => next(), dur + 200);
+            }
 
             if (isVideo) {
                 const vid = document.createElement('video');
-                vid.src = m.media_url; vid.autoplay=true; vid.loop=false; vid.playsInline=true; vid.muted=false;
-                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s';
-                vid.oncanplay = () => {
-                    vid.style.opacity = '1';
-                    blurBg.style.opacity = '0';
-                    spinner.style.display = 'none';
-                };
+                vid.src = m.media_url;
+                vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
+                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.4s';
+                vid.oncanplay = onReady;
+                vid.onended = () => next();
+                vid.onerror = onReady;
                 bg.appendChild(vid);
             } else {
                 const img = document.createElement('img');
-                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s';
-                img.onload = () => {
-                    img.style.opacity = '1';
-                    blurBg.style.opacity = '0';
-                    spinner.style.display = 'none';
-                };
+                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.4s';
+                img.onload = onReady;
+                img.onerror = onReady;
                 img.src = m.media_url;
                 bg.appendChild(img);
             }
 
-            // Текст поверх медиа (если есть)
+            // Текст поверх медиа
             if (m.text) {
-                const textOver = document.createElement('div');
-                textOver.style.cssText = 'position:absolute;bottom:130px;left:0;right:0;z-index:5;display:flex;justify-content:center;padding:0 24px;pointer-events:none';
-                textOver.innerHTML = '<div style="background:rgba(0,0,0,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:16px;padding:10px 18px;font-size:clamp(15px,4vw,22px);font-weight:700;color:#fff;text-align:center;line-height:1.45;text-shadow:0 1px 8px rgba(0,0,0,0.5);max-width:100%">'+escHtml(m.text)+'</div>';
-                bg.appendChild(textOver);
+                const textLayer = document.createElement('div');
+                textLayer.style.cssText = 'position:absolute;bottom:140px;left:0;right:0;z-index:5;display:flex;justify-content:center;padding:0 20px;pointer-events:none';
+                textLayer.innerHTML = '<div style="background:rgba(0,0,0,0.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:18px;padding:10px 18px;font-size:clamp(14px,4vw,20px);font-weight:700;color:#fff;text-align:center;line-height:1.4;max-width:100%">' + escHtml(m.text) + '</div>';
+                bg.appendChild(textLayer);
             }
+
         } else {
-            // Только текст — красивый градиентный фон
+            // Только текст
             bg.style.background = 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)';
-            if (m.text) {
-                const txt = document.createElement('div');
-                txt.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;z-index:2';
-                txt.innerHTML = '<div style="font-size:clamp(18px,5vw,28px);font-weight:700;color:#fff;text-align:center;line-height:1.5;text-shadow:0 2px 16px rgba(0,0,0,0.5)">'+escHtml(m.text)+'</div>';
-                bg.appendChild(txt);
-            }
+            const txt = document.createElement('div');
+            txt.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;z-index:2';
+            txt.innerHTML = '<div style="font-size:clamp(18px,5vw,28px);font-weight:700;color:#fff;text-align:center;line-height:1.5;text-shadow:0 2px 16px rgba(0,0,0,0.5)">' + escHtml(m.text||'') + '</div>';
+            bg.appendChild(txt);
+            // Для текстовых — стартуем прогресс сразу
+            setTimeout(() => {
+                const fill = document.getElementById('mpf');
+                if (fill) { fill.style.transition='width 5s linear'; fill.style.width='100%'; }
+                autoTimer = setTimeout(() => next(), 5200);
+            }, 50);
         }
         ov.appendChild(bg);
 
-        // Трекинг просмотра (не для своих)
+        // Трекинг просмотра
         if (m.user_id !== currentUser?.id) {
             apiFetch('/view_moment/' + m.id, {method:'POST'}).catch(()=>{});
         }
 
-        // Прогресс-бары
+        // ── Прогресс-бары сверху ──
         const bars = document.createElement('div');
-        bars.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:12px;right:12px;z-index:3;display:flex;gap:3px';
+        bars.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:12px;right:12px;z-index:10;display:flex;gap:3px';
         list.forEach((_,i) => {
             const bar = document.createElement('div');
-            bar.style.cssText = 'flex:1;height:2px;background:rgba(255,255,255,0.3);border-radius:2px;overflow:hidden';
+            bar.style.cssText = 'flex:1;height:2.5px;background:rgba(255,255,255,0.25);border-radius:2px;overflow:hidden';
             const fill = document.createElement('div');
-            fill.style.cssText = 'height:100%;background:white;width:'+(i<idx?'100':'0')+'%';
+            fill.style.cssText = 'height:100%;background:white;border-radius:2px;width:'+(i<idx?'100':'0')+'%';
             if (i===idx) fill.id = 'mpf';
             bar.appendChild(fill); bars.appendChild(bar);
         });
         ov.appendChild(bars);
 
-        // Закрыть
+        // ── Кнопка закрыть ──
         const xBtn = document.createElement('button');
-        xBtn.style.cssText = 'position:absolute;top:max(calc(env(safe-area-inset-top,12px)+18px),22px);right:14px;z-index:4;background:rgba(0,0,0,0.45);backdrop-filter:blur(8px);border:none;color:white;width:36px;height:36px;border-radius:50%;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center';
-        xBtn.textContent = '✕';
+        xBtn.style.cssText = 'position:absolute;top:max(calc(env(safe-area-inset-top,0px)+20px),28px);right:14px;z-index:11;background:rgba(0,0,0,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;color:white;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
+        xBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
         xBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); ov.remove(); };
         ov.appendChild(xBtn);
 
-        // Инфо снизу
-        const bar2 = document.createElement('div');
-        bar2.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:3;padding:20px 16px max(calc(env(safe-area-inset-bottom,0px)+20px),30px);background:linear-gradient(to top,rgba(0,0,0,0.75),transparent);display:flex;align-items:center;gap:12px';
-        bar2.innerHTML = getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-11 h-11');
+        // ── Инфо снизу ──
+        const btmGrad = document.createElement('div');
+        btmGrad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(0,0,0,0.8) 0%,transparent 100%);z-index:4;pointer-events:none';
+        ov.appendChild(btmGrad);
+
+        const btm = document.createElement('div');
+        btm.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;padding:16px 16px max(calc(env(safe-area-inset-bottom,0px)+16px),28px);display:flex;align-items:flex-end;gap:12px';
+        btm.innerHTML = getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-11 h-11');
         const it = document.createElement('div');
-        it.innerHTML = '<div style="font-weight:700;font-size:15px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.6)">'+escHtml(m.user_name)+'</div>'
-            +'<div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:1px">'+m.timestamp+(m.geo_name?' · 📍'+m.geo_name:'')+'</div>';
-        bar2.appendChild(it);
+        it.style.cssText = 'flex:1;min-width:0';
+        it.innerHTML = '<div style="font-weight:700;font-size:15px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.6)">' + escHtml(m.user_name) + '</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,0.65);margin-top:2px">' + m.timestamp + (m.geo_name ? ' · 📍' + escHtml(m.geo_name) : '') + '</div>';
+        btm.appendChild(it);
 
         if (isMe) {
             const acts = document.createElement('div');
-            acts.style.cssText = 'margin-left:auto;display:flex;gap:8px;align-items:center';
-
-            // Кнопка "Кто смотрел"
+            acts.style.cssText = 'display:flex;gap:8px;align-items:center;flex-shrink:0';
             const viewBtn = document.createElement('button');
-            viewBtn.style.cssText = 'background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:12px;color:#fff;padding:7px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px';
-            const vc = m.view_count || 0;
-            viewBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg> ' + vc;
+            viewBtn.style.cssText = 'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);border-radius:12px;color:#fff;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px';
+            viewBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg> ' + (m.view_count||0);
             viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id); };
-            acts.appendChild(viewBtn);
-
             const del = document.createElement('button');
-            del.style.cssText = 'background:rgba(239,68,68,0.22);border:1px solid rgba(239,68,68,0.5);border-radius:12px;color:#fff;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit';
+            del.style.cssText = 'background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);border-radius:12px;color:#fff;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit';
             del.textContent = 'Удалить';
             del.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _confirmDeleteMoment(m.id, ov); };
-            acts.appendChild(del);
-            bar2.appendChild(acts);
+            acts.appendChild(viewBtn); acts.appendChild(del);
+            btm.appendChild(acts);
         }
-        ov.appendChild(bar2);
+        ov.appendChild(btm);
 
-        // Тап по половинам — листание
+        // Тап по половинам
         ov.onclick = e => {
             if (e.target.closest('button')) return;
             clearTimeout(autoTimer);
-            if (e.clientX < window.innerWidth/2) prev();
-            else next();
+            if (e.clientX < window.innerWidth/2) prev(); else next();
         };
 
-        // Запускаем прогресс
-        clearTimeout(autoTimer);
-        const dur = m.media_url ? 7000 : 5000;
-        requestAnimationFrame(() => {
-            const fill = document.getElementById('mpf');
-            if (fill) { fill.style.transition='width '+dur/1000+'s linear'; fill.style.width='100%'; }
-        });
-        autoTimer = setTimeout(() => next(), dur+100);
+        // Свайп вверх — закрыть
+        let touchStartY = 0;
+        ov.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, {passive:true});
+        ov.addEventListener('touchend', e => {
+            if (e.changedTouches[0].clientY - touchStartY > 80) {
+                clearTimeout(autoTimer); ov.remove();
+            }
+        }, {passive:true});
     }
 
     function next() { clearTimeout(autoTimer); if (idx<list.length-1){idx++;render();}else{ov.remove();} }
-    function prev() { clearTimeout(autoTimer); if (idx>0){idx--;render();} }
+    function prev() { clearTimeout(autoTimer); if (idx>0){idx--;render();}else{ render(); } }
 
     document.body.appendChild(ov);
     render();
@@ -4764,115 +4969,74 @@ async function _showMomentViewers(momentId) {
         +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">'
         +'<span style="font-size:17px;font-weight:700">👁 Кто смотрел</span>'
         +'<span id="mv-cnt" style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:10px;padding:2px 8px">'+(cached?cached.length:'')+'</span></div>'
-        +'<div id="mv-list" style="max-height:52vh;overflow-y:auto">'
-        +(cached ? '' : '<div style="text-align:center;padding:24px;color:var(--text-2);font-size:13px">⏳ Загрузка...</div>')
+        +'<div id="mv-list" style="max-height:55vh;overflow-y:auto">'
+        +(cached ? '' : '<div style="text-align:center;padding:20px;opacity:0.4">Загрузка...</div>')
         +'</div>';
-    const closeBtn=document.createElement('button');
-    closeBtn.style.cssText='width:100%;margin-top:14px;padding:13px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;color:var(--text);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit';
-    closeBtn.textContent='Закрыть'; closeBtn.onclick=()=>ov.remove();
-    sh.appendChild(closeBtn); ov.appendChild(sh); document.body.appendChild(ov);
-
-    const listEl = sh.querySelector('#mv-list');
-    const cntEl  = sh.querySelector('#mv-cnt');
-
-    // Показываем из кэша МГНОВЕННО
-    if (cached) _renderViewersList(listEl, cached);
-
-    // Обновляем с сервера в фоне
+    ov.appendChild(sh); document.body.appendChild(ov);
+    if (cached) { _renderViewersList(sh.querySelector('#mv-list'), cached); return; }
     try {
-        const d = await (await apiFetch('/moment_viewers/'+momentId)).json();
-        if (d.viewers) {
-            _viewersCache[momentId] = d.viewers;
-            _renderViewersList(listEl, d.viewers);
-            if (cntEl) cntEl.textContent = d.viewers.length || '';
-        }
-    } catch(e) {
-        if (!cached) listEl.innerHTML='<div style="text-align:center;padding:20px;color:var(--text-2)">Ошибка загрузки</div>';
-    }
+        const r = await apiFetch('/moment_viewers/'+momentId);
+        if (!r) return;
+        const viewers = await r.json();
+        _viewersCache[momentId] = viewers;
+        const cnt = sh.querySelector('#mv-cnt');
+        if (cnt) cnt.textContent = viewers.length;
+        _renderViewersList(sh.querySelector('#mv-list'), viewers);
+    } catch(e) {}
 }
 
-function _confirmDeleteMoment(momentId, viewerOv) {
+async function _confirmDeleteMoment(momentId, viewer) {
     const ov = document.createElement('div');
-    ov.className = 'modal-overlay';
-    ov.onclick = e => { if (e.target === ov) ov.remove(); };
-    const sh = document.createElement('div');
-    sh.className = 'modal-sheet';
-    sh.innerHTML = '<div class="modal-handle"></div>'
-        + '<div style="text-align:center;padding:8px 0 20px">'
-        + '<div style="font-size:42px;margin-bottom:10px">🗑️</div>'
-        + '<div style="font-size:17px;font-weight:700;margin-bottom:8px">Удалить момент?</div>'
-        + '<div style="font-size:14px;color:var(--text-2)">Это действие нельзя отменить</div>'
-        + '</div>';
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:10px';
-    const ca = document.createElement('button');
-    ca.style.cssText = 'flex:1;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;color:var(--text);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit';
-    ca.textContent = 'Отмена'; ca.onclick = () => ov.remove();
-    const ok = document.createElement('button');
-    ok.style.cssText = 'flex:1;padding:14px;background:#ef4444;border:none;border-radius:16px;color:white;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    ok.textContent = 'Удалить';
-    ok.onclick = async () => {
-        ov.remove(); viewerOv.remove();
-        try {
-            await apiFetch('/delete_moment/' + momentId, {method:'POST'});
-            momentsCache = null; loadMoments(); showToast('Момент удалён','success');
-        } catch(e) { showToast('Ошибка удаления','error'); }
+    ov.className='modal-overlay';
+    ov.onclick=e=>{if(e.target===ov)ov.remove();};
+    const sh=document.createElement('div'); sh.className='modal-sheet';
+    sh.innerHTML='<div class="modal-handle"></div>'
+        +'<div style="text-align:center;padding:10px 0 20px">'
+        +'<div style="font-size:32px;margin-bottom:10px">🗑</div>'
+        +'<div style="font-size:17px;font-weight:700;margin-bottom:8px">Удалить момент?</div>'
+        +'<div style="font-size:14px;color:var(--text-2)">Это действие нельзя отменить</div>'
+        +'</div>';
+    const btn=document.createElement('button');
+    btn.style.cssText='width:100%;padding:14px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.3);border-radius:16px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
+    btn.textContent='Удалить';
+    btn.onclick=async()=>{
+        ov.remove(); viewer.remove();
+        await apiFetch('/delete_moment/'+momentId,{method:'DELETE'});
+        momentsCache=null; loadMoments(); showToast('Момент удалён','success');
     };
-    btns.appendChild(ca); btns.appendChild(ok);
-    sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
+    sh.appendChild(btn); ov.appendChild(sh); document.body.appendChild(ov);
 }
-
-function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 function openTextMoment() {
-    let _tGeo=null;
     const ov = document.createElement('div');
-    ov.style.cssText='position:fixed;inset:0;z-index:9500;background:linear-gradient(135deg,#1a1a2e,#16213e,#0f3460);display:flex;align-items:center;justify-content:center;padding:20px;touch-action:none';
-
-    const inner=document.createElement('div'); inner.style.cssText='width:100%;max-width:420px;display:flex;flex-direction:column;gap:12px';
-
-    const ttl=document.createElement('div'); ttl.style.cssText='text-align:center;color:#fff;font-size:17px;font-weight:700'; ttl.textContent='Текстовый момент';
-
-    const ta=document.createElement('textarea'); ta.rows=6; ta.placeholder='Что у вас нового? 💭';
-    ta.style.cssText='width:100%;background:rgba(255,255,255,0.1);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);border-radius:20px;color:#fff;font-size:18px;padding:18px;outline:none;resize:none;font-family:inherit;line-height:1.5;box-sizing:border-box';
-
-    const gBtn=document.createElement('button');
-    gBtn.style.cssText='padding:11px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);border-radius:14px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit';
-    gBtn.innerHTML='<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg><span id="tg-lbl">Добавить геолокацию</span>';
-    gBtn.onclick=async()=>{
-        const lbl=document.getElementById('tg-lbl');
-        if(_tGeo){_tGeo=null;gBtn.style.background='rgba(255,255,255,0.08)';if(lbl)lbl.textContent='Добавить геолокацию';return;}
-        if(lbl)lbl.textContent='Определяю...';
-        if(!navigator.geolocation){showToast('Геолокация не поддерживается','warning');if(lbl)lbl.textContent='Добавить геолокацию';return;}
-        try{
-            const pos=await new Promise((res,rej)=>navigator.geolocation.getCurrentPosition(res,rej,{timeout:15000,maximumAge:60000}));
-            let name=pos.coords.latitude.toFixed(4)+','+pos.coords.longitude.toFixed(4);
-            try{const r=await fetch('https://nominatim.openstreetmap.org/reverse?lat='+pos.coords.latitude+'&lon='+pos.coords.longitude+'&format=json&accept-language=ru');const d=await r.json();name=d.address?.city||d.address?.town||d.address?.village||name;}catch(e){}
-            _tGeo={name,lat:pos.coords.latitude,lng:pos.coords.longitude};
-            gBtn.style.background='rgba(16,185,129,0.25)';gBtn.style.borderColor='#10b981';
-            if(lbl)lbl.textContent='📍 '+name;
-        }catch(e){showToast(e.code===1?'Разрешите геолокацию в настройках Safari':'Ошибка GPS','warning');if(lbl)lbl.textContent='Добавить геолокацию';}
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target===ov) ov.remove(); };
+    const sh = document.createElement('div'); sh.className='modal-sheet';
+    sh.innerHTML = '<div class="modal-handle"></div>'
+        + '<div style="font-size:17px;font-weight:700;margin-bottom:16px;text-align:center">Текстовый момент</div>'
+        + '<textarea id="tm-text" placeholder="Напишите что-нибудь..." style="width:100%;min-height:100px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:16px;color:#fff;padding:14px;font-size:16px;font-family:inherit;resize:none;outline:none;box-sizing:border-box" maxlength="500"></textarea>'
+        + '<div style="text-align:right;font-size:12px;color:var(--text-2);margin:6px 4px 14px" id="tm-cnt">0/500</div>';
+    const btn = document.createElement('button');
+    btn.style.cssText='width:100%;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
+    btn.textContent='Опубликовать';
+    btn.onclick = async () => {
+        const txt = document.getElementById('tm-text')?.value?.trim();
+        if (!txt) return;
+        btn.disabled=true; btn.textContent='Публикую...';
+        const fd=new FormData(); fd.append('text',txt);
+        const r=await fetch('/create_moment',{method:'POST',body:fd,credentials:'include'});
+        ov.remove(); momentsCache=null; loadMoments(); showToast('Момент опубликован! 🎉','success');
     };
-
-    const btns=document.createElement('div');btns.style.cssText='display:flex;gap:10px';
-    const cc=document.createElement('button');cc.textContent='Отмена';cc.style.cssText='flex:1;padding:14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:16px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';cc.onclick=()=>ov.remove();
-    const ss=document.createElement('button');ss.id='tt-share';ss.textContent='Поделиться →';ss.style.cssText='flex:2;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    ss.onclick=async()=>{
-        const txt=ta.value.trim();if(!txt){showToast('Введите текст','warning');return;}
-        ss.disabled=true;ss.textContent='Публикую...';
-        try{
-            const fd=new FormData();fd.append('text',txt);
-            if(_tGeo){fd.append('geo_name',_tGeo.name);fd.append('geo_lat',_tGeo.lat);fd.append('geo_lng',_tGeo.lng);}
-            const r=await apiFetch('/create_moment',{method:'POST',body:fd});if(!r)throw new Error();
-            ov.remove();momentsCache=null;loadMoments();showToast('Момент опубликован! 🎉','success');
-        }catch(e){showToast('Ошибка','error');ss.disabled=false;ss.textContent='Поделиться →';}
-    };
-    btns.appendChild(cc);btns.appendChild(ss);
-
-    inner.appendChild(ttl);inner.appendChild(ta);inner.appendChild(gBtn);inner.appendChild(btns);
-    ov.appendChild(inner);document.body.appendChild(ov);
-    setTimeout(()=>ta.focus(),120);
+    const ta = sh.querySelector ? sh : sh;
+    sh.appendChild(btn);
+    ov.appendChild(sh); document.body.appendChild(ov);
+    setTimeout(()=>{
+        const ta=document.getElementById('tm-text');
+        if(ta){ta.focus();ta.oninput=()=>{const c=document.getElementById('tm-cnt');if(c)c.textContent=ta.value.length+'/500';}}
+    },100);
 }
+
+
 
 // ══════════════════════════════════════════════════════════
 //  WebRTC — УЛУЧШЕННЫЙ: ICE restart, speakerphone, flip, group
