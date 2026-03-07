@@ -207,13 +207,28 @@ async function _getCachedMedia(url) {
 }
 function _preloadMedia(url) {
     if (!url || _mediaCache.has(url)) return;
-    _getCachedMedia(url).catch(() => {});
+    _getCachedMedia(url).catch(() => {}
+// Кеш профилей — не запрашиваем одно и то же дважды
+const _profileCache = new Map(); // id → {data, ts}
+const _PROFILE_TTL  = 5 * 60 * 1000; // 5 мин
+async function _cachedProfile(userId) {
+    const c = _profileCache.get(userId);
+    if (c && (Date.now() - c.ts) < _PROFILE_TTL) return c.data;
+    try {
+        const r = await apiFetch('/get_user_profile/' + userId);
+        if (!r || !r.ok) return null;
+        const data = await r.json();
+        _profileCache.set(userId, {data, ts: Date.now()});
+        return data;
+    } catch(e) { return null; }
+}
+);
 }
 
 // ══ КЭШ СООБЩЕНИЙ — главная фича ══
 // { chatId: { messages: [], loadedAll: bool, lastFetch: timestamp } }
 let messagesByChatCache = {};
-const MSG_CACHE_TTL = 60000; // 1 мин до инвалидации при переходе
+const MSG_CACHE_TTL = 120000; // 2 мин — сообщения редко меняются задним числом
 
 let longPressTimer    = null;
 let activeTheme       = localStorage.getItem('waychat_theme') || 'emerald';
@@ -448,9 +463,20 @@ async function init() {
     setTimeout(_updatePermsSummary, 600);
     setTimeout(initPushNotifications, 500);
 
-    setInterval(() => {
-        if (currentTab === 'chats' && !currentChatId) loadChats();
-    }, 30000);
+    // Service Worker — кешируем статику (JS, CSS, аватарки) навсегда
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+    }
+
+    // loadChats по setInterval убран — WebSocket обновляет в реальном времени
+    // Только при потере фокуса и возврате (пользователь вернулся в приложение)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            const now = Date.now();
+            if (now - _lastChatsLoad > 30000) loadChats();
+            if (currentTab === 'moments' && now - momentsLastLoad > 60000) loadMoments();
+        }
+    });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1143,8 +1169,19 @@ function switchTab(tab) {
     });
     document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
     document.getElementById(`tab-${tab}`)?.classList.add('active');
-    if (tab === 'chats')    loadChats();
-    if (tab === 'moments')  loadMoments();
+    if (tab === 'chats') {
+        const chatList = document.getElementById('chat-list');
+        // Грузим только если список пустой или данные старше 15 сек
+        if (!chatList?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
+        else renderChatList(recentChats);
+    }
+    if (tab === 'moments') {
+        if (!momentsCache || (Date.now() - momentsLastLoad) > 60000) loadMoments();
+        else {
+            const c = document.getElementById('full-moments-list');
+            if (c) renderMomentsList(c, momentsCache);
+        }
+    }
     if (tab === 'settings') updateSettingsUI();
     vibrate(8);
 }
@@ -1173,23 +1210,38 @@ function updateSettingsUI() {
 // ══════════════════════════════════════════════════════════
 //  СПИСОК ЧАТОВ
 // ══════════════════════════════════════════════════════════
-async function loadChats() {
+let _lastChatsLoad = 0;
+let _chatsLoading = false;
+
+async function loadChats(force = false) {
+    const now = Date.now();
+    // Не перезагружаем чаще чем раз в 8 секунд (если не форс)
+    if (!force && _chatsLoading) return;
+    if (!force && recentChats.length && (now - _lastChatsLoad) < 8000) {
+        renderChatList(recentChats);
+        return;
+    }
+    _chatsLoading = true;
     try {
-        const res = await apiFetch('/get_my_chats');
-        if (!res) return;
+        const res = await fetch('/get_my_chats', {
+            credentials: 'include',
+            headers: {'Accept-Encoding': 'gzip, deflate'}
+        });
+        if (!res || !res.ok) return;
         const chats = await res.json();
         recentChats = chats;
+        _lastChatsLoad = Date.now();
         renderChatList(chats);
         updatePageTitle();
         // Prefetch аватарки первых 5 чатов в фоне
         chats.slice(0, 5).forEach(c => {
-            const av = c.partner_avatar;
-            const id = c.partner_id;
-            if (av && !av.includes('default') && !av.startsWith('emoji:')) {
-                AvatarCache.getOrFetch(av, id).then(src => { chatPartnerAvatarSrc[id] = src; });
+            if (c.partner_avatar && !c.partner_avatar.includes('default') && !c.partner_avatar.startsWith('emoji:')) {
+                AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
+                    .then(src => { chatPartnerAvatarSrc[c.partner_id] = src; });
             }
         });
     } catch(e) { console.error('loadChats:', e); }
+    finally { _chatsLoading = false; }
 }
 // ════════════════════════════════════
 // Контекстное меню чата (long-press)
@@ -1524,7 +1576,7 @@ async function apiFetch(url, options = {}) {
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 10000); // 10с таймаут
     try {
-        const res = await fetch(url, { ...options, headers, credentials: 'include', signal: controller.signal });
+        const res = await fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal });
         clearTimeout(tid);
         if (res.status === 401 || (res.redirected && res.url.includes('/login'))) {
             location.href = '/login';
@@ -4530,7 +4582,10 @@ async function loadMoments() {
     }
 
     try {
-        const r = await fetch('/get_moments', { credentials: 'include', cache: 'no-cache', headers: {'Accept-Encoding': 'gzip, deflate'} });
+        const r = await fetch('/get_moments', {
+            credentials: 'include',
+            headers: {'Accept-Encoding': 'gzip, deflate'},
+        });
         if (!r.ok) { console.error('get_moments:', r.status); return; }
         const moments = await r.json();
         if (!Array.isArray(moments)) { console.error('not array:', moments); return; }
@@ -4538,8 +4593,10 @@ async function loadMoments() {
         momentsLastLoad = Date.now();
         currentMoments = moments;
         renderMomentsList(container, moments);
-        // Предзагружаем первые 3 медиа сразу после получения списка
-        moments.slice(0, 3).forEach(m => { if (m.media_url) _preloadMedia(m.media_url); });
+        // Предзагружаем первые 3 медиа фоново — не блокирует UI
+        setTimeout(() => {
+            moments.slice(0, 3).forEach(m => { if (m.media_url) _preloadMedia(m.media_url); });
+        }, 200);
     } catch(e) {
         console.error('loadMoments error:', e);
         if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
