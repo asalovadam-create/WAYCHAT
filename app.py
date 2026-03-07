@@ -2415,7 +2415,7 @@ def run_migrations():
         )''',
         # Индексы для производительности (5-10k пользователей)
         'CREATE INDEX IF NOT EXISTS ix_msg_sender_id    ON message(sender_id)',
-        'ALTER TABLE message ALTER COLUMN type TYPE VARCHAR(20)',
+        'CREATE INDEX IF NOT EXISTS ix_msg_media_type   ON message(media_type)',
         'CREATE INDEX IF NOT EXISTS ix_moment_user_id   ON moment(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_moment_expires   ON moment(expires_at)',
         'CREATE INDEX IF NOT EXISTS ix_gmember_user_id  ON group_member(user_id)',
@@ -2815,23 +2815,14 @@ def shutdown_session(exception=None):
 # ══════════════════════════════════════════════════════════
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════════
-# ══════════════════════════════════════════════════════════
-#  ЗАПУСК
-# ══════════════════════════════════════════════════════════
-
-# Выполняется при любом старте — и gunicorn на Render, и python app.py локально
-with app.app_context():
-    try:
+if __name__ == '__main__':
+    with app.app_context():
         os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
         db.create_all()
         run_migrations()
-        print('✅ DB init OK')
-    except Exception as _e:
-        print(f'⚠️  DB init error: {_e}')
 
-eventlet.spawn(background_cleanup)
+    eventlet.spawn(background_cleanup)
 
-if __name__ == '__main__':
     print('╔══════════════════════════════════════════════════════╗')
     print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
     print('╚══════════════════════════════════════════════════════╝')
