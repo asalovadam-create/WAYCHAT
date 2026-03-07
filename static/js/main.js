@@ -784,7 +784,7 @@ body {
 
 /* ПРОФИЛЬ ПАРТНЁРА */
 .partner-profile-overlay { position:fixed;inset:0;z-index:5500;background:#0f0f0f;display:flex;flex-direction:column;overflow-y:auto;animation:slideUp 0.28s cubic-bezier(.4,0,.2,1); }
-@keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
 
 /* КОНТАКТЫ */
 .contact-item { display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;cursor:pointer;transition:background 0.15s; }
@@ -872,7 +872,7 @@ body {
         </div>
 
         <!-- ══ НАСТРОЙКИ ══ -->
-        <div id="settings-section" class="hidden">
+        <div id="settings-section" class="hidden" style="background:#111;overflow-y:auto;height:100%;display:flex;flex-direction:column">
             <!-- iOS 26 hero: размытый фон из аватара -->
             <div style="position:relative;height:300px;overflow:hidden;flex-shrink:0">
                 <div id="settings-bg" style="position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(0.45) saturate(1.7);transition:background-image 0.4s"></div>
@@ -4246,8 +4246,9 @@ async function pickMedia(context) {
         const fd = new FormData();
         fd.append('file', file);
         try {
-            const r = await apiFetch('/upload_media', {method:'POST', body:fd});
-            if (!r) return;
+            // Прямой fetch без таймаута для медиафайлов
+            const r = await fetch('/upload_media', {method:'POST', body:fd, credentials:'include'});
+            if (!r || !r.ok) throw new Error('upload failed');
             const d = await r.json();
             if (currentChatId) {
                 socket.emit('send_message', {chat_id:currentChatId, type_msg: d.type||(file.type.startsWith('video')?'video':'image'), file_url:d.url, sender_id:currentUser.id});
@@ -4438,23 +4439,41 @@ async function _requestMeGeo(btn, geoTag) {
 
 async function _publishMomentEditor(ov, file, url) {
     const sBtn = document.getElementById('me-share');
-    if(sBtn){ sBtn.disabled=true; sBtn.textContent='Публикую...'; }
+    if(sBtn){
+        sBtn.disabled=true;
+        sBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> Публикую...';
+    }
     const caption = (document.getElementById('me-cap')?.value||'').trim();
-    showToast('Загрузка...','info',30000);
+    showToast('Загрузка медиа...','info',120000);
     try {
         const fd = new FormData();
         fd.append('file', file);
         if(caption) fd.append('text', caption);
         if(_meGeo){ fd.append('geo_name',_meGeo.name); fd.append('geo_lat',_meGeo.lat); fd.append('geo_lng',_meGeo.lng); }
-        const r = await apiFetch('/create_moment',{method:'POST',body:fd});
-        if(!r) throw new Error('no resp');
+        // Используем прямой fetch БЕЗ таймаута — видео может грузиться долго
+        const r = await fetch('/create_moment', {
+            method: 'POST',
+            body: fd,
+            credentials: 'include'
+        });
+        if(!r || !r.ok) {
+            const errText = r ? await r.text() : 'no response';
+            console.error('create_moment error:', r?.status, errText);
+            throw new Error('server error ' + r?.status);
+        }
+        const data = await r.json();
+        if(!data.success) throw new Error(data.error || 'failed');
         ov.remove(); URL.revokeObjectURL(url);
         _meFile=null; _meGeo=null;
         momentsCache=null; loadMoments();
         showToast('Момент опубликован! 🎉','success');
     } catch(e){
-        showToast('Ошибка загрузки','error');
-        if(sBtn){ sBtn.disabled=false; sBtn.textContent='Поделиться →'; }
+        console.error('publish moment error:', e);
+        showToast('Ошибка загрузки: ' + (e.message||''),'error', 5000);
+        if(sBtn){
+            sBtn.disabled=false;
+            sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        }
     }
 }
 
