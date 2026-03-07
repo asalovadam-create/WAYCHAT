@@ -783,7 +783,8 @@ body {
 @keyframes scaleIn { from{transform:scale(0.88);opacity:0;} to{transform:scale(1);opacity:1;} }
 
 /* ПРОФИЛЬ ПАРТНЁРА */
-.partner-profile-overlay { position:fixed;inset:0;z-index:5500;background:rgba(0,0,0,0.8);backdrop-filter:blur(20px);display:flex;flex-direction:column;animation:fadeIn 0.2s ease; }
+.partner-profile-overlay { position:fixed;inset:0;z-index:5500;background:#0f0f0f;display:flex;flex-direction:column;overflow-y:auto;animation:slideUp 0.28s cubic-bezier(.4,0,.2,1); }
+@keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
 
 /* КОНТАКТЫ */
 .contact-item { display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;cursor:pointer;transition:background 0.15s; }
@@ -3594,185 +3595,132 @@ function renameContact(id, currentName) {
 //  ПРОФИЛЬ ПАРТНЁРА
 // ══════════════════════════════════════════════════════════
 function showPartnerProfile() {
-    const name      = document.getElementById('chat-name')?.textContent || '';
-    const status    = document.getElementById('chat-status')?.textContent || '';
-    const isOnline  = status === 'в сети';
-    const isSaved   = savedContacts.some(c => c.id === currentPartnerId);
+    const name       = document.getElementById('chat-name')?.textContent || '';
+    const status     = document.getElementById('chat-status')?.textContent || '';
+    const isOnline   = status === 'в сети';
+    const isSaved    = savedContacts.some(c => c.id === currentPartnerId);
     const customName = contactCustomNames[currentPartnerId];
     const avatarSrc  = chatPartnerAvatarSrc[currentPartnerId] || '';
     const isGroup    = currentChatType === 'group';
 
     const overlay = document.createElement('div');
     overlay.className = 'partner-profile-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:4000;background:#000;display:flex;flex-direction:column;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:5500;background:#111;display:flex;flex-direction:column;overflow-y:auto;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
 
-    // ── Шапка: размытый фон из аватара ──
-    const heroH = 300;
-    overlay.innerHTML = `
-    <div style="position:relative;height:${heroH}px;flex-shrink:0;overflow:hidden">
-        ${avatarSrc ? `<div style="position:absolute;inset:-30px;background-image:url('${escHtml(avatarSrc)}');background-size:cover;background-position:center;filter:blur(28px) brightness(0.45) saturate(1.6)"></div>` : `<div style="position:absolute;inset:0;background:linear-gradient(135deg,#1a1a2e,#16213e)"></div>`}
-        <div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.15) 0%,rgba(0,0,0,0.7) 100%)"></div>
+    overlay.innerHTML = '<style>@keyframes ppSlide{from{transform:translateY(50px);opacity:0}to{transform:translateY(0);opacity:1}}.pp-anim{animation:ppSlide 0.25s cubic-bezier(.32,1.2,.42,1)}</style>'
+        + '<div class="pp-anim" style="display:flex;flex-direction:column;min-height:100%">'
 
-        <!-- Кнопка назад -->
-        <button id="pp-back" style="position:absolute;top:max(env(safe-area-inset-top),48px);left:16px;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.4);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5">
-            <svg width="10" height="18" viewBox="0 0 10 18" fill="none"><path d="M9 1L1 9L9 17" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+        // === ШАПКА ===
+        + '<div style="position:relative;height:320px;overflow:hidden;flex-shrink:0">'
+        + (avatarSrc
+            ? '<div style="position:absolute;inset:-50px;background-image:url(\'' + (avatarSrc.replace(/'/g,"\\'")) + '\');background-size:cover;background-position:center;filter:blur(30px) brightness(0.5) saturate(1.8)"></div>'
+            : '<div style="position:absolute;inset:0;background:linear-gradient(180deg,#3d1f7a 0%,#1a0a3a 100%)"></div>'
+          )
+        + '<div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0) 35%,rgba(17,17,17,0.95) 100%)"></div>'
 
-        <!-- Аватар + имя + статус -->
-        <div style="position:absolute;bottom:0;left:0;right:0;display:flex;align-items:flex-end;padding:0 20px 20px;gap:16px;z-index:2">
-            <div style="width:86px;height:86px;border-radius:50%;overflow:hidden;border:3px solid rgba(255,255,255,0.2);box-shadow:0 6px 30px rgba(0,0,0,0.6);flex-shrink:0">
-                ${avatarSrc ? `<img src="${escHtml(avatarSrc)}" style="width:100%;height:100%;object-fit:cover">` : getInitialAvatar(name, 'w-full h-full', currentPartnerId)}
-            </div>
-            <div style="padding-bottom:4px;min-width:0">
-                <div style="font-size:22px;font-weight:800;color:#fff;letter-spacing:-0.4px;line-height:1.1" id="pp-name-display">${escHtml(name)}</div>
-                ${customName ? `<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:2px">сохранён как «${escHtml(customName)}»</div>` : ''}
-                <div style="font-size:13px;font-weight:500;margin-top:3px;color:${isOnline ? 'var(--accent,#10b981)' : 'rgba(255,255,255,0.45)'}">${isOnline ? '● в сети' : 'был(а) недавно'}</div>
-            </div>
-        </div>
-    </div>
+        // Кнопка назад
+        + '<button id="pp-back" style="position:absolute;top:max(env(safe-area-inset-top),48px);left:14px;width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,0.38);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10">'
+        + '<svg width="10" height="17" viewBox="0 0 10 17" fill="none"><path d="M9 1L1 8.5L9 16" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        + '</button>'
 
-    <!-- Тело профиля -->
-    <div style="flex:1;overflow-y:auto;background:#111;padding-bottom:max(env(safe-area-inset-bottom),24px)">
+        // Аватар + имя по центру внизу шапки
+        + '<div style="position:absolute;bottom:0;left:0;right:0;display:flex;flex-direction:column;align-items:center;padding-bottom:20px;z-index:2">'
+        + '<div style="width:100px;height:100px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6);margin-bottom:14px">'
+        + (avatarSrc ? '<img src="' + (avatarSrc.replace(/"/g,'&quot;')) + '" style="width:100%;height:100%;object-fit:cover">' : getInitialAvatar(name,'w-full h-full',currentPartnerId))
+        + '</div>'
+        + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+        + '<span id="pp-name-display" style="font-size:24px;font-weight:800;color:#fff;letter-spacing:-0.4px;text-shadow:0 2px 16px rgba(0,0,0,0.5)">' + (name.replace(/</g,'&lt;').replace(/>/g,'&gt;')) + '</span>'
+        + '</div>'
+        + (customName ? '<div style="font-size:12px;color:rgba(255,255,255,0.45);margin-bottom:4px">сохранён как «' + customName.replace(/</g,'&lt;') + '»</div>' : '')
+        + '<div style="font-size:13px;font-weight:600;color:' + (isOnline ? 'var(--accent,#10b981)' : 'rgba(255,255,255,0.4)') + '">' + (isOnline ? 'в сети' : 'был(а) недавно') + '</div>'
+        + '</div>'
+        + '</div>'  // end шапка
 
-        <!-- Кнопки действий: Позвонить / Видео / Написать -->
-        ${!isGroup ? `
-        <div style="display:flex;gap:8px;padding:14px 16px">
-            <button onclick="startCall('audio');this.closest('.partner-profile-overlay').remove()" style="flex:1;padding:12px 0;background:rgba(16,185,129,0.14);border:none;border-radius:14px;color:var(--accent,#10b981);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:6px">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="var(--accent,#10b981)"/></svg>
-                <span>Позвонить</span>
-            </button>
-            <button onclick="startCall('video');this.closest('.partner-profile-overlay').remove()" style="flex:1;padding:12px 0;background:rgba(59,130,246,0.14);border:none;border-radius:14px;color:#60a5fa;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:6px">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" fill="#60a5fa"/></svg>
-                <span>Видео</span>
-            </button>
-            <button onclick="this.closest('.partner-profile-overlay').remove()" style="flex:1;padding:12px 0;background:rgba(139,92,246,0.14);border:none;border-radius:14px;color:#a78bfa;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:6px">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill="#a78bfa"/></svg>
-                <span>Написать</span>
-            </button>
-        </div>` : ''}
+        // === ТЕЛО ===
+        + '<div style="background:#111;flex:1;padding-bottom:max(env(safe-area-inset-bottom),30px)">'
 
-        <!-- Блок инфо: телефон, юзернейм, bio, дата -->
-        <div style="margin:0 16px 12px;background:rgba(255,255,255,0.05);border-radius:18px;overflow:hidden" id="profile-info-block">
+        // Кнопки действий
+        + (!isGroup ? '<div style="display:flex;gap:10px;padding:16px 16px 4px">'
+            + '<button onclick="startCall(\'audio\');this.closest(\'.partner-profile-overlay\').remove()" style="flex:1;padding:13px 0;background:rgba(255,255,255,0.07);border:none;border-radius:16px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:8px">'
+            + '<div style="width:36px;height:36px;border-radius:50%;background:rgba(16,185,129,0.2);display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="#10b981"/></svg></div>'
+            + 'Позвонить</button>'
+            + '<button onclick="startCall(\'video\');this.closest(\'.partner-profile-overlay\').remove()" style="flex:1;padding:13px 0;background:rgba(255,255,255,0.07);border:none;border-radius:16px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:8px">'
+            + '<div style="width:36px;height:36px;border-radius:50%;background:rgba(59,130,246,0.2);display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" fill="#60a5fa"/></svg></div>'
+            + 'Видео</button>'
+            + '<button onclick="this.closest(\'.partner-profile-overlay\').remove()" style="flex:1;padding:13px 0;background:rgba(255,255,255,0.07);border:none;border-radius:16px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;align-items:center;gap:8px">'
+            + '<div style="width:36px;height:36px;border-radius:50%;background:rgba(139,92,246,0.2);display:flex;align-items:center;justify-content:center"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" fill="#a78bfa"/></svg></div>'
+            + 'Написать</button>'
+            + '</div>' : '')
 
-            <div id="profile-phone-row" style="display:flex;align-items:center;padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:14px">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="var(--accent,#10b981)"/></svg>
-                </div>
-                <div style="flex:1;min-width:0">
-                    <div style="font-size:16px;font-weight:500;color:#3b82f6" id="profile-phone-val">Загрузка...</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:1px">мобильный</div>
-                </div>
-            </div>
+        // Инфо блок
+        + '<div style="margin:12px 16px 0;background:rgba(255,255,255,0.05);border-radius:18px;overflow:hidden" id="profile-info-block">'
+        + '<div id="profile-phone-row" style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">мобильный</div>'
+        + '<div style="font-size:16px;font-weight:500;color:#4da3ff" id="profile-phone-val">—</div>'
+        + '</div>'
+        + '<div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">имя пользователя</div>'
+        + '<div style="font-size:16px;font-weight:500;color:#4da3ff" id="profile-username-val">...</div>'
+        + '</div>'
+        + '<div id="profile-bio-row" style="display:none;padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">о себе</div>'
+        + '<div style="font-size:15px;color:rgba(255,255,255,0.85);line-height:1.45" id="profile-bio-val"></div>'
+        + '</div>'
+        + '<div id="profile-date-row" style="display:none;padding:14px 16px">'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">в WayChat с</div>'
+        + '<div style="font-size:15px;color:rgba(255,255,255,0.7)" id="profile-date-val"></div>'
+        + '</div>'
+        + '</div>'
 
-            <div style="display:flex;align-items:center;padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(59,130,246,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:14px">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="#60a5fa" stroke-width="2"/></svg>
-                </div>
-                <div style="flex:1;min-width:0">
-                    <div style="font-size:16px;font-weight:500;color:#3b82f6" id="profile-username-val">...</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:1px">имя пользователя</div>
-                </div>
-            </div>
+        // Кнопки сохранить/переименовать
+        + (!isGroup ? '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 16px">'
+            + '<button onclick="renameContactFromProfile(' + currentPartnerId + ',\'' + name.replace(/'/g,"\\'") + '\');this.closest(\'.partner-profile-overlay\').remove()" style="padding:13px;background:rgba(255,255,255,0.06);border:none;border-radius:14px;color:rgba(255,255,255,0.75);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:7px">'
+            + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="rgba(255,255,255,0.75)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Переименовать</button>'
+            + '<button onclick="toggleContactSave(' + currentPartnerId + ',\'' + name.replace(/'/g,"\\'") + '\')" style="padding:13px;background:' + (isSaved ? 'rgba(239,68,68,0.1)' : 'rgba(16,185,129,0.1)') + ';border:none;border-radius:14px;color:' + (isSaved ? '#ef4444' : 'var(--accent,#10b981)') + ';font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:7px">'
+            + (isSaved ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Убрать' : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="var(--accent,#10b981)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/><line x1="22" y1="11" x2="16" y2="11" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/></svg>Сохранить')
+            + '</button></div>'
+            : '<div style="margin:10px 16px"><button onclick="showGroupInfo()" style="width:100%;padding:14px;background:rgba(59,130,246,0.1);border:none;border-radius:14px;color:#60a5fa;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="#60a5fa" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Участники группы</button></div>')
 
-            <div id="profile-bio-row" style="display:none;align-items:flex-start;padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(139,92,246,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:14px">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </div>
-                <div style="flex:1;min-width:0">
-                    <div style="font-size:15px;color:rgba(255,255,255,0.85);line-height:1.45" id="profile-bio-val"></div>
-                    <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:1px">bio</div>
-                </div>
-            </div>
+        // Заблокировать
+        + '<div style="margin:0 16px"><button onclick="blockUserFromProfile(' + currentPartnerId + ');this.closest(\'.partner-profile-overlay\').remove()" style="width:100%;padding:14px;background:rgba(239,68,68,0.07);border:none;border-radius:14px;color:#ef4444;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#ef4444" stroke-width="2"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>Заблокировать</button></div>'
 
-            <div id="profile-date-row" style="display:none;align-items:center;padding:14px 16px">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(245,158,11,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:14px">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke="#f59e0b" stroke-width="2"/><line x1="16" y1="2" x2="16" y2="6" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="2" x2="8" y2="6" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/><line x1="3" y1="10" x2="21" y2="10" stroke="#f59e0b" stroke-width="2"/></svg>
-                </div>
-                <div style="flex:1;min-width:0">
-                    <div style="font-size:15px;font-weight:500;color:rgba(255,255,255,0.8)" id="profile-date-val"></div>
-                    <div style="font-size:12px;color:rgba(255,255,255,0.35);margin-top:1px">в WayChat с</div>
-                </div>
-            </div>
-        </div>
+        + '</div>'  // end тело
+        + '</div>'; // end pp-anim
 
-        ${!isGroup ? `
-        <!-- Сохранить / Переименовать -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 16px 10px">
-            <button onclick="renameContactFromProfile(${currentPartnerId},'${name.replace(/'/g,"\\'")}');this.closest('.partner-profile-overlay').remove()" style="padding:13px;background:rgba(255,255,255,0.07);border:none;border-radius:14px;color:rgba(255,255,255,0.8);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                Переименовать
-            </button>
-            <button id="pp-save-btn" onclick="toggleContactSave(${currentPartnerId},'${name.replace(/'/g,"\\'")}')" style="padding:13px;background:${isSaved ? 'rgba(239,68,68,0.12)' : 'rgba(16,185,129,0.12)'};border:none;border-radius:14px;color:${isSaved ? '#ef4444' : 'var(--accent,#10b981)'};font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
-                ${isSaved
-                    ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Убрать'
-                    : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="var(--accent,#10b981)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/><line x1="22" y1="11" x2="16" y2="11" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/></svg> Сохранить'}
-            </button>
-        </div>
-
-        <!-- Группа: участники -->
-        ` : `
-        <div style="margin:0 16px 10px">
-            <button onclick="showGroupInfo()" style="width:100%;padding:14px;background:rgba(59,130,246,0.1);border:none;border-radius:14px;color:#60a5fa;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="#60a5fa" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                Участники группы
-            </button>
-        </div>
-        `}
-
-        <!-- Заблокировать -->
-        <div style="margin:0 16px">
-            <button onclick="blockUserFromProfile(${currentPartnerId});this.closest('.partner-profile-overlay').remove()" style="width:100%;padding:14px;background:rgba(239,68,68,0.08);border:none;border-radius:14px;color:#ef4444;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#ef4444" stroke-width="2"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>
-                Заблокировать
-            </button>
-        </div>
-
-    </div>`;
-
-    overlay.querySelector('#pp-back').onclick = () => overlay.remove();
+    overlay.querySelector('#pp-back').onclick = function() { overlay.remove(); };
     document.body.appendChild(overlay);
 
-    // Загружаем данные профиля
     if (!isGroup) {
-        apiFetch(`/get_user_profile/${currentPartnerId}`).then(r => r?.json()).then(data => {
+        apiFetch('/get_user_profile/' + currentPartnerId).then(function(r){ return r && r.json(); }).then(function(data) {
             if (!data) return;
-            const uEl   = overlay.querySelector('#profile-username-val');
-            const pEl   = overlay.querySelector('#profile-phone-val');
-            const bEl   = overlay.querySelector('#profile-bio-val');
-            const bRow  = overlay.querySelector('#profile-bio-row');
-            const dEl   = overlay.querySelector('#profile-date-val');
-            const dRow  = overlay.querySelector('#profile-date-row');
-            const nameDisplay = overlay.querySelector('#pp-name-display');
-
+            var uEl  = overlay.querySelector('#profile-username-val');
+            var pEl  = overlay.querySelector('#profile-phone-val');
+            var bEl  = overlay.querySelector('#profile-bio-val');
+            var bRow = overlay.querySelector('#profile-bio-row');
+            var dEl  = overlay.querySelector('#profile-date-val');
+            var dRow = overlay.querySelector('#profile-date-row');
+            var nameDisplay = overlay.querySelector('#pp-name-display');
             if (uEl) uEl.textContent = data.username ? '@' + data.username : '—';
             if (pEl) pEl.textContent = data.phone || '—';
-
-            if (data.bio && bEl && bRow) {
-                bEl.textContent = data.bio;
-                bRow.style.display = 'flex';
-            }
+            if (data.bio && bEl && bRow) { bEl.textContent = data.bio; bRow.style.display = 'block'; }
             if (data.created_at && dEl && dRow) {
                 try {
-                    const d = new Date(data.created_at);
+                    var d = new Date(data.created_at);
                     dEl.textContent = d.toLocaleDateString('ru-RU', { day:'numeric', month:'long', year:'numeric' });
-                    dRow.style.display = 'flex';
+                    dRow.style.display = 'block';
                 } catch(e) {}
             }
-            // Бейдж верификации
             if (data.is_verified && data.verified_type && nameDisplay) {
-                const badge = getVerifyBadge(data, 20);
+                var badge = getVerifyBadge(data, 20);
                 if (badge && !nameDisplay.querySelector('.vbadge-inline')) {
-                    nameDisplay.insertAdjacentHTML('beforeend', `<span class="vbadge-inline" style="margin-left:6px">${badge}</span>`);
+                    nameDisplay.insertAdjacentHTML('beforeend', '<span class="vbadge-inline" style="margin-left:6px;vertical-align:middle">' + badge + '</span>');
                 }
-                const chatNameEl = document.getElementById('chat-name');
-                if (chatNameEl) {
-                    chatNameEl.innerHTML = escHtml(getContactDisplayName(currentPartnerId, data.name)) + getVerifyBadge(data, 13);
-                }
+                var chatNameEl = document.getElementById('chat-name');
+                if (chatNameEl) chatNameEl.innerHTML = escHtml(getContactDisplayName(currentPartnerId, data.name)) + getVerifyBadge(data, 13);
             }
-        }).catch(() => {});
+        }).catch(function(){});
     }
 }
-
 function renameContactFromProfile(id, currentName) {
     const newName = prompt(`Своё имя для контакта:`, contactCustomNames[id] || currentName);
     if (newName === null) return;
