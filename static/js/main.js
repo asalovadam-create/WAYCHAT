@@ -4223,6 +4223,14 @@ function openNetworkInfo() {
     `));
 }
 
+function _updateNotifToggle(enabled) {
+    const toggle = document.getElementById('notif-toggle');
+    if (!toggle) return;
+    const dot = toggle.querySelector('div');
+    toggle.style.background = enabled ? 'var(--accent)' : 'rgba(255,255,255,0.2)';
+    if (dot) dot.style.right = enabled ? '3px' : 'calc(100% - 25px)';
+}
+
 async function _toggleNotificationsOLD_REPLACED() { // placeholder
     void 0;
 }
