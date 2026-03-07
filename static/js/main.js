@@ -2857,9 +2857,12 @@ async function _sendVideoCircle(mime) {
         const r = await apiFetch('/upload_media',{method:'POST',body:fd});
         const d = await r.json();
         if(d.url) {
-            await apiFetch('/send_message',{
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({chat_id:currentChatId, media_url:d.url, media_type:'video_circle', text:''})
+            socket.emit('send_message', {
+                chat_id:   currentChatId,
+                type_msg:  'video_circle',
+                file_url:  d.url,
+                sender_id: currentUser.id,
+                content:   ''
             });
             showToast('Видео-кружок отправлен 🎥','success');
         }
