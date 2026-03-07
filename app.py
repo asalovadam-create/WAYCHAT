@@ -2765,6 +2765,28 @@ def report_user():
 
 
 # ══════════════════════════════════════════════════════════
+#  ОДНОРАЗОВАЯ МИГРАЦИЯ — после применения УДАЛИ этот роут
+# ══════════════════════════════════════════════════════════
+@app.route('/run_fix_migration')
+def run_fix_migration():
+    secret = request.args.get('secret', '')
+    if secret != os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me')[:16]:
+        return 'forbidden', 403
+    results = []
+    sqls = [
+        'ALTER TABLE message ALTER COLUMN type TYPE VARCHAR(20)',
+    ]
+    for sql in sqls:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+            results.append(f'OK: {sql}')
+        except Exception as e:
+            results.append(f'SKIP ({e}): {sql}')
+    return '<br>'.join(results)
+
+# ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
 # ══════════════════════════════════════════════════════════
 @app.route('/health')
@@ -2813,22 +2835,15 @@ def shutdown_session(exception=None):
     db.session.remove()
 
 # ══════════════════════════════════════════════════════════
-#  ИНИЦИАЛИЗАЦИЯ — выполняется и на Render (gunicorn), и локально
-# ══════════════════════════════════════════════════════════
-with app.app_context():
-    try:
-        os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
-        db.create_all()
-        run_migrations()
-    except Exception as _init_err:
-        print(f'⚠️  Init error: {_init_err}')
-
-eventlet.spawn(background_cleanup)
-
-# ══════════════════════════════════════════════════════════
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════════
 if __name__ == '__main__':
+    with app.app_context():
+        os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
+        db.create_all()
+        run_migrations()
+
+    eventlet.spawn(background_cleanup)
 
     print('╔══════════════════════════════════════════════════════╗')
     print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
