@@ -181,33 +181,54 @@ socketio = SocketIO(
 # ══════════════════════════════════════════════════════════
 def upload_to_cloudinary(file_obj, folder='waychat'):
     try:
-        import cloudinary
-        import cloudinary.uploader
+        import cloudinary, cloudinary.uploader
 
         cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
         api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
         api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
 
         if not all([cloud_name, api_key, api_secret]):
-            print('Cloudinary env vars missing')
-            return None
+            print('Cloudinary env vars missing'); return None
 
-        cloudinary.config(
-            cloud_name = cloud_name,
-            api_key    = api_key,
-            api_secret = api_secret,
-            secure     = True,
-        )
+        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
 
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
 
-        result = cloudinary.uploader.upload(
-            file_obj,
-            folder        = folder,
-            resource_type = 'auto',
-        )
-        url = result.get('secure_url')
+        # Определяем тип
+        mime = (getattr(file_obj, 'content_type', None)
+                or getattr(file_obj, 'mimetype', None)
+                or __import__('mimetypes').guess_type(getattr(file_obj, 'filename', ''))[0]
+                or '')
+        is_moment = 'moments' in folder
+        print(f'Cloudinary upload: mime={mime!r} folder={folder!r}')
+
+        if mime.startswith('video/') or mime.startswith('audio/'):
+            params = dict(folder=folder, resource_type='video', chunk_size=6*1024*1024)
+            if is_moment:
+                # Создаём оптимизированную версию на Cloudinary — качество 60%, 720p, h264/mp4
+                params['eager'] = [{'quality': 60, 'height': 720, 'crop': 'limit',
+                                     'video_codec': 'h264', 'format': 'mp4'}]
+                params['eager_async'] = True
+            result = cloudinary.uploader.upload(file_obj, **params)
+            # Берём eager URL если уже готов (меньше размер), иначе оригинал
+            eager = result.get('eager', [])
+            if eager and eager[0].get('secure_url'):
+                url = eager[0]['secure_url']
+            else:
+                url = result.get('secure_url', '')
+                # Вставляем трансформацию в URL — Cloudinary применит её при следующей раздаче
+                if url and is_moment:
+                    url = _cl_transform(url, 'q_60,h_720,c_limit,vc_h264,f_mp4', 'video')
+        else:
+            params = dict(folder=folder, resource_type='image')
+            if is_moment:
+                params['quality'] = 'auto:good'
+            result = cloudinary.uploader.upload(file_obj, **params)
+            url = result.get('secure_url', '')
+            if url and is_moment:
+                url = _cl_transform(url, 'q_auto:good,f_auto,w_1080,c_limit', 'image')
+
         print(f'Cloudinary OK: {url}')
         return url
 
@@ -216,6 +237,18 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         print(f'Cloudinary ERROR: {e}')
         print(traceback.format_exc())
         return None
+
+
+def _cl_transform(url, transform, res_type='image'):
+    """Вставляет трансформацию в Cloudinary URL после /upload/."""
+    try:
+        marker = f'/{res_type}/upload/'
+        if marker in url:
+            parts = url.split(marker, 1)
+            return parts[0] + marker + transform + '/' + parts[1]
+        return url
+    except Exception:
+        return url
 
 # ══════════════════════════════════════════════════════════
 #  VAPID — WEB PUSH
