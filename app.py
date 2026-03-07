@@ -4,8 +4,8 @@ eventlet.monkey_patch()
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
-║          Version: 7.0.1 — FIXED EDITION                     ║
-║  DetachedInstanceError fix · Cache fix · SW fix              ║
+║          Version: 7.0.2 — RENDER FIX EDITION                ║
+║  Cookie Secure fix · db.create_all fix · gunicorn fix        ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -112,11 +112,11 @@ class TTLCache:
 
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
-_user_dict_cache  = TTLCache(maxsize=1000, ttl=120.0)  # 2 мин
-_chat_cache       = TTLCache(maxsize=2000, ttl=20.0)  # 20с — Socket обновит быстрее
+_user_dict_cache  = TTLCache(maxsize=1000, ttl=60.0)   # {id: dict}
+_chat_cache       = TTLCache(maxsize=2000, ttl=10.0)
 _online_cache     = TTLCache(maxsize=2000, ttl=5.0)
 _partner_cache    = TTLCache(maxsize=1000, ttl=30.0)
-_moments_cache    = TTLCache(maxsize=500,  ttl=60.0)  # key=uid
+_moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
@@ -130,12 +130,6 @@ app = Flask(__name__,
             static_url_path='/static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
-@app.after_request
-def _add_cache_headers(response):
-    if request.path.startswith('/static/'):
-        response.headers['Cache-Control'] = 'public, max-age=604800'
-    return response
-
 app.config.update(
     SQLALCHEMY_DATABASE_URI        = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
@@ -147,12 +141,15 @@ app.config.update(
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
+    # FIX: на Render всегда HTTPS — куки должны быть Secure=True иначе iPhone их блокирует
     SESSION_COOKIE_SAMESITE  = 'Lax',
-    SESSION_COOKIE_SECURE    = False,
+    SESSION_COOKIE_SECURE    = True,
     SESSION_COOKIE_HTTPONLY  = True,
     REMEMBER_COOKIE_SAMESITE = 'Lax',
-    REMEMBER_COOKIE_SECURE   = False,
+    REMEMBER_COOKIE_SECURE   = True,
     REMEMBER_COOKIE_DURATION = timedelta(days=30),
+    SESSION_PERMANENT        = True,
+    PERMANENT_SESSION_LIFETIME = timedelta(days=30),
     SESSION_PROTECTION       = None,
     JSON_SORT_KEYS           = False,
 )
@@ -181,54 +178,33 @@ socketio = SocketIO(
 # ══════════════════════════════════════════════════════════
 def upload_to_cloudinary(file_obj, folder='waychat'):
     try:
-        import cloudinary, cloudinary.uploader
+        import cloudinary
+        import cloudinary.uploader
 
         cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
         api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
         api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
 
         if not all([cloud_name, api_key, api_secret]):
-            print('Cloudinary env vars missing'); return None
+            print('Cloudinary env vars missing')
+            return None
 
-        cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
+        cloudinary.config(
+            cloud_name = cloud_name,
+            api_key    = api_key,
+            api_secret = api_secret,
+            secure     = True,
+        )
 
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
 
-        # Определяем тип
-        mime = (getattr(file_obj, 'content_type', None)
-                or getattr(file_obj, 'mimetype', None)
-                or __import__('mimetypes').guess_type(getattr(file_obj, 'filename', ''))[0]
-                or '')
-        is_moment = 'moments' in folder
-        print(f'Cloudinary upload: mime={mime!r} folder={folder!r}')
-
-        if mime.startswith('video/') or mime.startswith('audio/'):
-            params = dict(folder=folder, resource_type='video', chunk_size=6*1024*1024)
-            if is_moment:
-                # Создаём оптимизированную версию на Cloudinary — качество 60%, 720p, h264/mp4
-                params['eager'] = [{'quality': 60, 'height': 720, 'crop': 'limit',
-                                     'video_codec': 'h264', 'format': 'mp4'}]
-                params['eager_async'] = True
-            result = cloudinary.uploader.upload(file_obj, **params)
-            # Берём eager URL если уже готов (меньше размер), иначе оригинал
-            eager = result.get('eager', [])
-            if eager and eager[0].get('secure_url'):
-                url = eager[0]['secure_url']
-            else:
-                url = result.get('secure_url', '')
-                # Вставляем трансформацию в URL — Cloudinary применит её при следующей раздаче
-                if url and is_moment:
-                    url = _cl_transform(url, 'q_60,h_720,c_limit,vc_h264,f_mp4', 'video')
-        else:
-            params = dict(folder=folder, resource_type='image')
-            if is_moment:
-                params['quality'] = 'auto:good'
-            result = cloudinary.uploader.upload(file_obj, **params)
-            url = result.get('secure_url', '')
-            if url and is_moment:
-                url = _cl_transform(url, 'q_auto:good,f_auto,w_1080,c_limit', 'image')
-
+        result = cloudinary.uploader.upload(
+            file_obj,
+            folder        = folder,
+            resource_type = 'auto',
+        )
+        url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
         return url
 
@@ -237,18 +213,6 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         print(f'Cloudinary ERROR: {e}')
         print(traceback.format_exc())
         return None
-
-
-def _cl_transform(url, transform, res_type='image'):
-    """Вставляет трансформацию в Cloudinary URL после /upload/."""
-    try:
-        marker = f'/{res_type}/upload/'
-        if marker in url:
-            parts = url.split(marker, 1)
-            return parts[0] + marker + transform + '/' + parts[1]
-        return url
-    except Exception:
-        return url
 
 # ══════════════════════════════════════════════════════════
 #  VAPID — WEB PUSH
@@ -1010,16 +974,16 @@ def vapid_public_key():
 @app.route('/sw.js')
 def service_worker():
     from flask import Response
-    # Ищем sw.js сначала в static/, потом в корне проекта
-    for sw_path in [os.path.join(BASE_DIR, 'static', 'sw.js'), os.path.join(BASE_DIR, 'sw.js')]:
-        if os.path.exists(sw_path):
-            with open(sw_path, 'r', encoding='utf-8') as f:
-                sw_content = f.read()
-            resp = Response(sw_content, mimetype='application/javascript')
-            resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-            resp.headers['Service-Worker-Allowed'] = '/'
-            return resp
-    return Response('// sw not found', mimetype='application/javascript', status=404)
+    sw_path = os.path.join(BASE_DIR, 'sw.js')
+    try:
+        with open(sw_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        resp = Response(content, mimetype='application/javascript')
+        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        resp.headers['Service-Worker-Allowed'] = '/'
+        return resp
+    except FileNotFoundError:
+        return Response('// sw not found', mimetype='application/javascript', status=404)
 
 
 @app.route('/manifest.json')
@@ -1159,77 +1123,48 @@ def get_user_profile(user_id):
 @app.route('/get_my_chats')
 @login_required
 def get_my_chats():
-    try: db.session.rollback()
-    except Exception: pass
-
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
     uid = current_user.id
     cached = _chat_cache.get(uid)
-    if cached is not None:
+    if cached:
         return jsonify(cached)
 
-    # ── Личные чаты ──
-    personal_chats = Chat.query.filter(
-        or_(Chat.room_key.like(f'chat_{uid}_%'), Chat.room_key.like(f'%_{uid}'))
-    ).all()
-    personal_chats = [c for c in personal_chats if not c.room_key.startswith('group_')]
-
-    if not personal_chats and not GroupMember.query.filter_by(user_id=uid).first():
-        _chat_cache.set(uid, [])
-        return jsonify([])
-
-    chat_ids = [c.id for c in personal_chats]
-
-    # Один запрос: последнее сообщение для каждого чата
-    from sqlalchemy import func
-    last_msg_sub = db.session.query(
-        Message.chat_id, func.max(Message.id).label('max_id')
-    ).filter(Message.is_deleted == False).group_by(Message.chat_id).subquery()
-
-    last_msgs_q = db.session.query(Message).join(
-        last_msg_sub, Message.id == last_msg_sub.c.max_id
-    ).all()
-    last_msg_map = {m.chat_id: m for m in last_msgs_q}
-
-    # Один запрос: unread counts для всех чатов
-    unread_rows = db.session.execute(
-        text('''SELECT chat_id, COUNT(*) as cnt FROM message
-                WHERE is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE
-                GROUP BY chat_id'''),
-        {'uid': uid}
-    ).fetchall()
-    unread_map = {r.chat_id: r.cnt for r in unread_rows}
-
-    # Один запрос: у кого из партнёров есть активные моменты
-    partner_ids_all = []
-    for c in personal_chats:
-        parts = c.room_key.replace('chat_', '').split('_')
-        ids = [int(p) for p in parts if p.isdigit()]
-        p_id = next((i for i in ids if i != uid), None)
-        if p_id: partner_ids_all.append(p_id)
-
-    moment_users = set()
-    if partner_ids_all:
-        from sqlalchemy import func
-        moment_rows = db.session.execute(
-            text('SELECT DISTINCT user_id FROM moment WHERE user_id = ANY(:ids) AND expires_at > NOW()'),
-            {'ids': list(partner_ids_all)}
-        ).fetchall()
-        moment_users = {r.user_id for r in moment_rows}
-
     result = []
-    type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео', 'video_circle': '🎥 Видео'}
 
-    for c in personal_chats:
+    raw_chats = Chat.query.filter(
+        or_(
+            Chat.room_key.like(f'chat_{uid}_%'),
+            Chat.room_key.like(f'%_{uid}'),
+        )
+    ).all()
+
+    for c in raw_chats:
+        if c.room_key.startswith('group_'):
+            continue
         try:
             parts = c.room_key.replace('chat_', '').split('_')
             ids   = [int(p) for p in parts if p.isdigit()]
             p_id  = next((i for i in ids if i != uid), None)
-            if not p_id: continue
+            if not p_id:
+                continue
+            # ИСПРАВЛЕНИЕ: используем словарь, не ORM-объект
             partner_dict = get_cached_user_dict(p_id)
-            if not partner_dict: continue
+            if not partner_dict:
+                continue
 
-            last_msg = last_msg_map.get(c.id)
-            unread   = unread_map.get(c.id, 0)
+            last_msg = Message.query.filter_by(
+                chat_id=c.id, is_deleted=False
+            ).order_by(Message.id.desc()).first()
+
+            unread = db.session.execute(
+                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
+                {'cid': c.id, 'uid': uid}
+            ).scalar() or 0
+
+            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
             preview  = '💬 Начните переписку'
             sort_ts  = c.created_at or datetime(2000, 1, 1)
 
@@ -1237,85 +1172,107 @@ def get_my_chats():
                 preview = type_map.get(last_msg.type, last_msg.content or '...')
                 sort_ts = last_msg.timestamp
 
+            # online из кэша
             p_online = _online_cache.get(p_id)
             if p_online is None:
-                ls_str = partner_dict.get('last_seen')
-                if ls_str:
+                last_seen_str = partner_dict.get('last_seen')
+                if last_seen_str:
                     try:
-                        ls = datetime.fromisoformat(ls_str)
+                        ls = datetime.fromisoformat(last_seen_str)
                         p_online = partner_dict.get('is_online', False) or (datetime.utcnow() - ls < timedelta(minutes=5))
                     except Exception:
                         p_online = partner_dict.get('is_online', False)
                 else:
                     p_online = partner_dict.get('is_online', False)
 
+            _mc = Moment.query.filter(Moment.user_id == p_id, Moment.expires_at > datetime.utcnow()).count()
             result.append({
                 'chat_id':          c.id,
                 'partner_id':       p_id,
                 'partner_name':     partner_dict['name'],
                 'partner_username': partner_dict['username'],
                 'partner_avatar':   partner_dict['avatar'],
-                'online':           bool(p_online),
+                'online':           p_online,
                 'last_message':     preview,
                 'timestamp':        to_moscow_str(last_msg.timestamp if last_msg else None),
                 'raw_timestamp':    last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
                 'unread_count':     unread,
                 'is_group':         False,
-                'has_moment':       p_id in moment_users,
-                'moment_count':     1 if p_id in moment_users else 0,
+                'has_moment':       _mc > 0,
+                'moment_count':     _mc,
                 '_sort':            sort_ts,
             })
         except Exception as e:
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
-    # ── Группы ──
     memberships = GroupMember.query.filter_by(user_id=uid).all()
     for m in memberships:
         try:
             group = db.session.get(Group, m.group_id)
-            if not group: continue
+            if not group:
+                continue
             chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
-            if not chat: continue
-            last_msg = last_msg_map.get(chat.id)
-            unread   = unread_map.get(chat.id, 0)
+            if not chat:
+                continue
+
+            last_msg = Message.query.filter_by(
+                chat_id=chat.id, is_deleted=False
+            ).order_by(Message.id.desc()).first()
+
+            unread = db.session.execute(
+                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
+                {'cid': chat.id, 'uid': uid}
+            ).scalar() or 0
+
+            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
             preview  = '👥 Группа создана'
             sort_ts  = group.created_at or datetime(2000, 1, 1)
+
             if last_msg:
                 sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                preview = sender_prefix + type_map.get(last_msg.type, last_msg.content or '...')
+                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
                 sort_ts = last_msg.timestamp
+
             member_count = GroupMember.query.filter_by(group_id=group.id).count()
             result.append({
-                'chat_id': chat.id, 'group_id': group.id, 'partner_id': group.id,
-                'group_name': group.name, 'partner_name': group.name,
-                'group_avatar': group.avatar, 'partner_avatar': group.avatar,
-                'member_count': member_count, 'online': False,
-                'last_message': preview,
-                'timestamp': to_moscow_str(last_msg.timestamp if last_msg else None),
+                'chat_id':       chat.id,
+                'group_id':      group.id,
+                'partner_id':    group.id,
+                'group_name':    group.name,
+                'partner_name':  group.name,
+                'group_avatar':  group.avatar,
+                'partner_avatar':group.avatar,
+                'member_count':  member_count,
+                'online':        False,
+                'last_message':  preview,
+                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
                 'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count': unread, 'is_group': True, '_sort': sort_ts,
+                'unread_count':  unread,
+                'is_group':      True,
+                '_sort':         sort_ts,
             })
         except Exception as e:
-            app.logger.error(f'Group parse error {m.group_id}: {e}')
+            app.logger.error(f'Group chat parse error {m.group_id}: {e}')
 
-    result.sort(key=lambda x: x.get('_sort') if isinstance(x.get('_sort'), datetime) else datetime(2000,1,1), reverse=True)
-    for r in result: r.pop('_sort', None)
+    def sort_key(x):
+        s = x.get('_sort')
+        if isinstance(s, datetime):
+            return s
+        if isinstance(s, str):
+            try:
+                return datetime.fromisoformat(s.replace('Z', ''))
+            except Exception:
+                pass
+        return datetime(2000, 1, 1)
+
+    result.sort(key=sort_key, reverse=True)
+    for r in result:
+        r.pop('_sort', None)
 
     _chat_cache.set(uid, result)
+    return jsonify(result)
 
-    # Gzip-ответ
-    import gzip as _gz, json as _js
-    body = _js.dumps(result, separators=(',',':'), ensure_ascii=False)
-    if 'gzip' in request.headers.get('Accept-Encoding', ''):
-        from flask import Response as _R
-        resp = _R(_gz.compress(body.encode(), 6), mimetype='application/json')
-        resp.headers['Content-Encoding'] = 'gzip'
-        resp.headers['Vary'] = 'Accept-Encoding'
-    else:
-        from flask import Response as _R
-        resp = _R(body, mimetype='application/json')
-    resp.headers['Cache-Control'] = 'private, max-age=15'
-    return resp
+
 @app.route('/get_chat_id/<int:partner_id>')
 @login_required
 def get_chat_id(partner_id):
@@ -1376,16 +1333,7 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-    import gzip as _gz, json as _js
-    data = [m.to_dict() for m in reversed(msgs)]
-    body = _js.dumps(data, separators=(',',':'), ensure_ascii=False)
-    if 'gzip' in request.headers.get('Accept-Encoding', ''):
-        from flask import Response as _R
-        resp = _R(_gz.compress(body.encode(), 6), mimetype='application/json')
-        resp.headers['Content-Encoding'] = 'gzip'
-        resp.headers['Vary'] = 'Accept-Encoding'
-        return resp
-    return jsonify(data)
+    return jsonify([m.to_dict() for m in reversed(msgs)])
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -1832,56 +1780,32 @@ def block_user(user_id):
 @app.route('/get_moments')
 @login_required
 def get_moments():
-    uid = current_user.id
-    cached = _moments_cache.get(uid)
-    if cached is not None:
+    cached = _moments_cache.get('all')
+    if cached:
         return jsonify(cached)
 
-    cutoff = datetime.utcnow() - timedelta(hours=24)
-
-    # Один запрос с подсчётом просмотров через subquery — без N+1
-    from sqlalchemy import func, outerjoin
-    vc_sub = db.session.query(
-        MomentView.moment_id,
-        func.count(MomentView.id).label('cnt')
-    ).group_by(MomentView.moment_id).subquery()
-
-    rows = db.session.query(Moment, User, vc_sub.c.cnt).join(
+    uid     = current_user.id
+    cutoff  = datetime.utcnow() - timedelta(hours=24)
+    moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).outerjoin(
-        vc_sub, Moment.id == vc_sub.c.moment_id
-    ).filter(
-        Moment.timestamp >= cutoff
-    ).order_by(Moment.timestamp.desc()).all()
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
 
     data = [{
-        'id':            r.Moment.id,
-        'user_id':       r.Moment.user_id,
-        'user_name':     r.User.name,
-        'user_avatar':   r.User.avatar or '',
-        'media_url':     r.Moment.media_url or '',
-        'text':          r.Moment.text or '',
-        'geo_name':      r.Moment.geo_name or '',
-        'timestamp':     to_moscow_str(r.Moment.timestamp),
-        'raw_timestamp': r.Moment.timestamp.isoformat() + 'Z' if r.Moment.timestamp else '',
-        'view_count':    r.cnt or 0,
-        'is_mine':       r.Moment.user_id == uid,
-    } for r in rows]
+        'id':            m.Moment.id,
+        'user_id':       m.Moment.user_id,
+        'user_name':     m.User.name,
+        'user_avatar':   m.User.avatar,
+        'media_url':     m.Moment.media_url,
+        'text':          m.Moment.text or '',
+        'geo_name':      m.Moment.geo_name or '',
+        'timestamp':     to_moscow_str(m.Moment.timestamp),
+        'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
+        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
+        'is_mine':       m.Moment.user_id == uid,
+    } for m in moments]
 
-    _moments_cache.set(uid, data)
-    import gzip as _gzip, json as _json
-    from flask import Response as _Resp
-    body = _json.dumps(data, separators=(',',':'), ensure_ascii=False)
-    accept = request.headers.get('Accept-Encoding', '')
-    if 'gzip' in accept:
-        compressed = _gzip.compress(body.encode('utf-8'), compresslevel=6)
-        resp = _Resp(compressed, mimetype='application/json')
-        resp.headers['Content-Encoding'] = 'gzip'
-        resp.headers['Vary'] = 'Accept-Encoding'
-    else:
-        resp = _Resp(body, mimetype='application/json')
-    resp.headers['Cache-Control'] = 'private, max-age=30'
-    return resp
+    _moments_cache.set('all', data)
+    return jsonify(data)
 
 
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
@@ -1904,13 +1828,14 @@ def delete_chat_route(cid):
 @login_required
 def view_moment(mid):
     uid = current_user.id
-    # Быстрая вставка без предварительного SELECT
+    if MomentView.query.filter_by(moment_id=mid, viewer_id=uid).first():
+        return jsonify({'success': True})
     mv = MomentView(moment_id=mid, viewer_id=uid)
     db.session.add(mv)
     try:
         db.session.commit()
     except Exception:
-        db.session.rollback()  # UniqueConstraint — уже просмотрено, ок
+        db.session.rollback()
     return jsonify({'success': True})
 
 
@@ -1987,7 +1912,7 @@ def create_moment():
     )
     db.session.add(moment)
     db.session.commit()
-    _moments_cache.invalidate_prefix('')  # сброс всех кешей моментов
+    _moments_cache.delete('all')
     socketio.emit('new_moment', {'user_id': uid, 'user_name': uname})
     return jsonify({'success': True, 'moment_id': moment.id})
 
@@ -2816,18 +2741,27 @@ def shutdown_session(exception=None):
     db.session.remove()
 
 # ══════════════════════════════════════════════════════════
-#  ЗАПУСК
+#  ИНИЦИАЛИЗАЦИЯ БД — запускается при импорте модуля (gunicorn тоже)
 # ══════════════════════════════════════════════════════════
-if __name__ == '__main__':
-    with app.app_context():
+def _init_app():
+    try:
         os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
         db.create_all()
         run_migrations()
+        eventlet.spawn(background_cleanup)
+        print('✅ WayChat DB ready')
+    except Exception as e:
+        print(f'❌ DB init error: {e}')
 
-    eventlet.spawn(background_cleanup)
+with app.app_context():
+    _init_app()
 
+# ══════════════════════════════════════════════════════════
+#  ЗАПУСК (только python app.py напрямую)
+# ══════════════════════════════════════════════════════════
+if __name__ == '__main__':
     print('╔══════════════════════════════════════════════════════╗')
-    print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
+    print('║         WAYCHAT SERVER v7.0.2 — STARTING            ║')
     print('╚══════════════════════════════════════════════════════╝')
 
     port = int(os.environ.get('PORT', 5000))
