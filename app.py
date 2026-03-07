@@ -1856,7 +1856,7 @@ def moment_viewers(mid):
     ]})
 
 
-@app.route('/delete_moment/<int:mid>', methods=['POST', 'DELETE'])
+@app.route('/delete_moment/<int:mid>', methods=['POST'])
 @login_required
 def delete_moment(mid):
     uid = current_user.id
@@ -1872,6 +1872,8 @@ def delete_moment(mid):
                 os.remove(fp)
             except Exception:
                 pass
+    # Сначала удаляем все просмотры — иначе FK нарушение
+    MomentView.query.filter_by(moment_id=mid).delete()
     db.session.delete(m)
     db.session.commit()
     _moments_cache.delete('all')
