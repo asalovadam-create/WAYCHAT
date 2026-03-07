@@ -4599,26 +4599,62 @@ function _runMomentsViewer(list, startIdx) {
         const m = list[idx];
         const isMe = m.user_id === currentUser?.id;
 
-        // Медиа-фон
+        // Медиа-фон с блюром при загрузке
         const bg = document.createElement('div');
-        bg.style.cssText = 'position:absolute;inset:0';
+        bg.style.cssText = 'position:absolute;inset:0;background:#000';
+
         if (m.media_url) {
-            if (m.media_url.match(/\.(mp4|mov|webm)/i)) {
+            const isVideo = m.media_url.match(/\.(mp4|mov|webm)/i);
+
+            // Блюр-обложка (показывается пока грузится)
+            const blurBg = document.createElement('div');
+            blurBg.style.cssText = 'position:absolute;inset:0;background-image:url('+JSON.stringify(m.media_url)+');background-size:cover;background-position:center;filter:blur(20px) brightness(0.4);transform:scale(1.1);transition:opacity 0.4s';
+            bg.appendChild(blurBg);
+
+            // Спиннер загрузки
+            const spinner = document.createElement('div');
+            spinner.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:2';
+            spinner.innerHTML = '<div style="width:44px;height:44px;border:3px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite"></div>';
+            bg.appendChild(spinner);
+
+            if (isVideo) {
                 const vid = document.createElement('video');
                 vid.src = m.media_url; vid.autoplay=true; vid.loop=false; vid.playsInline=true; vid.muted=false;
-                vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
+                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s';
+                vid.oncanplay = () => {
+                    vid.style.opacity = '1';
+                    blurBg.style.opacity = '0';
+                    spinner.style.display = 'none';
+                };
                 bg.appendChild(vid);
             } else {
                 const img = document.createElement('img');
-                img.src = m.media_url; img.style.cssText='width:100%;height:100%;object-fit:cover';
+                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s';
+                img.onload = () => {
+                    img.style.opacity = '1';
+                    blurBg.style.opacity = '0';
+                    spinner.style.display = 'none';
+                };
+                img.src = m.media_url;
                 bg.appendChild(img);
             }
+
+            // Текст поверх медиа (если есть)
+            if (m.text) {
+                const textOver = document.createElement('div');
+                textOver.style.cssText = 'position:absolute;bottom:130px;left:0;right:0;z-index:5;display:flex;justify-content:center;padding:0 24px;pointer-events:none';
+                textOver.innerHTML = '<div style="background:rgba(0,0,0,0.55);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-radius:16px;padding:10px 18px;font-size:clamp(15px,4vw,22px);font-weight:700;color:#fff;text-align:center;line-height:1.45;text-shadow:0 1px 8px rgba(0,0,0,0.5);max-width:100%">'+escHtml(m.text)+'</div>';
+                bg.appendChild(textOver);
+            }
         } else {
+            // Только текст — красивый градиентный фон
             bg.style.background = 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)';
-            const txt = document.createElement('div');
-            txt.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px';
-            txt.innerHTML = '<div style="font-size:clamp(18px,5vw,28px);font-weight:700;color:#fff;text-align:center;line-height:1.5;text-shadow:0 2px 16px rgba(0,0,0,0.5)">'+escHtml(m.text||'')+'</div>';
-            bg.appendChild(txt);
+            if (m.text) {
+                const txt = document.createElement('div');
+                txt.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;z-index:2';
+                txt.innerHTML = '<div style="font-size:clamp(18px,5vw,28px);font-weight:700;color:#fff;text-align:center;line-height:1.5;text-shadow:0 2px 16px rgba(0,0,0,0.5)">'+escHtml(m.text)+'</div>';
+                bg.appendChild(txt);
+            }
         }
         ov.appendChild(bg);
 
