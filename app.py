@@ -116,7 +116,7 @@ _user_dict_cache  = TTLCache(maxsize=1000, ttl=60.0)   # {id: dict}
 _chat_cache       = TTLCache(maxsize=2000, ttl=10.0)
 _online_cache     = TTLCache(maxsize=2000, ttl=5.0)
 _partner_cache    = TTLCache(maxsize=1000, ttl=30.0)
-_moments_cache    = TTLCache(maxsize=500,  ttl=30.0)
+_moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
@@ -196,10 +196,20 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
 
+        # Определяем тип ресурса явно — 'auto' иногда не работает для видео
+        mime = getattr(file_obj, 'content_type', None) or getattr(file_obj, 'mimetype', '') or ''
+        if not mime and hasattr(file_obj, 'filename'):
+            import mimetypes
+            mime = mimetypes.guess_type(file_obj.filename or '')[0] or ''
+        if mime.startswith('video/') or mime.startswith('audio/'):
+            res_type = 'video'
+        else:
+            res_type = 'image'
+
         result = cloudinary.uploader.upload(
             file_obj,
             folder        = folder,
-            resource_type = 'auto',
+            resource_type = res_type,
         )
         url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
@@ -1777,46 +1787,15 @@ def block_user(user_id):
 @app.route('/get_moments')
 @login_required
 def get_moments():
-    uid = current_user.id
-
-    # Кэш персональный — у каждого свой список
-    cache_key = f'moments_{uid}'
-    cached = _moments_cache.get(cache_key)
+    cached = _moments_cache.get('all')
     if cached:
         return jsonify(cached)
 
-    cutoff = datetime.utcnow() - timedelta(hours=24)
-
-    # Находим всех пользователей с которыми у нас есть личный чат (взаимный контакт)
-    # Логика: оба должны иметь чат друг с другом (room_key = chat_X_Y или chat_Y_X)
-    my_chats = Chat.query.filter(
-        or_(
-            Chat.room_key.like(f'chat_{uid}_%'),
-            Chat.room_key.like(f'%_chat_{uid}'),
-            Chat.room_key.like(f'chat_%_{uid}'),
-        )
-    ).all()
-
-    mutual_ids = set()
-    mutual_ids.add(uid)  # свои моменты всегда видим
-    for c in my_chats:
-        if c.room_key.startswith('group_'):
-            continue
-        parts = c.room_key.replace('chat_', '').split('_')
-        if len(parts) == 2:
-            try:
-                a, b = int(parts[0]), int(parts[1])
-                partner = b if a == uid else a
-                mutual_ids.add(partner)
-            except Exception:
-                pass
-
+    uid     = current_user.id
+    cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(
-        Moment.timestamp >= cutoff,
-        Moment.user_id.in_(mutual_ids)
-    ).order_by(Moment.timestamp.desc()).all()
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
 
     data = [{
         'id':            m.Moment.id,
@@ -1832,7 +1811,7 @@ def get_moments():
         'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
-    _moments_cache.set(cache_key, data)
+    _moments_cache.set('all', data)
     return jsonify(data)
 
 
@@ -1905,7 +1884,7 @@ def delete_moment(mid):
                 pass
     db.session.delete(m)
     db.session.commit()
-    _moments_cache.invalidate_prefix('moments_')
+    _moments_cache.delete('all')
     return jsonify({'success': True})
 
 
@@ -1940,7 +1919,7 @@ def create_moment():
     )
     db.session.add(moment)
     db.session.commit()
-    _moments_cache.invalidate_prefix('moments_')
+    _moments_cache.delete('all')
     socketio.emit('new_moment', {'user_id': uid, 'user_name': uname})
     return jsonify({'success': True, 'moment_id': moment.id})
 
@@ -2331,7 +2310,7 @@ def background_cleanup():
                     db.session.delete(m)
                 if expired:
                     db.session.commit()
-                    _moments_cache.invalidate_prefix('moments_')
+                    _moments_cache.delete('all')
 
                 stale = User.query.filter(
                     User.is_online == True,
