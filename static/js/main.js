@@ -717,6 +717,7 @@ body {
 
 /* ЗВОНОК */
 .call-screen { position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);display:flex;flex-direction:column;align-items:center;padding:0 24px;transition:opacity 0.3s; }
+.hidden { display:none !important; }
 .call-screen.hidden { display:none; }
 .call-bg { position:absolute;inset:0;z-index:0;opacity:0.15;filter:blur(60px);background:radial-gradient(circle at 50% 30%,var(--accent) 0%,transparent 60%);animation:callBgPulse 3s ease infinite; }
 @keyframes callBgPulse { 0%,100%{opacity:0.1;} 50%{opacity:0.25;} }
@@ -872,7 +873,7 @@ body {
         </div>
 
         <!-- ══ НАСТРОЙКИ ══ -->
-        <div id="settings-section" class="hidden" style="background:#111;overflow-y:auto;height:100%;display:flex;flex-direction:column">
+        <div id="settings-section" class="hidden" style="background:#111">
             <!-- iOS 26 hero: размытый фон из аватара -->
             <div style="position:relative;height:300px;overflow:hidden;flex-shrink:0">
                 <div id="settings-bg" style="position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(0.45) saturate(1.7);transition:background-image 0.4s"></div>
