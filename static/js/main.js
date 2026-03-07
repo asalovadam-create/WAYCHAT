@@ -873,29 +873,29 @@ body {
 
         <!-- ══ НАСТРОЙКИ ══ -->
         <div id="settings-section" class="hidden">
-            <div class="settings-hero">
-                <div style="position:absolute;top:0;left:0;right:0;height:380px;z-index:0;overflow:hidden;pointer-events:none">
-                    <div id="settings-bg" class="profile-bg-img"></div>
-                    <div class="profile-bg-fade"></div>
-                </div>
-                <div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding-top:60px">
-                    <div style="position:relative;margin-bottom:12px">
-                        <div id="settings-ava-box" style="border-radius:50%;overflow:hidden;box-shadow:0 4px 30px rgba(0,0,0,0.5);border:3px solid rgba(255,255,255,0.15)">
-                            ${getAvatarHtml(currentUser, 'w-28 h-28')}
+            <!-- iOS 26 hero: размытый фон из аватара -->
+            <div style="position:relative;height:300px;overflow:hidden;flex-shrink:0">
+                <div id="settings-bg" style="position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(0.45) saturate(1.7);transition:background-image 0.4s"></div>
+                <div style="position:absolute;inset:0;background:linear-gradient(to bottom,rgba(0,0,0,0.05) 0%,rgba(0,0,0,0) 40%,rgba(17,17,17,1) 100%)"></div>
+                <!-- Аватар по центру внизу -->
+                <div style="position:absolute;bottom:0;left:0;right:0;display:flex;flex-direction:column;align-items:center;padding-bottom:20px;z-index:2">
+                    <div style="position:relative;margin-bottom:14px">
+                        <div id="settings-ava-box" style="width:96px;height:96px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6)">
+                            ${getAvatarHtml(currentUser, 'w-full h-full')}
                         </div>
-                        <div style="position:absolute;bottom:-4px;left:50%;transform:translateX(-50%);display:flex;gap:10px">
-                            <button onclick="changeAvatar()" style="width:36px;height:36px;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white" class="active:scale-90">${ICONS.camera}</button>
-                            <button onclick="setEmojiAvatar()" style="width:36px;height:36px;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white" class="active:scale-90">${ICONS.smile}</button>
+                        <div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);display:flex;gap:8px">
+                            <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
+                            <button onclick="setEmojiAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
                         </div>
                     </div>
-                    <h2 id="settings-name" style="font-size:24px;font-weight:800;margin-top:8px;letter-spacing:-0.3px">${currentUser.name}</h2>
-                    <p style="color:var(--text-2);font-size:14px">@${currentUser.username}</p>
+                    <h2 id="settings-name" style="font-size:24px;font-weight:800;letter-spacing:-0.4px;text-shadow:0 2px 12px rgba(0,0,0,0.5);margin:0">${currentUser.name}</h2>
+                    <p style="color:rgba(255,255,255,0.5);font-size:14px;margin:4px 0 0">@${currentUser.username}</p>
                 </div>
             </div>
-            <div style="padding:0 16px 100px">
-                <div style="margin-bottom:8px">
-                    <p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Профиль</p>
-                    <div class="settings-section">
+            <div style="padding:0 16px 100px;background:#111">
+                <div style="margin-bottom:8px;margin-top:14px">
+                    <p style="font-size:11px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 8px">Профиль</p>
+                    <div style="background:rgba(255,255,255,0.05);border-radius:18px;overflow:hidden">
                         <div class="settings-row" onclick="editName()">
                             <div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.profile}</div>
                             <div style="flex:1"><div style="font-size:15px;font-weight:500">Имя</div>
@@ -4268,11 +4268,11 @@ function _showMomentEditor(file) {
 
     const ov = document.createElement('div');
     ov.id = 'me-ov';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
 
-    // Медиа-фон
+    // ── Медиа-фон (заполняет экран с закруглёнными углами снизу) ──
     const bg = document.createElement('div');
-    bg.style.cssText = 'position:absolute;inset:0;overflow:hidden';
+    bg.style.cssText = 'position:absolute;inset:0;border-radius:0 0 28px 28px;overflow:hidden';
     if (isVid) {
         const vid = document.createElement('video');
         vid.src=url; vid.autoplay=true; vid.muted=true; vid.loop=true; vid.playsInline=true;
@@ -4283,20 +4283,48 @@ function _showMomentEditor(file) {
         img.src=url; img.style.cssText='width:100%;height:100%;object-fit:cover';
         bg.appendChild(img);
     }
+    // Градиент сверху для кнопок
+    const topGrad = document.createElement('div');
+    topGrad.style.cssText='position:absolute;top:0;left:0;right:0;height:140px;background:linear-gradient(to bottom,rgba(0,0,0,0.55),transparent);pointer-events:none';
+    bg.appendChild(topGrad);
     ov.appendChild(bg);
 
-    // Перетаскиваемая гео-метка
+    // ── Кнопка закрыть (сверху слева) ──
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText='position:absolute;top:max(env(safe-area-inset-top),50px);left:16px;z-index:20;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.4);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center';
+    closeBtn.innerHTML='<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
+    closeBtn.onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
+    ov.appendChild(closeBtn);
+
+    // ── Инструменты справа (гео + текст) — iOS Camera style ──
+    const toolsRight = document.createElement('div');
+    toolsRight.style.cssText='position:absolute;right:14px;top:50%;transform:translateY(-50%);z-index:20;display:flex;flex-direction:column;gap:12px';
+
+    const geoBtn = document.createElement('button');
+    geoBtn.id='me-geo-btn';
+    geoBtn.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.2);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center';
+    geoBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg>';
+
+    const txtBtn = document.createElement('button');
+    txtBtn.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.2);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center';
+    txtBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
+
+    toolsRight.appendChild(geoBtn);
+    toolsRight.appendChild(txtBtn);
+    ov.appendChild(toolsRight);
+
+    // ── Гео-метка (перетаскиваемая) ──
     const geoTag = document.createElement('div');
     geoTag.id = 'me-geo-tag';
-    geoTag.style.cssText = 'position:absolute;left:50%;top:35%;background:rgba(0,0,0,0.6);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.28);border-radius:22px;padding:9px 16px;color:#fff;font-size:14px;font-weight:600;cursor:grab;display:none;align-items:center;gap:7px;white-space:nowrap;user-select:none;-webkit-user-select:none;z-index:20;transform:translateX(-50%)';
+    geoTag.style.cssText = 'position:absolute;left:50%;top:30%;background:rgba(0,0,0,0.6);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.25);border-radius:22px;padding:9px 16px;color:#fff;font-size:14px;font-weight:600;cursor:grab;display:none;align-items:center;gap:7px;white-space:nowrap;user-select:none;-webkit-user-select:none;z-index:20;transform:translateX(-50%)';
     geoTag.innerHTML = '📍 <span id="me-geo-txt">...</span>';
     _makeDraggable(geoTag, ov);
     ov.appendChild(geoTag);
 
-    // Текстовая надпись (перетаскиваемая)
+    // ── Текстовая надпись (перетаскиваемая) ──
     const capTag = document.createElement('div');
     capTag.id = 'me-cap-tag';
-    capTag.style.cssText = 'position:absolute;left:50%;bottom:200px;transform:translateX(-50%);background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:16px;padding:2px 6px;display:none;z-index:20;min-width:120px;max-width:80vw';
+    capTag.style.cssText = 'position:absolute;left:50%;bottom:220px;transform:translateX(-50%);background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:16px;padding:2px 6px;display:none;z-index:20;min-width:120px;max-width:80vw';
     const capInput = document.createElement('input');
     capInput.id='me-cap'; capInput.placeholder='Текст...';
     capInput.style.cssText='background:transparent;border:none;outline:none;color:#fff;font-size:18px;font-weight:600;text-align:center;padding:10px 14px;width:100%;font-family:inherit';
@@ -4304,42 +4332,48 @@ function _showMomentEditor(file) {
     _makeDraggable(capTag, ov);
     ov.appendChild(capTag);
 
-    // Панель инструментов снизу
+    // ── Нижняя панель iOS 26 стиль ──
     const panel = document.createElement('div');
-    panel.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:6;background:rgba(0,0,0,0.85);backdrop-filter:blur(20px);padding:12px 16px max(calc(env(safe-area-inset-bottom,0px)+12px),22px);display:flex;flex-direction:column;gap:10px';
+    panel.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:10;padding:16px 16px max(calc(env(safe-area-inset-bottom,0px)+16px),28px)';
 
-    // Кнопки: Гео | Текст
-    const tools = document.createElement('div'); tools.style.cssText='display:flex;gap:8px';
+    // Строка: аватар + "Ваша история" + кнопка Опубликовать
+    const bottomRow = document.createElement('div');
+    bottomRow.style.cssText='display:flex;align-items:center;gap:12px';
 
-    const geoBtn = document.createElement('button');
-    geoBtn.id='me-geo-btn';
-    geoBtn.style.cssText='flex:1;padding:10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);border-radius:12px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:inherit';
-    geoBtn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg><span id="me-geo-lbl">Геолокация</span>';
-    geoBtn.onclick = () => _requestMeGeo(geoBtn, geoTag);
+    // Аватар пользователя
+    const avaDiv = document.createElement('div');
+    avaDiv.style.cssText='width:42px;height:42px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,0.3);flex-shrink:0';
+    avaDiv.innerHTML = window.currentUser?.avatar && !window.currentUser.avatar.startsWith('emoji:')
+        ? '<img src="'+window.currentUser.avatar+'" style="width:100%;height:100%;object-fit:cover">'
+        : '<div style="width:100%;height:100%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#000">'+(window.currentUser?.name||'?')[0].toUpperCase()+'</div>';
 
-    const txtBtn = document.createElement('button');
-    txtBtn.style.cssText='flex:1;padding:10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);border-radius:12px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:inherit';
-    txtBtn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>Текст';
-    txtBtn.onclick = () => { const sh=capTag.style.display==='flex'?'none':'flex'; capTag.style.display=sh; if(sh==='flex') capInput.focus(); };
+    // Текст
+    const storyInfo = document.createElement('div');
+    storyInfo.style.cssText='flex:1;min-width:0';
+    storyInfo.innerHTML='<div style="font-size:14px;font-weight:700;color:#fff">Ваша история</div>'
+        +'<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:1px">Исчезнет через 24 часа · Все контакты</div>';
 
-    tools.appendChild(geoBtn); tools.appendChild(txtBtn);
-    panel.appendChild(tools);
-
-    // Отмена / Поделиться
-    const acts = document.createElement('div'); acts.style.cssText='display:flex;gap:10px';
-    const cBtn = document.createElement('button');
-    cBtn.style.cssText='flex:1;padding:14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:16px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    cBtn.textContent='Отмена';
-    cBtn.onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
-
+    // Кнопка Опубликовать
     const sBtn = document.createElement('button');
-    sBtn.id='me-share'; sBtn.style.cssText='flex:2;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    sBtn.textContent='Поделиться →';
+    sBtn.id='me-share';
+    sBtn.style.cssText='padding:12px 20px;background:var(--accent,#10b981);border:none;border-radius:22px;color:#000;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;box-shadow:0 0 20px rgba(16,185,129,0.4);white-space:nowrap;flex-shrink:0';
+    sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     sBtn.onclick = () => _publishMomentEditor(ov, file, url);
 
-    acts.appendChild(cBtn); acts.appendChild(sBtn);
-    panel.appendChild(acts);
+    bottomRow.appendChild(avaDiv);
+    bottomRow.appendChild(storyInfo);
+    bottomRow.appendChild(sBtn);
+    panel.appendChild(bottomRow);
     ov.appendChild(panel);
+
+    // ── Обработчики кнопок инструментов ──
+    geoBtn.onclick = () => _requestMeGeo(geoBtn, geoTag);
+    txtBtn.onclick = () => {
+        const sh = capTag.style.display === 'flex' ? 'none' : 'flex';
+        capTag.style.display = sh;
+        if (sh === 'flex') { setTimeout(() => capInput.focus(), 50); }
+    };
+
     document.body.appendChild(ov);
 }
 
