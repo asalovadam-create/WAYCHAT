@@ -5026,15 +5026,28 @@ function _runMomentsViewer(list, startIdx) {
 
         if (isMe) {
             const acts = document.createElement('div');
-            acts.style.cssText = 'display:flex;gap:8px;align-items:center;flex-shrink:0';
+            acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
+
+            // ── Глазок — таблетка со счётчиком ──
             const viewBtn = document.createElement('button');
-            viewBtn.style.cssText = 'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);border-radius:12px;color:#fff;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px';
-            viewBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg> ' + (m.view_count||0);
-            viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id); };
+            viewBtn.id = 'mv-vcnt-wrap-' + m.id;
+            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
+            viewBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.3"/></svg>'
+                + '<span id="mv-vcnt-' + m.id + '">' + (m.view_count||0) + '</span>';
+            viewBtn.onpointerdown = () => { viewBtn.style.transform='scale(0.92)'; viewBtn.style.background='rgba(255,255,255,0.24)'; };
+            viewBtn.onpointerup = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
+            viewBtn.onpointercancel = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
+            viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id, ov); };
+
+            // ── Ведро — круглая красная кнопка ──
             const del = document.createElement('button');
-            del.style.cssText = 'background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);border-radius:12px;color:#fff;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit';
-            del.textContent = 'Удалить';
+            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
+            del.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            del.onpointerdown = () => { del.style.transform='scale(0.88)'; del.style.background='rgba(239,68,68,0.38)'; };
+            del.onpointerup = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
+            del.onpointercancel = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
             del.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _confirmDeleteMoment(m.id, ov); };
+
             acts.appendChild(viewBtn); acts.appendChild(del);
             btm.appendChild(acts);
         }
@@ -5067,43 +5080,132 @@ function _runMomentsViewer(list, startIdx) {
 const _viewersCache = {};
 
 function _renderViewersList(container, viewers) {
-    if (!viewers.length) {
-        container.innerHTML = '<div style="text-align:center;padding:32px 20px;color:var(--text-2);font-size:14px">👁 Ещё никто не смотрел</div>';
+    if (!viewers || !viewers.length) {
+        container.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:44px 0 20px;opacity:0.3">'
+            + '<svg width="38" height="38" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="1.5"/></svg>'
+            + '<div style="font-size:15px;font-weight:500">Ещё никто не смотрел</div>'
+            + '</div>';
         return;
     }
-    container.innerHTML = viewers.map(v =>
-        '<div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)">'
-        + getAvatarHtml({id:v.id,name:v.name,avatar:v.avatar},'w-10 h-10')
-        + '<div style="flex:1"><div style="font-weight:600;font-size:14px">'+escHtml(v.name)+'</div>'
-        + '<div style="font-size:12px;color:var(--text-2);margin-top:1px">'+v.time+'</div></div>'
-        + '</div>'
-    ).join('');
+    container.innerHTML = viewers.map((v, i) => {
+        const isLast = i === viewers.length - 1;
+        return '<div style="display:flex;align-items:center;gap:14px;padding:12px 0;' + (isLast ? '' : 'border-bottom:0.5px solid rgba(255,255,255,0.07)') + '">'
+            + getAvatarHtml({id:v.id, name:v.name, avatar:v.avatar}, 'w-11 h-11')
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="font-weight:600;font-size:15px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(v.name) + '</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:2px;display:flex;align-items:center;gap:4px">'
+            + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + (v.time || '') + '</div>'
+            + '</div>'
+            + '</div>';
+    }).join('');
 }
 
-async function _showMomentViewers(momentId) {
+async function _showMomentViewers(momentId, momentOv) {
+    // Анимации
+    if (!document.getElementById('mv-keyframes')) {
+        const st = document.createElement('style');
+        st.id = 'mv-keyframes';
+        st.textContent = '@keyframes mvFadeIn{from{opacity:0}to{opacity:1}}@keyframes mvSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}';
+        document.head.appendChild(st);
+    }
+
+    document.getElementById('mv-ov-' + momentId)?.remove();
     const cached = _viewersCache[momentId];
+
+    // Оверлей z:99999 — выше момента (z:9000)
     const ov = document.createElement('div');
-    ov.className = 'modal-overlay';
-    ov.onclick = e => { if (e.target===ov) ov.remove(); };
-    const sh = document.createElement('div'); sh.className='modal-sheet';
-    sh.innerHTML='<div class="modal-handle"></div>'
-        +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">'
-        +'<span style="font-size:17px;font-weight:700">👁 Кто смотрел</span>'
-        +'<span id="mv-cnt" style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:10px;padding:2px 8px">'+(cached?cached.length:'')+'</span></div>'
-        +'<div id="mv-list" style="max-height:55vh;overflow-y:auto">'
-        +(cached ? '' : '<div style="text-align:center;padding:20px;opacity:0.4">Загрузка...</div>')
-        +'</div>';
-    ov.appendChild(sh); document.body.appendChild(ov);
-    if (cached) { _renderViewersList(sh.querySelector('#mv-list'), cached); return; }
+    ov.id = 'mv-ov-' + momentId;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;animation:mvFadeIn 0.2s ease';
+
+    const backdrop = document.createElement('div');
+    backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)';
+    backdrop.onclick = () => _closeMvSheet(ov, sh);
+    ov.appendChild(backdrop);
+
+    const sh = document.createElement('div');
+    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 0 max(env(safe-area-inset-bottom),28px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1);max-height:70vh;display:flex;flex-direction:column';
+
+    const handle = document.createElement('div');
+    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 0;flex-shrink:0';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;flex-shrink:0';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.style.cssText = 'display:flex;align-items:center;gap:10px';
+    titleWrap.innerHTML = '<div style="width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        + '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.2"/></svg>'
+        + '</div>'
+        + '<div>'
+        + '<div style="font-size:17px;font-weight:700;letter-spacing:-0.3px">Просмотры</div>'
+        + '<div id="mv-sub-' + momentId + '" style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:1px">'
+        + (cached ? (cached.length + ' ' + _pluralViews(cached.length)) : '—')
+        + '</div>'
+        + '</div>';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
+    closeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
+    closeBtn.onclick = () => _closeMvSheet(ov, sh);
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeBtn);
+
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.07);margin:0 20px;flex-shrink:0';
+
+    const listEl = document.createElement('div');
+    listEl.id = 'mv-list-' + momentId;
+    listEl.style.cssText = 'flex:1;overflow-y:auto;padding:6px 20px 0;-webkit-overflow-scrolling:touch';
+    if (!cached) {
+        listEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:40px 0;opacity:0.3;font-size:14px">Загрузка...</div>';
+    }
+
+    // Свайп вниз
+    let _sy = 0, _ty = 0;
+    sh.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; _ty = 0; }, {passive:true});
+    sh.addEventListener('touchmove', e => { _ty = e.touches[0].clientY - _sy; if (_ty > 0) sh.style.transform = 'translateY('+_ty+'px)'; }, {passive:true});
+    sh.addEventListener('touchend', () => { if (_ty > 90) _closeMvSheet(ov, sh); else { sh.style.transition='transform 0.2s'; sh.style.transform=''; setTimeout(()=>sh.style.transition='',200); } }, {passive:true});
+
+    sh.appendChild(handle);
+    sh.appendChild(header);
+    sh.appendChild(sep);
+    sh.appendChild(listEl);
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+
+    if (cached) { _renderViewersList(listEl, cached); return; }
+
     try {
-        const r = await apiFetch('/moment_viewers/'+momentId);
-        if (!r) return;
-        const viewers = await r.json();
+        const r = await apiFetch('/moment_viewers/' + momentId);
+        if (!r || !r.ok) throw new Error('bad');
+        const data = await r.json();
+        const viewers = Array.isArray(data) ? data : (data.viewers || []);
         _viewersCache[momentId] = viewers;
-        const cnt = sh.querySelector('#mv-cnt');
-        if (cnt) cnt.textContent = viewers.length;
-        _renderViewersList(sh.querySelector('#mv-list'), viewers);
-    } catch(e) {}
+
+        const vcnt = document.getElementById('mv-vcnt-' + momentId);
+        if (vcnt) vcnt.textContent = viewers.length;
+
+        const sub = document.getElementById('mv-sub-' + momentId);
+        if (sub) sub.textContent = viewers.length + ' ' + _pluralViews(viewers.length);
+
+        _renderViewersList(listEl, viewers);
+    } catch(e) {
+        listEl.innerHTML = '<div style="text-align:center;padding:40px 0;opacity:0.3;font-size:14px">Не удалось загрузить</div>';
+    }
+}
+
+function _closeMvSheet(ov, sh) {
+    sh.style.animation = 'mvSlideUp 0.22s cubic-bezier(0.22,1,0.36,1) reverse forwards';
+    ov.style.animation = 'mvFadeIn 0.2s ease reverse forwards';
+    setTimeout(() => ov.remove(), 220);
+}
+
+function _pluralViews(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return 'просмотр';
+    if ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) return 'просмотра';
+    return 'просмотров';
 }
 
 async function _confirmDeleteMoment(momentId, momentOv) {
