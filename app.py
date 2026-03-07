@@ -112,8 +112,8 @@ class TTLCache:
 
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
-_user_dict_cache  = TTLCache(maxsize=1000, ttl=60.0)   # {id: dict}
-_chat_cache       = TTLCache(maxsize=2000, ttl=10.0)
+_user_dict_cache  = TTLCache(maxsize=1000, ttl=120.0)  # 2 мин
+_chat_cache       = TTLCache(maxsize=2000, ttl=20.0)  # 20с — Socket обновит быстрее
 _online_cache     = TTLCache(maxsize=2000, ttl=5.0)
 _partner_cache    = TTLCache(maxsize=1000, ttl=30.0)
 _moments_cache    = TTLCache(maxsize=500,  ttl=60.0)  # key=uid
@@ -129,6 +129,16 @@ app = Flask(__name__,
             static_folder=os.path.join(BASE_DIR, 'static'),
             static_url_path='/static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+@app.route('/static/sw.js')
+def service_worker():
+    """Service Worker — нужен в корне для правильного scope."""
+    from flask import send_from_directory
+    resp = send_from_directory(os.path.join(BASE_DIR, 'static'), 'sw.js')
+    resp.headers['Content-Type'] = 'application/javascript'
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    return resp
+
 
 @app.after_request
 def _add_cache_headers(response):
@@ -1159,48 +1169,76 @@ def get_user_profile(user_id):
 @app.route('/get_my_chats')
 @login_required
 def get_my_chats():
-    try:
-        db.session.rollback()
-    except Exception:
-        pass
+    try: db.session.rollback()
+    except Exception: pass
+
     uid = current_user.id
     cached = _chat_cache.get(uid)
-    if cached:
+    if cached is not None:
         return jsonify(cached)
 
-    result = []
-
-    raw_chats = Chat.query.filter(
-        or_(
-            Chat.room_key.like(f'chat_{uid}_%'),
-            Chat.room_key.like(f'%_{uid}'),
-        )
+    # ── Личные чаты ──
+    personal_chats = Chat.query.filter(
+        or_(Chat.room_key.like(f'chat_{uid}_%'), Chat.room_key.like(f'%_{uid}'))
     ).all()
+    personal_chats = [c for c in personal_chats if not c.room_key.startswith('group_')]
 
-    for c in raw_chats:
-        if c.room_key.startswith('group_'):
-            continue
+    if not personal_chats and not GroupMember.query.filter_by(user_id=uid).first():
+        _chat_cache.set(uid, [])
+        return jsonify([])
+
+    chat_ids = [c.id for c in personal_chats]
+
+    # Один запрос: последнее сообщение для каждого чата
+    from sqlalchemy import func
+    last_msg_sub = db.session.query(
+        Message.chat_id, func.max(Message.id).label('max_id')
+    ).filter(Message.is_deleted == False).group_by(Message.chat_id).subquery()
+
+    last_msgs_q = db.session.query(Message).join(
+        last_msg_sub, Message.id == last_msg_sub.c.max_id
+    ).all()
+    last_msg_map = {m.chat_id: m for m in last_msgs_q}
+
+    # Один запрос: unread counts для всех чатов
+    unread_rows = db.session.execute(
+        text('''SELECT chat_id, COUNT(*) as cnt FROM message
+                WHERE is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE
+                GROUP BY chat_id'''),
+        {'uid': uid}
+    ).fetchall()
+    unread_map = {r.chat_id: r.cnt for r in unread_rows}
+
+    # Один запрос: у кого из партнёров есть активные моменты
+    partner_ids_all = []
+    for c in personal_chats:
+        parts = c.room_key.replace('chat_', '').split('_')
+        ids = [int(p) for p in parts if p.isdigit()]
+        p_id = next((i for i in ids if i != uid), None)
+        if p_id: partner_ids_all.append(p_id)
+
+    moment_users = set()
+    if partner_ids_all:
+        moment_rows = db.session.execute(
+            text('SELECT DISTINCT user_id FROM moment WHERE user_id IN :ids AND expires_at > NOW()'),
+            {'ids': tuple(partner_ids_all) if len(partner_ids_all) > 1 else (partner_ids_all[0], partner_ids_all[0])}
+        ).fetchall()
+        moment_users = {r.user_id for r in moment_rows}
+
+    result = []
+    type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео', 'video_circle': '🎥 Видео'}
+
+    for c in personal_chats:
         try:
             parts = c.room_key.replace('chat_', '').split('_')
             ids   = [int(p) for p in parts if p.isdigit()]
             p_id  = next((i for i in ids if i != uid), None)
-            if not p_id:
-                continue
-            # ИСПРАВЛЕНИЕ: используем словарь, не ORM-объект
+            if not p_id: continue
             partner_dict = get_cached_user_dict(p_id)
-            if not partner_dict:
-                continue
+            if not partner_dict: continue
 
-            last_msg = Message.query.filter_by(
-                chat_id=c.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
-
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': c.id, 'uid': uid}
-            ).scalar() or 0
-
-            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
+            last_msg = last_msg_map.get(c.id)
+            unread   = unread_map.get(c.id, 0)
             preview  = '💬 Начните переписку'
             sort_ts  = c.created_at or datetime(2000, 1, 1)
 
@@ -1208,107 +1246,85 @@ def get_my_chats():
                 preview = type_map.get(last_msg.type, last_msg.content or '...')
                 sort_ts = last_msg.timestamp
 
-            # online из кэша
             p_online = _online_cache.get(p_id)
             if p_online is None:
-                last_seen_str = partner_dict.get('last_seen')
-                if last_seen_str:
+                ls_str = partner_dict.get('last_seen')
+                if ls_str:
                     try:
-                        ls = datetime.fromisoformat(last_seen_str)
+                        ls = datetime.fromisoformat(ls_str)
                         p_online = partner_dict.get('is_online', False) or (datetime.utcnow() - ls < timedelta(minutes=5))
                     except Exception:
                         p_online = partner_dict.get('is_online', False)
                 else:
                     p_online = partner_dict.get('is_online', False)
 
-            _mc = Moment.query.filter(Moment.user_id == p_id, Moment.expires_at > datetime.utcnow()).count()
             result.append({
                 'chat_id':          c.id,
                 'partner_id':       p_id,
                 'partner_name':     partner_dict['name'],
                 'partner_username': partner_dict['username'],
                 'partner_avatar':   partner_dict['avatar'],
-                'online':           p_online,
+                'online':           bool(p_online),
                 'last_message':     preview,
                 'timestamp':        to_moscow_str(last_msg.timestamp if last_msg else None),
                 'raw_timestamp':    last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
                 'unread_count':     unread,
                 'is_group':         False,
-                'has_moment':       _mc > 0,
-                'moment_count':     _mc,
+                'has_moment':       p_id in moment_users,
+                'moment_count':     1 if p_id in moment_users else 0,
                 '_sort':            sort_ts,
             })
         except Exception as e:
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
+    # ── Группы ──
     memberships = GroupMember.query.filter_by(user_id=uid).all()
     for m in memberships:
         try:
             group = db.session.get(Group, m.group_id)
-            if not group:
-                continue
+            if not group: continue
             chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
-            if not chat:
-                continue
-
-            last_msg = Message.query.filter_by(
-                chat_id=chat.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
-
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': chat.id, 'uid': uid}
-            ).scalar() or 0
-
-            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
+            if not chat: continue
+            last_msg = last_msg_map.get(chat.id)
+            unread   = unread_map.get(chat.id, 0)
             preview  = '👥 Группа создана'
             sort_ts  = group.created_at or datetime(2000, 1, 1)
-
             if last_msg:
                 sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
+                preview = sender_prefix + type_map.get(last_msg.type, last_msg.content or '...')
                 sort_ts = last_msg.timestamp
-
             member_count = GroupMember.query.filter_by(group_id=group.id).count()
             result.append({
-                'chat_id':       chat.id,
-                'group_id':      group.id,
-                'partner_id':    group.id,
-                'group_name':    group.name,
-                'partner_name':  group.name,
-                'group_avatar':  group.avatar,
-                'partner_avatar':group.avatar,
-                'member_count':  member_count,
-                'online':        False,
-                'last_message':  preview,
-                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
+                'chat_id': chat.id, 'group_id': group.id, 'partner_id': group.id,
+                'group_name': group.name, 'partner_name': group.name,
+                'group_avatar': group.avatar, 'partner_avatar': group.avatar,
+                'member_count': member_count, 'online': False,
+                'last_message': preview,
+                'timestamp': to_moscow_str(last_msg.timestamp if last_msg else None),
                 'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count':  unread,
-                'is_group':      True,
-                '_sort':         sort_ts,
+                'unread_count': unread, 'is_group': True, '_sort': sort_ts,
             })
         except Exception as e:
-            app.logger.error(f'Group chat parse error {m.group_id}: {e}')
+            app.logger.error(f'Group parse error {m.group_id}: {e}')
 
-    def sort_key(x):
-        s = x.get('_sort')
-        if isinstance(s, datetime):
-            return s
-        if isinstance(s, str):
-            try:
-                return datetime.fromisoformat(s.replace('Z', ''))
-            except Exception:
-                pass
-        return datetime(2000, 1, 1)
-
-    result.sort(key=sort_key, reverse=True)
-    for r in result:
-        r.pop('_sort', None)
+    result.sort(key=lambda x: x.get('_sort') if isinstance(x.get('_sort'), datetime) else datetime(2000,1,1), reverse=True)
+    for r in result: r.pop('_sort', None)
 
     _chat_cache.set(uid, result)
-    return jsonify(result)
 
-
+    # Gzip-ответ
+    import gzip as _gz, json as _js
+    body = _js.dumps(result, separators=(',',':'), ensure_ascii=False)
+    if 'gzip' in request.headers.get('Accept-Encoding', ''):
+        from flask import Response as _R
+        resp = _R(_gz.compress(body.encode(), 6), mimetype='application/json')
+        resp.headers['Content-Encoding'] = 'gzip'
+        resp.headers['Vary'] = 'Accept-Encoding'
+    else:
+        from flask import Response as _R
+        resp = _R(body, mimetype='application/json')
+    resp.headers['Cache-Control'] = 'private, max-age=15'
+    return resp
 @app.route('/get_chat_id/<int:partner_id>')
 @login_required
 def get_chat_id(partner_id):
@@ -1369,7 +1385,16 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in reversed(msgs)])
+    import gzip as _gz, json as _js
+    data = [m.to_dict() for m in reversed(msgs)]
+    body = _js.dumps(data, separators=(',',':'), ensure_ascii=False)
+    if 'gzip' in request.headers.get('Accept-Encoding', ''):
+        from flask import Response as _R
+        resp = _R(_gz.compress(body.encode(), 6), mimetype='application/json')
+        resp.headers['Content-Encoding'] = 'gzip'
+        resp.headers['Vary'] = 'Accept-Encoding'
+        return resp
+    return jsonify(data)
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
