@@ -1,79 +1,112 @@
-// WayChat Service Worker v2.0
-// Web Push для iOS Safari 16.4+ (только если установлено как PWA)
+// WayChat Service Worker v3 — aggressive caching for iPhone
+const CACHE_NAME = 'waychat-v3';
+const STATIC_CACHE = 'waychat-static-v3';
+const MEDIA_CACHE  = 'waychat-media-v3';
 
-const CACHE = 'waychat-v2';
-const PRECACHE = ['/static/img/icon-192.png', '/static/img/badge-96.png'];
+// Файлы которые кешируем при установке
+const PRECACHE = [
+  '/static/js/main.js',
+  '/static/css/main.css',
+];
 
-// ── Установка — кэшируем иконки ──
+// ── Install ──
 self.addEventListener('install', e => {
-    e.waitUntil(
-        caches.open(CACHE).then(c => c.addAll(PRECACHE)).then(() => self.skipWaiting())
-    );
+  e.waitUntil(
+    caches.open(STATIC_CACHE).then(cache => {
+      return Promise.allSettled(PRECACHE.map(url => cache.add(url).catch(() => {})));
+    }).then(() => self.skipWaiting())
+  );
 });
 
+// ── Activate ──
 self.addEventListener('activate', e => {
-    e.waitUntil(
-        caches.keys().then(keys =>
-            Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-        ).then(() => self.clients.claim())
-    );
+  e.waitUntil(
+    caches.keys().then(keys => Promise.all(
+      keys.filter(k => ![CACHE_NAME, STATIC_CACHE, MEDIA_CACHE].includes(k))
+          .map(k => caches.delete(k))
+    )).then(() => self.clients.claim())
+  );
 });
 
-// ── Fetch — иконки из кэша ──
+// ── Fetch ──
 self.addEventListener('fetch', e => {
-    if (PRECACHE.some(p => e.request.url.endsWith(p))) {
-        e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  const url = new URL(e.request.url);
+
+  // 1. Cloudinary медиа — cache-first, храним долго
+  if (url.hostname.includes('cloudinary.com') || url.hostname.includes('res.cloudinary')) {
+    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 7 * 24 * 60 * 60));
+    return;
+  }
+
+  // 2. Статика (/static/) — cache-first
+  if (url.pathname.startsWith('/static/')) {
+    e.respondWith(cacheFirst(e.request, STATIC_CACHE, 24 * 60 * 60));
+    return;
+  }
+
+  // 3. API запросы — network-first, с быстрым fallback из кеша
+  if (url.pathname.startsWith('/get_my_chats') ||
+      url.pathname.startsWith('/get_moments') ||
+      url.pathname.startsWith('/get_user_profile')) {
+    e.respondWith(networkFirstWithCache(e.request, CACHE_NAME, 30));
+    return;
+  }
+
+  // 4. Аватарки и другие изображения — cache-first
+  if (url.pathname.match(/\.(jpg|jpeg|png|webp|gif|svg)(\?|$)/i)) {
+    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 24 * 60 * 60));
+    return;
+  }
+
+  // 5. Остальное — обычный fetch
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+});
+
+// Cache-first: сначала кеш, если нет — сеть
+async function cacheFirst(request, cacheName, maxAgeSeconds) {
+  const cache = await caches.open(cacheName);
+  const cached = await cache.match(request);
+  if (cached) {
+    const date = cached.headers.get('sw-cached-at');
+    if (!date || (Date.now() - parseInt(date)) < maxAgeSeconds * 1000) {
+      return cached;
     }
-});
+  }
+  try {
+    const resp = await fetch(request);
+    if (resp.ok) {
+      const clone = resp.clone();
+      // Добавляем заголовок с временем кеширования
+      const headers = new Headers(clone.headers);
+      headers.set('sw-cached-at', Date.now().toString());
+      const cachedResp = new Response(await clone.blob(), { status: clone.status, headers });
+      cache.put(request, cachedResp);
+    }
+    return resp;
+  } catch(e) {
+    return cached || new Response('', {status: 503});
+  }
+}
 
-// ── Push уведомление ──
-self.addEventListener('push', e => {
-    if (!e.data) return;
-
-    let data = {};
-    try { data = e.data.json(); } catch(_) { data = { title: 'WayChat', body: e.data.text() }; }
-
-    const title  = data.title  || 'WayChat';
-    const body   = data.body   || 'Новое сообщение';
-    const icon   = data.icon   || '/static/img/icon-192.png';
-    const badge  = data.badge  || '/static/img/badge-96.png';
-    const tag    = data.tag    || 'waychat-msg';
-    const chatId = data.chat_id || null;
-
-    e.waitUntil(
-        self.registration.showNotification(title, {
-            body,
-            icon,
-            badge,
-            tag,
-            data:             { chat_id: chatId, url: data.url || '/' },
-            silent:           false,
-            renotify:         true,
-            requireInteraction: false,
-            // iOS: vibrate не поддерживается, но добавляем для Android
-            vibrate:          [200, 100, 200],
-        })
-    );
-});
-
-// ── Клик по уведомлению → открыть чат ──
-self.addEventListener('notificationclick', e => {
-    e.notification.close();
-    const chatId = e.notification.data?.chat_id;
-    const url    = e.notification.data?.url || '/';
-
-    e.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
-            // Если приложение открыто — фокус и переходим в чат
-            for (const client of clients) {
-                if (client.url.startsWith(self.location.origin)) {
-                    client.focus();
-                    if (chatId) client.postMessage({ type: 'open_chat', chat_id: chatId });
-                    return;
-                }
-            }
-            // Иначе открываем
-            return self.clients.openWindow(chatId ? `/?chat=${chatId}` : url);
-        })
-    );
-});
+// Network-first: сначала сеть (быстро), fallback из кеша
+async function networkFirstWithCache(request, cacheName, maxAgeSeconds) {
+  const cache = await caches.open(cacheName);
+  try {
+    const resp = await Promise.race([
+      fetch(request),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))
+    ]);
+    if (resp.ok) {
+      const headers = new Headers(resp.headers);
+      headers.set('sw-cached-at', Date.now().toString());
+      const cachedResp = new Response(await resp.clone().blob(), { status: resp.status, headers });
+      cache.put(request, cachedResp);
+    }
+    return resp;
+  } catch(e) {
+    const cached = await cache.match(request);
+    return cached || new Response(JSON.stringify([]), {
+      status: 200, headers: {'Content-Type': 'application/json'}
+    });
+  }
+}
