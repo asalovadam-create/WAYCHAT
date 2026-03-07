@@ -4488,6 +4488,7 @@ async function _publishMomentEditor(ov, file, url) {
 // Глобальный стейт загрузки момента
 let _momentUploading = false;
 let _momentUploadFile = null;
+let _momentUploadPreviewUrl = null; // ObjectURL для превью карточки
 let _momentUploadCaption = '';
 let _momentUploadGeo = null;
 
@@ -4500,16 +4501,26 @@ async function loadMoments() {
         return;
     }
     if (!momentsCache) {
-        container.innerHTML = '<div style="display:flex;gap:14px;padding:8px 0">'
+        container.innerHTML = '<div style="display:flex;flex-direction:column;gap:2px;padding:8px 0">'
             + _skeletonMomentRow() + _skeletonMomentRow() + _skeletonMomentRow() + '</div>';
     }
     try {
-        const r = await apiFetch('/get_moments');
-        if (!r) return;
+        const r = await fetch('/get_moments', {credentials:'include'});
+        if (!r || !r.ok) { 
+            console.error('get_moments failed:', r?.status);
+            if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
+            return;
+        }
         const moments = await r.json();
+        console.log('moments loaded:', moments?.length);
+        if (!Array.isArray(moments)) {
+            console.error('moments not array:', moments);
+            return;
+        }
         momentsCache = moments; momentsLastLoad = now; currentMoments = moments;
         renderMomentsList(container, moments);
     } catch(e) {
+        console.error('loadMoments error:', e);
         if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
     }
 }
@@ -4624,18 +4635,17 @@ function _renderUploadingCard(container) {
     preview.style.cssText = 'width:62px;height:62px;border-radius:14px;overflow:hidden;flex-shrink:0;position:relative;background:#111';
     if (_momentUploadFile) {
         const isVid = _momentUploadFile.type.startsWith('video');
+        const previewUrl = _momentUploadPreviewUrl || '';
         if (isVid) {
-            // Для видео генерируем превью через canvas
             const vid = document.createElement('video');
-            vid.muted = true;
-            vid.playsInline = true;
+            vid.muted = true; vid.playsInline = true;
             vid.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(3px)';
-            vid.src = URL.createObjectURL(_momentUploadFile);
+            vid.src = previewUrl;
             preview.appendChild(vid);
         } else {
             const img = document.createElement('img');
             img.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(3px)';
-            img.src = URL.createObjectURL(_momentUploadFile);
+            img.src = previewUrl;
             preview.appendChild(img);
         }
         // Прогресс-кольцо поверх
@@ -4677,6 +4687,9 @@ async function _publishMomentEditor(ov, file, url) {
     _momentUploadFile = file;
     _momentUploadCaption = caption;
     _momentUploadGeo = geo;
+    // Создаём URL для превью один раз
+    if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} }
+    _momentUploadPreviewUrl = URL.createObjectURL(file);
 
     // Закрываем редактор и переключаемся на вкладку моментов
     ov.remove();
@@ -4719,6 +4732,7 @@ async function _publishMomentEditor(ov, file, url) {
             setTimeout(() => {
                 _momentUploading = false;
                 _momentUploadFile = null;
+                if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} _momentUploadPreviewUrl = null; }
                 momentsCache = null;
                 loadMoments();
                 if (xhr.status === 200) {
