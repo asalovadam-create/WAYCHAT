@@ -4538,6 +4538,8 @@ async function loadMoments() {
         momentsLastLoad = Date.now();
         currentMoments = moments;
         renderMomentsList(container, moments);
+        // Предзагружаем первые 3 медиа сразу после получения списка
+        moments.slice(0, 3).forEach(m => { if (m.media_url) _preloadMedia(m.media_url); });
     } catch(e) {
         console.error('loadMoments error:', e);
         if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
@@ -4794,6 +4796,17 @@ function openUserMomentsViewer(userId) {
     _runMomentsViewer(list, 0);
 }
 
+
+// Cloudinary: URL постера видео (первый кадр как jpg)
+function _cl_video_poster(videoUrl) {
+    try {
+        // https://res.cloudinary.com/{cloud}/video/upload/.../{id}.mp4
+        // → https://res.cloudinary.com/{cloud}/video/upload/so_0/{id}.jpg
+        const url = videoUrl.replace('/video/upload/', '/video/upload/so_0,q_50,w_400,c_limit/');
+        return url.replace(/\.(mp4|mov|webm|avi)(\?.*)?$/i, '.jpg');
+    } catch(e) { return ''; }
+}
+
 function _runMomentsViewer(list, startIdx) {
     let idx = startIdx;
     let autoTimer = null;
@@ -4819,7 +4832,11 @@ function _runMomentsViewer(list, startIdx) {
             // Размытый фон — показывается мгновенно
             const blurBg = document.createElement('div');
             blurBg.id = 'mb-blur';
-            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(m.media_url)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.4s ease';
+            // Для видео — используем постер как блюр-фон (грузится намного быстрее чем видео)
+            const blurSrc = (isVideo && m.media_url.includes('res.cloudinary.com'))
+                ? _cl_video_poster(m.media_url)
+                : m.media_url;
+            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(blurSrc)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.4s ease';
             bg.appendChild(blurBg);
 
             // Спиннер
@@ -4833,7 +4850,10 @@ function _runMomentsViewer(list, startIdx) {
                 if (mediaLoaded) return;
                 mediaLoaded = true;
                 const media = bg.querySelector('video,img');
-                if (media) { media.style.opacity = '1'; }
+                if (media) {
+                    media.style.visibility = 'visible';
+                    media.style.opacity = '1';
+                }
                 blurBg.style.opacity = '0';
                 spin.style.display = 'none';
                 const dur = isVideo
@@ -4849,16 +4869,29 @@ function _runMomentsViewer(list, startIdx) {
             if (isVideo) {
                 const vid = document.createElement('video');
                 vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
-                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
-                vid.oncanplay = onReady;
+                vid.preload = 'auto';
+                // opacity:0 + visibility:hidden предотвращает мелькание первого кадра
+                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s;visibility:hidden';
+                // poster = превью от Cloudinary (первый кадр как изображение) — убирает чёрный экран
+                if (m.media_url && m.media_url.includes('res.cloudinary.com')) {
+                    vid.poster = _cl_video_poster(m.media_url);
+                }
+                vid.oncanplaythrough = onReady;
+                vid.oncanplay = onReady;  // fallback
                 vid.onended = () => next();
-                vid.onerror = onReady;
-                // Используем кешированный blob если есть, иначе прямой URL
+                vid.onerror = () => onReady();
+                // Таймаут 8с — если совсем не грузится, показываем что есть
+                const vidTimeout = setTimeout(() => onReady(), 8000);
+                const _origOnReady = onReady;
+                vid._clearTimeout = () => clearTimeout(vidTimeout);
+                const _patchedOnReady = function() { clearTimeout(vidTimeout); _origOnReady(); };
+                vid.oncanplaythrough = _patchedOnReady;
+                vid.oncanplay = _patchedOnReady;
+                vid.onended = () => next();
                 if (_mediaCache.has(m.media_url)) {
                     vid.src = _mediaCache.get(m.media_url);
                 } else {
                     vid.src = m.media_url;
-                    // Предзагружаем текущее в кеш пока играет
                     _getCachedMedia(m.media_url).catch(() => {});
                 }
                 bg.appendChild(vid);
