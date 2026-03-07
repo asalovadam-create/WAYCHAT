@@ -2694,120 +2694,177 @@ function _startVideoCircle() {
 }
 
 function _doStartVideoCircleUI() {
-
     vibrate(40);
     _videoChunks = []; _videoSec = 0;
 
-    // Показываем UI кружка
-    const overlay = document.createElement('div');
-    overlay.id = 'video-circle-ui';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px';
-
-    // Кружок с видео
-    const circle = document.createElement('div');
-    circle.style.cssText = 'width:min(80vw,320px);height:min(80vw,320px);border-radius:50%;overflow:hidden;position:relative;border:3px solid var(--accent);box-shadow:0 0 0 0 rgba(16,185,129,0.6)';
-    circle.style.animation = 'circleGlow 1s ease-in-out infinite';
-
-    const vid = document.createElement('video');
-    vid.srcObject = _videoRecStream; vid.autoplay = true; vid.muted = true; vid.playsInline = true;
-    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;transform:scaleX('+((_videoFacing==='user')?'-1':'1')+')';
-    circle.appendChild(vid);
-
-    // Прогресс-кольцо SVG
-    const progress = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    progress.setAttribute('viewBox','0 0 100 100');
-    progress.style.cssText = 'position:absolute;inset:-3px;width:calc(100% + 6px);height:calc(100% + 6px);transform:rotate(-90deg);pointer-events:none';
-    const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    circ.setAttribute('cx','50'); circ.setAttribute('cy','50'); circ.setAttribute('r','47');
-    circ.setAttribute('fill','none'); circ.setAttribute('stroke','var(--accent)'); circ.setAttribute('stroke-width','3');
-    circ.setAttribute('stroke-dasharray','295'); circ.setAttribute('stroke-dashoffset','295');
-    circ.id = 'vc-progress';
-    progress.appendChild(circ); circle.appendChild(progress);
-
-    // Таймер
-    const timerEl = document.createElement('div');
-    timerEl.id = 'vc-timer';
-    timerEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:13px;font-weight:700;color:white;text-shadow:0 1px 4px rgba(0,0,0,0.8)';
-    timerEl.textContent = '0:00';
-    circle.appendChild(timerEl);
-
-    overlay.appendChild(circle);
-
-    // Кнопки управления
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:24px;align-items:center';
-
-    function mkBtn(icon, label, action) {
-        const b = document.createElement('div');
-        b.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer';
-        b.innerHTML = '<div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:22px;backdrop-filter:blur(10px)">'+icon+'</div>'
-            +'<div style="font-size:11px;color:rgba(255,255,255,0.7);font-weight:600">'+label+'</div>';
-        b.onclick = action;
-        return b;
-    }
-
-    const cancelBtn = mkBtn('✕','Отмена', ()=>{
-        _cancelVideoCircle(overlay);
-    });
-    const flipBtn = mkBtn('🔄','Камера', ()=>{
-        _videoFacing = _videoFacing==='user'?'environment':'user';
-        vid.style.transform = 'scaleX('+(_videoFacing==='user'?'-1':'1')+')';
-        // Перезапускаем поток
-        _videoRecStream.getVideoTracks().forEach(t=>t.stop());
-        navigator.mediaDevices.getUserMedia({
-            video:{facingMode:_videoFacing,width:{ideal:480},height:{ideal:480}},audio:false
-        }).then(s=>{
-            const newTrack = s.getVideoTracks()[0];
-            _videoRecStream.removeTrack(_videoRecStream.getVideoTracks()[0]);
-            _videoRecStream.addTrack(newTrack);
-            vid.srcObject = _videoRecStream;
-        }).catch(()=>{});
-    });
-    const flashBtn = mkBtn('⚡','Вспышка', ()=>{
-        _videoFlashOn = !_videoFlashOn;
-        const track = _videoRecStream.getVideoTracks()[0];
-        try { track.applyConstraints({ advanced:[{torch:_videoFlashOn}] }); } catch(e){}
-        flashBtn.querySelector('div').style.background = _videoFlashOn ? 'rgba(255,220,0,0.4)' : 'rgba(255,255,255,0.15)';
-    });
-    const stopBtn = mkBtn('⏹','Отправить', ()=>{
-        _stopVideoCircle();
-    });
-
-    btns.appendChild(cancelBtn); btns.appendChild(flipBtn);
-    btns.appendChild(flashBtn);  btns.appendChild(stopBtn);
-    overlay.appendChild(btns);
-
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5)';
-    hint.textContent = 'Отпустите или нажмите ⏹ чтобы отправить';
-    overlay.appendChild(hint);
-
-    document.body.appendChild(overlay);
-
-    // Добавляем CSS анимацию
+    // ── CSS анимации ──
     if (!document.getElementById('vc-style')) {
         const st = document.createElement('style');
         st.id = 'vc-style';
-        st.textContent = '@keyframes circleGlow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0.6)}50%{box-shadow:0 0 0 8px rgba(16,185,129,0)}}';
+        st.textContent = [
+            '@keyframes vcFadeIn{from{opacity:0}to{opacity:1}}',
+            '@keyframes vcSlideUp{from{transform:translateY(40px);opacity:0}to{transform:translateY(0);opacity:1}}',
+            '@keyframes vcRecPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.7)}70%{box-shadow:0 0 0 10px rgba(239,68,68,0)}}',
+            '@keyframes vcSpin{to{transform:rotate(360deg)}}',
+            '#vc-flip-btn.flipping{animation:vcFadeIn 0.2s ease}'
+        ].join('');
         document.head.appendChild(st);
     }
 
-    // Начинаем запись
-    const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4']
-        .find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
-    _videoRecorder = new MediaRecorder(_videoRecStream, {mimeType:mime});
-    _videoRecorder.ondataavailable = e => { if(e.data?.size>0) _videoChunks.push(e.data); };
+    // ── Оверлей ──
+    const overlay = document.createElement('div');
+    overlay.id = 'video-circle-ui';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:9500;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:max(env(safe-area-inset-bottom),32px);animation:vcFadeIn 0.25s ease';
+
+    // Размытый фон
+    const bgBlur = document.createElement('div');
+    bgBlur.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px)';
+    overlay.appendChild(bgBlur);
+
+    // ── Контент (поверх blur) ──
+    const content = document.createElement('div');
+    content.style.cssText = 'position:relative;display:flex;flex-direction:column;align-items:center;gap:28px;width:100%';
+
+    // ── Кружок с видео ──
+    const circleSize = Math.min(window.innerWidth * 0.72, 300);
+    const circleWrap = document.createElement('div');
+    circleWrap.style.cssText = 'position:relative;flex-shrink:0';
+
+    const circle = document.createElement('div');
+    circle.style.cssText = 'border-radius:50%;overflow:hidden;position:relative;animation:vcRecPulse 1.5s ease-in-out infinite';
+    circle.style.width = circleSize + 'px';
+    circle.style.height = circleSize + 'px';
+
+    const vid = document.createElement('video');
+    vid.srcObject = _videoRecStream; vid.autoplay = true; vid.muted = true; vid.playsInline = true;
+    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;transform:scaleX(' + (_videoFacing === 'user' ? '-1' : '1') + ')';
+    circle.appendChild(vid);
+
+    // Таймер внутри кружка
+    const timerEl = document.createElement('div');
+    timerEl.id = 'vc-timer';
+    timerEl.style.cssText = 'position:absolute;bottom:14px;left:0;right:0;text-align:center;font-size:14px;font-weight:800;color:white;text-shadow:0 1px 8px rgba(0,0,0,0.9);letter-spacing:0.5px;font-variant-numeric:tabular-nums';
+    timerEl.textContent = '0:00';
+    circle.appendChild(timerEl);
+
+    circleWrap.appendChild(circle);
+
+    // SVG прогресс-кольцо поверх
+    const R = circleSize / 2 + 6;
+    const svgSize = circleSize + 16;
+    const circumference = 2 * Math.PI * (circleSize / 2 + 3);
+    const svgProg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgProg.setAttribute('width', svgSize); svgProg.setAttribute('height', svgSize);
+    svgProg.style.cssText = 'position:absolute;top:-8px;left:-8px;transform:rotate(-90deg);pointer-events:none';
+    // Фоновое кольцо
+    const circBg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circBg.setAttribute('cx', R); circBg.setAttribute('cy', R); circBg.setAttribute('r', circleSize / 2 + 3);
+    circBg.setAttribute('fill', 'none'); circBg.setAttribute('stroke', 'rgba(255,255,255,0.12)'); circBg.setAttribute('stroke-width', '4');
+    // Прогресс
+    const circProg = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circProg.id = 'vc-progress';
+    circProg.setAttribute('cx', R); circProg.setAttribute('cy', R); circProg.setAttribute('r', circleSize / 2 + 3);
+    circProg.setAttribute('fill', 'none'); circProg.setAttribute('stroke', '#ef4444'); circProg.setAttribute('stroke-width', '4');
+    circProg.setAttribute('stroke-linecap', 'round');
+    circProg.setAttribute('stroke-dasharray', circumference.toFixed(1));
+    circProg.setAttribute('stroke-dashoffset', circumference.toFixed(1));
+    svgProg.appendChild(circBg); svgProg.appendChild(circProg);
+    circleWrap.appendChild(svgProg);
+
+    // Красная точка REC
+    const recDot = document.createElement('div');
+    recDot.style.cssText = 'position:absolute;top:10px;right:10px;width:10px;height:10px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,0.8)';
+    circleWrap.appendChild(recDot);
+
+    content.appendChild(circleWrap);
+
+    // ── Подсказка ──
+    const hint = document.createElement('div');
+    hint.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.45);font-weight:500;letter-spacing:-0.1px;animation:vcSlideUp 0.3s ease 0.1s both';
+    hint.textContent = 'Запись идёт • нажмите стоп для отправки';
+    content.appendChild(hint);
+
+    // ── Кнопки ──
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:20px;animation:vcSlideUp 0.3s ease 0.15s both;width:100%;padding:0 32px;box-sizing:border-box';
+
+    function mkCircBtn(svgHtml, label, bg, action, id) {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;-webkit-tap-highlight-color:transparent';
+        if (id) wrap.id = id;
+        const btn = document.createElement('div');
+        btn.style.cssText = 'width:56px;height:56px;border-radius:50%;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);transition:transform 0.15s,background 0.15s;' + bg;
+        btn.innerHTML = svgHtml;
+        const lbl = document.createElement('div');
+        lbl.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.6);font-weight:600;letter-spacing:-0.1px';
+        lbl.textContent = label;
+        wrap.onpointerdown = () => btn.style.transform = 'scale(0.88)';
+        wrap.onpointerup = () => btn.style.transform = '';
+        wrap.onpointercancel = () => btn.style.transform = '';
+        wrap.onclick = action;
+        wrap.appendChild(btn); wrap.appendChild(lbl);
+        return wrap;
+    }
+
+    // Отмена — X
+    const cancelBtn = mkCircBtn(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>',
+        'Отмена', 'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.15)',
+        () => _cancelVideoCircle(overlay)
+    );
+
+    // Перевернуть камеру
+    const flipBtn = mkCircBtn(
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M20 7H4a2 2 0 00-2 2v10a2 2 0 002 2h16a2 2 0 002-2V9a2 2 0 00-2-2z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="13" r="3" stroke="white" stroke-width="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M17 4l2 2-2 2" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        'Камера', 'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.15)',
+        () => {
+            _videoFacing = _videoFacing === 'user' ? 'environment' : 'user';
+            vid.style.transform = 'scaleX(' + (_videoFacing === 'user' ? '-1' : '1') + ')';
+            _videoRecStream.getVideoTracks().forEach(t => t.stop());
+            navigator.mediaDevices.getUserMedia({
+                video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } }, audio: false
+            }).then(s => {
+                const newTrack = s.getVideoTracks()[0];
+                _videoRecStream.removeTrack(_videoRecStream.getVideoTracks()[0]);
+                _videoRecStream.addTrack(newTrack);
+                vid.srcObject = _videoRecStream;
+            }).catch(() => {});
+        }, 'vc-flip-btn'
+    );
+
+    // Стоп — большая красная кнопка по центру
+    const stopBtn = mkCircBtn(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="white"><rect x="4" y="4" width="16" height="16" rx="3"/></svg>',
+        'Отправить', 'background:#ef4444;box-shadow:0 4px 20px rgba(239,68,68,0.5);width:68px;height:68px;border-radius:50%',
+        () => _stopVideoCircle()
+    );
+    // Делаем стоп-кнопку чуть больше
+    stopBtn.querySelector('div').style.width = '68px';
+    stopBtn.querySelector('div').style.height = '68px';
+
+    btns.appendChild(cancelBtn);
+    btns.appendChild(stopBtn);
+    btns.appendChild(flipBtn);
+    content.appendChild(btns);
+    overlay.appendChild(content);
+    document.body.appendChild(overlay);
+
+    // ── Запись ──
+    const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+        .find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+    _videoRecorder = new MediaRecorder(_videoRecStream, { mimeType: mime });
+    _videoRecorder.ondataavailable = e => { if (e.data?.size > 0) _videoChunks.push(e.data); };
     _videoRecorder.onstop = () => _sendVideoCircle(mime);
     _videoRecorder.start(100);
 
     const MAX_SEC = 60;
-    _videoTimer = setInterval(()=>{
+    _videoTimer = setInterval(() => {
         _videoSec++;
         const tEl = document.getElementById('vc-timer');
         const pEl = document.getElementById('vc-progress');
-        if(tEl) tEl.textContent = fmtSec(_videoSec);
-        if(pEl) pEl.setAttribute('stroke-dashoffset', String(295 - (295*_videoSec/MAX_SEC)));
-        if(_videoSec >= MAX_SEC) _stopVideoCircle();
+        if (tEl) tEl.textContent = fmtSec(_videoSec);
+        if (pEl) pEl.setAttribute('stroke-dashoffset', String(circumference - (circumference * _videoSec / MAX_SEC)));
+        if (_videoSec >= MAX_SEC) _stopVideoCircle();
     }, 1000);
 }
 
@@ -2831,27 +2888,70 @@ function _stopVideoCircle() {
 }
 
 async function _sendVideoCircle(mime) {
-    if(!_videoChunks.length || !currentChatId) { _videoRecStream=null; _videoRecorder=null; _videoChunks=[]; return; }
-    const ext = mime.includes('mp4')?'mp4':'webm';
-    const blob = new Blob(_videoChunks, {type:mime});
-    _videoRecStream=null; _videoRecorder=null; _videoChunks=[];
-    if(blob.size < 5000) return; // слишком короткое
+    if (!_videoChunks.length || !currentChatId) { _videoRecStream=null; _videoRecorder=null; _videoChunks=[]; return; }
+    const ext = mime.includes('mp4') ? 'mp4' : 'webm';
+    const blob = new Blob(_videoChunks, { type: mime });
+    _videoRecStream = null; _videoRecorder = null; _videoChunks = [];
+    if (blob.size < 5000) return;
 
-    showToast('Отправка видео-кружка...','info');
-    const fd = new FormData();
-    fd.append('file', blob, 'video_circle.'+ext);
-    fd.append('video_circle','1'); // флаг для рендера кружка
+    // ── Красивый UI загрузки ──
+    const sendOv = document.createElement('div');
+    sendOv.id = 'vc-sending';
+    sendOv.style.cssText = 'position:fixed;inset:0;z-index:9600;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:rgba(0,0,0,0.75);backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);animation:vcFadeIn 0.2s ease';
+
+    const spinSize = 80;
+    const spinSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    spinSvg.setAttribute('width', spinSize); spinSvg.setAttribute('height', spinSize);
+    spinSvg.setAttribute('viewBox', '0 0 80 80');
+    spinSvg.style.cssText = 'animation:vcSpin 1s linear infinite';
+    const spinCirc = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    spinCirc.setAttribute('cx', '40'); spinCirc.setAttribute('cy', '40'); spinCirc.setAttribute('r', '34');
+    spinCirc.setAttribute('fill', 'none'); spinCirc.setAttribute('stroke', 'var(--accent)'); spinCirc.setAttribute('stroke-width', '5');
+    spinCirc.setAttribute('stroke-linecap', 'round');
+    spinCirc.setAttribute('stroke-dasharray', '100 114');
+    spinSvg.appendChild(spinCirc);
+
+    const sendIcon = document.createElement('div');
+    sendIcon.style.cssText = 'position:absolute;display:flex;align-items:center;justify-content:center';
+    sendIcon.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22 11 13 2 9l20-7z" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    const spinWrap = document.createElement('div');
+    spinWrap.style.cssText = 'position:relative;display:flex;align-items:center;justify-content:center;width:80px;height:80px';
+    spinWrap.appendChild(spinSvg); spinWrap.appendChild(sendIcon);
+
+    const sendLabel = document.createElement('div');
+    sendLabel.style.cssText = 'font-size:15px;font-weight:600;color:rgba(255,255,255,0.8);letter-spacing:-0.2px';
+    sendLabel.textContent = 'Отправка кружка...';
+
+    const sizeLabel = document.createElement('div');
+    sizeLabel.style.cssText = 'font-size:12px;color:rgba(255,255,255,0.35)';
+    sizeLabel.textContent = (blob.size / 1024 / 1024).toFixed(1) + ' МБ';
+
+    sendOv.appendChild(spinWrap); sendOv.appendChild(sendLabel); sendOv.appendChild(sizeLabel);
+    document.body.appendChild(sendOv);
+
     try {
-        const r = await apiFetch('/upload_media',{method:'POST',body:fd});
+        const fd = new FormData();
+        fd.append('file', blob, 'video_circle.' + ext);
+        fd.append('video_circle', '1');
+        const r = await apiFetch('/upload_media', { method: 'POST', body: fd });
         const d = await r.json();
-        if(d.url) {
-            await apiFetch('/send_message',{
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({chat_id:currentChatId, media_url:d.url, media_type:'video_circle', text:''})
+        if (d.url) {
+            await apiFetch('/send_message', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: currentChatId, media_url: d.url, media_type: 'video_circle', text: '' })
             });
-            showToast('Видео-кружок отправлен 🎥','success');
+            sendOv.remove();
+            showToast('Кружок отправлен', 'success');
+        } else {
+            sendOv.remove();
+            showToast('Ошибка загрузки', 'error');
         }
-    } catch(e) { showToast('Ошибка отправки','error'); }
+    } catch(e) {
+        sendOv.remove();
+        showToast('Ошибка отправки', 'error');
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3124,8 +3224,10 @@ function setupVoiceRecording() {
         }
 
         if (_holdDone) {
+            // Кружок: зажали — зафиксировался, отпустили — НЕ останавливаем
+            // Останавливается только кнопкой Стоп внутри UI
             if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
+            // видео-кружок НЕ останавливаем при отпускании — пользователь сам нажмёт стоп
         }
         _holdDone = false;
     }
