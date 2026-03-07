@@ -116,7 +116,7 @@ _user_dict_cache  = TTLCache(maxsize=1000, ttl=60.0)   # {id: dict}
 _chat_cache       = TTLCache(maxsize=2000, ttl=10.0)
 _online_cache     = TTLCache(maxsize=2000, ttl=5.0)
 _partner_cache    = TTLCache(maxsize=1000, ttl=30.0)
-_moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
+_moments_cache    = TTLCache(maxsize=500,  ttl=60.0)  # key=uid
 
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
@@ -129,6 +129,12 @@ app = Flask(__name__,
             static_folder=os.path.join(BASE_DIR, 'static'),
             static_url_path='/static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+@app.after_request
+def _add_cache_headers(response):
+    if request.path.startswith('/static/'):
+        response.headers['Cache-Control'] = 'public, max-age=604800'
+    return response
 
 app.config.update(
     SQLALCHEMY_DATABASE_URI        = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
@@ -196,28 +202,10 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
 
-        # Определяем тип ресурса явно
-        mime = ''
-        if hasattr(file_obj, 'content_type') and file_obj.content_type:
-            mime = file_obj.content_type
-        elif hasattr(file_obj, 'mimetype') and file_obj.mimetype:
-            mime = file_obj.mimetype
-        elif hasattr(file_obj, 'filename') and file_obj.filename:
-            import mimetypes as _mt
-            mime = _mt.guess_type(file_obj.filename)[0] or ''
-
-        print(f'Cloudinary upload: mime={mime!r}, folder={folder!r}')
-
-        if mime.startswith('video/') or mime.startswith('audio/'):
-            res_type = 'video'
-        else:
-            res_type = 'image'
-
         result = cloudinary.uploader.upload(
             file_obj,
             folder        = folder,
-            resource_type = res_type,
-            chunk_size    = 6 * 1024 * 1024,  # 6MB чанки для больших видео
+            resource_type = 'auto',
         )
         url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
@@ -1795,32 +1783,56 @@ def block_user(user_id):
 @app.route('/get_moments')
 @login_required
 def get_moments():
-    cached = _moments_cache.get('all')
-    if cached:
+    uid = current_user.id
+    cached = _moments_cache.get(uid)
+    if cached is not None:
         return jsonify(cached)
 
-    uid     = current_user.id
-    cutoff  = datetime.utcnow() - timedelta(hours=24)
-    moments = db.session.query(Moment, User).join(
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+
+    # Один запрос с подсчётом просмотров через subquery — без N+1
+    from sqlalchemy import func, outerjoin
+    vc_sub = db.session.query(
+        MomentView.moment_id,
+        func.count(MomentView.id).label('cnt')
+    ).group_by(MomentView.moment_id).subquery()
+
+    rows = db.session.query(Moment, User, vc_sub.c.cnt).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
+    ).outerjoin(
+        vc_sub, Moment.id == vc_sub.c.moment_id
+    ).filter(
+        Moment.timestamp >= cutoff
+    ).order_by(Moment.timestamp.desc()).all()
 
     data = [{
-        'id':            m.Moment.id,
-        'user_id':       m.Moment.user_id,
-        'user_name':     m.User.name,
-        'user_avatar':   m.User.avatar,
-        'media_url':     m.Moment.media_url,
-        'text':          m.Moment.text or '',
-        'geo_name':      m.Moment.geo_name or '',
-        'timestamp':     to_moscow_str(m.Moment.timestamp),
-        'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
-        'is_mine':       m.Moment.user_id == uid,
-    } for m in moments]
+        'id':            r.Moment.id,
+        'user_id':       r.Moment.user_id,
+        'user_name':     r.User.name,
+        'user_avatar':   r.User.avatar or '',
+        'media_url':     r.Moment.media_url or '',
+        'text':          r.Moment.text or '',
+        'geo_name':      r.Moment.geo_name or '',
+        'timestamp':     to_moscow_str(r.Moment.timestamp),
+        'raw_timestamp': r.Moment.timestamp.isoformat() + 'Z' if r.Moment.timestamp else '',
+        'view_count':    r.cnt or 0,
+        'is_mine':       r.Moment.user_id == uid,
+    } for r in rows]
 
-    _moments_cache.set('all', data)
-    return jsonify(data)
+    _moments_cache.set(uid, data)
+    import gzip as _gzip, json as _json
+    from flask import Response as _Resp
+    body = _json.dumps(data, separators=(',',':'), ensure_ascii=False)
+    accept = request.headers.get('Accept-Encoding', '')
+    if 'gzip' in accept:
+        compressed = _gzip.compress(body.encode('utf-8'), compresslevel=6)
+        resp = _Resp(compressed, mimetype='application/json')
+        resp.headers['Content-Encoding'] = 'gzip'
+        resp.headers['Vary'] = 'Accept-Encoding'
+    else:
+        resp = _Resp(body, mimetype='application/json')
+    resp.headers['Cache-Control'] = 'private, max-age=30'
+    return resp
 
 
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
@@ -1843,14 +1855,13 @@ def delete_chat_route(cid):
 @login_required
 def view_moment(mid):
     uid = current_user.id
-    if MomentView.query.filter_by(moment_id=mid, viewer_id=uid).first():
-        return jsonify({'success': True})
+    # Быстрая вставка без предварительного SELECT
     mv = MomentView(moment_id=mid, viewer_id=uid)
     db.session.add(mv)
     try:
         db.session.commit()
     except Exception:
-        db.session.rollback()
+        db.session.rollback()  # UniqueConstraint — уже просмотрено, ок
     return jsonify({'success': True})
 
 
@@ -1927,7 +1938,7 @@ def create_moment():
     )
     db.session.add(moment)
     db.session.commit()
-    _moments_cache.delete('all')
+    _moments_cache.invalidate_prefix('')  # сброс всех кешей моментов
     socketio.emit('new_moment', {'user_id': uid, 'user_name': uname})
     return jsonify({'success': True, 'moment_id': moment.id})
 
