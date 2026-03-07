@@ -4495,35 +4495,28 @@ let _momentUploadGeo = null;
 async function loadMoments() {
     const container = document.getElementById('full-moments-list');
     if (!container) return;
-    const now = Date.now();
-    if (momentsCache && (now - momentsLastLoad) < 30000) {
-        renderMomentsList(container, momentsCache);
-        return;
-    }
-    if (!momentsCache) {
-        container.innerHTML = '<div style="display:flex;flex-direction:column;gap:2px;padding:8px 0">'
+
+    // Показываем скелетон только если список пустой
+    if (!container.children.length || container.querySelector('[data-skeleton]')) {
+        container.innerHTML = '<div data-skeleton style="display:flex;flex-direction:column;gap:2px">'
             + _skeletonMomentRow() + _skeletonMomentRow() + _skeletonMomentRow() + '</div>';
     }
+
     try {
-        const r = await fetch('/get_moments', {credentials:'include'});
-        if (!r || !r.ok) { 
-            console.error('get_moments failed:', r?.status);
-            if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
-            return;
-        }
+        const r = await fetch('/get_moments', { credentials: 'include' });
+        if (!r.ok) { console.error('get_moments:', r.status); return; }
         const moments = await r.json();
-        console.log('moments loaded:', moments?.length);
-        if (!Array.isArray(moments)) {
-            console.error('moments not array:', moments);
-            return;
-        }
-        momentsCache = moments; momentsLastLoad = now; currentMoments = moments;
+        if (!Array.isArray(moments)) { console.error('not array:', moments); return; }
+        momentsCache = moments;
+        momentsLastLoad = Date.now();
+        currentMoments = moments;
         renderMomentsList(container, moments);
     } catch(e) {
         console.error('loadMoments error:', e);
         if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
     }
 }
+
 
 function _skeletonMomentRow() {
     return '<div style="display:flex;align-items:center;gap:14px;padding:10px 2px">'
@@ -4537,13 +4530,16 @@ function _skeletonMomentRow() {
 function renderMomentsList(container, moments) {
     container.innerHTML = '';
 
-    // Карточка загрузки (если есть активная загрузка)
+    // Карточка загрузки (если есть активная загрузка) — вставляем первой
     if (_momentUploading && _momentUploadFile) {
         _renderUploadingCard(container);
     }
 
     if (!moments?.length && !_momentUploading) {
-        container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:48px 20px;font-size:15px">Моментов пока нет</div>';
+        const empty = document.createElement('div');
+        empty.style.cssText = 'text-align:center;opacity:0.25;padding:48px 20px;font-size:15px';
+        empty.textContent = 'Моментов пока нет';
+        container.appendChild(empty);
         return;
     }
 
@@ -4677,95 +4673,67 @@ function _updateUploadProgress(pct) {
     if (ring) ring.style.strokeDashoffset = (81.68 * (1 - pct/100)).toFixed(2);
 }
 
-// Публикация момента с отслеживанием прогресса через XMLHttpRequest
+// Публикация момента
 async function _publishMomentEditor(ov, file, url) {
-    const caption = (document.getElementById('me-cap')?.value||'').trim();
+    const caption = (document.getElementById('me-cap')?.value || '').trim();
     const geo = _meGeo;
 
-    // Запоминаем файл для карточки загрузки
+    // 1. Сохраняем стейт загрузки
     _momentUploading = true;
     _momentUploadFile = file;
-    _momentUploadCaption = caption;
-    _momentUploadGeo = geo;
-    // Создаём URL для превью один раз
     if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} }
     _momentUploadPreviewUrl = URL.createObjectURL(file);
 
-    // Закрываем редактор и переключаемся на вкладку моментов
+    // 2. Закрываем редактор → открываем Моменты
     ov.remove();
     URL.revokeObjectURL(url);
     _meFile = null; _meGeo = null;
-
-    // Переключаемся на вкладку Моменты
     switchTab('moments');
 
-    // Рендерим список с карточкой загрузки
+    // 3. Рисуем карточку загрузки
     const container = document.getElementById('full-moments-list');
-    if (container) {
-        momentsCache = momentsCache || [];
-        renderMomentsList(container, momentsCache);
-    }
+    if (container) renderMomentsList(container, momentsCache || []);
 
-    // Загружаем через XHR с прогрессом
-    return new Promise((resolve) => {
+    // 4. Плавный прогресс-бар (симуляция — iOS не даёт реальный XHR прогресс)
+    let pct = 0;
+    const timer = setInterval(() => {
+        pct += pct < 30 ? 4 : pct < 60 ? 2 : pct < 80 ? 1 : 0.3;
+        pct = Math.min(pct, 82);
+        _updateUploadProgress(Math.round(pct));
+    }, 300);
+
+    // 5. Загружаем
+    try {
         const fd = new FormData();
         fd.append('file', file);
         if (caption) fd.append('text', caption);
-        if (geo) {
-            fd.append('geo_name', geo.name);
-            fd.append('geo_lat', geo.lat);
-            fd.append('geo_lng', geo.lng);
-        }
+        if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
 
-        const xhr = new XMLHttpRequest();
-        xhr.withCredentials = true;
+        const r = await fetch('/create_moment', { method: 'POST', body: fd, credentials: 'include' });
+        clearInterval(timer);
+        _updateUploadProgress(100);
+        await new Promise(res => setTimeout(res, 600));
 
-        xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-                const pct = Math.round((e.loaded / e.total) * 90); // до 90% — загрузка на сервер
-                _updateUploadProgress(pct);
-            }
-        };
+        // Читаем ответ
+        let ok = r.ok;
+        try { const d = await r.json(); ok = d.success; } catch(e) {}
+        showToast(ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки', ok ? 'success' : 'error');
 
-        xhr.onload = () => {
-            _updateUploadProgress(100);
-            setTimeout(() => {
-                _momentUploading = false;
-                _momentUploadFile = null;
-                if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} _momentUploadPreviewUrl = null; }
-                momentsCache = null;
-                loadMoments();
-                if (xhr.status === 200) {
-                    try {
-                        const data = JSON.parse(xhr.responseText);
-                        if (data.success) {
-                            showToast('Момент опубликован! 🎉', 'success');
-                        } else {
-                            showToast('Ошибка: ' + (data.error || 'неизвестная'), 'error');
-                        }
-                    } catch(e) {
-                        showToast('Момент опубликован! 🎉', 'success');
-                    }
-                } else {
-                    showToast('Ошибка загрузки (' + xhr.status + ')', 'error');
-                }
-                resolve();
-            }, 600);
-        };
+    } catch(e) {
+        clearInterval(timer);
+        console.error('publish:', e);
+        showToast('Ошибка сети — попробуй ещё раз', 'error');
+    }
 
-        xhr.onerror = () => {
-            _momentUploading = false;
-            _momentUploadFile = null;
-            showToast('Ошибка сети при загрузке', 'error');
-            momentsCache = null;
-            loadMoments();
-            resolve();
-        };
-
-        xhr.open('POST', '/create_moment');
-        xhr.send(fd);
-    });
+    // 6. Сбрасываем стейт и перезагружаем список
+    _momentUploading = false;
+    _momentUploadFile = null;
+    if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} _momentUploadPreviewUrl = null; }
+    momentsCache = null;
+    momentsLastLoad = 0;
+    await loadMoments();
 }
+
 
 // ── Просмотр моментов пользователя ──
 function openUserMomentsViewer(userId) {
