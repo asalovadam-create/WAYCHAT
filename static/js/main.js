@@ -1984,41 +1984,6 @@ function buildMessageRow(msg, animate = true) {
     const rawTime = msg.raw_timestamp || msg.timestamp || '';
     const displayTime = getMoscowTime(rawTime) || msg.timestamp || '';
 
-    // Видео-кружок
-    if ((msg.media_type === 'video_circle' || msg.type === 'video_circle') && (msg.media_url || msg.file_url)) {
-        const src = msg.media_url || msg.file_url;
-        const circRow = document.createElement('div');
-        circRow.className = `msg-row ${isMe ? 'out' : 'in'}`;
-        if (animate) circRow.classList.add('animate-msg');
-        circRow.setAttribute('data-msg-id', msg.id || '');
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-direction:column;align-items:'+(isMe?'flex-end':'flex-start');
-        const circ = document.createElement('div');
-        circ.style.cssText = 'width:180px;height:180px;border-radius:50%;overflow:hidden;border:2.5px solid var(--accent);cursor:pointer;position:relative;box-shadow:0 4px 20px rgba(16,185,129,0.3)';
-        const v = document.createElement('video');
-        v.src = src; v.playsInline = true; v.loop = true; v.muted = false;
-        v.style.cssText = 'width:100%;height:100%;object-fit:cover';
-        const playIcon = document.createElement('div');
-        playIcon.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);transition:opacity .2s';
-        playIcon.innerHTML = '<svg width="40" height="40" viewBox="0 0 24 24" fill="white" opacity=".8"><polygon points="5,3 19,12 5,21"/></svg>';
-        circ.appendChild(v); circ.appendChild(playIcon);
-        circ.onclick = () => {
-            if (v.paused) { v.play(); playIcon.style.opacity='0'; }
-            else { v.pause(); playIcon.style.opacity='1'; }
-        };
-        v.onplay = () => playIcon.style.opacity='0';
-        v.onpause = () => playIcon.style.opacity='1';
-        const io = new IntersectionObserver(([e])=>{if(e.isIntersecting)v.play();else v.pause();},{threshold:0.5});
-        io.observe(circ);
-        const timeEl = document.createElement('div');
-        timeEl.style.cssText = 'font-size:11px;color:var(--text-2);margin-top:4px;padding:0 4px';
-        timeEl.textContent = displayTime;
-        wrap.appendChild(circ); wrap.appendChild(timeEl);
-        if (!isMe) { circRow.appendChild(avatarHtml ? (() => { const d=document.createElement('div'); d.innerHTML=avatarHtml; return d.firstChild; })() : document.createTextNode('')); }
-        circRow.appendChild(wrap);
-        return circRow;
-    }
-
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
         const dur = parseInt(msg.content || msg.text || '0', 10) || 0;
@@ -2557,8 +2522,6 @@ function updateSendButton() {
     if (!s || !v) return;
     if (txt) {
         s.style.display = 'flex'; v.style.display = 'none';
-        // Сбрасываем cam-mode если печатаем
-        if (_camModeActive) { _camModeActive = false; _restoreVoiceBtn(); }
     } else {
         s.style.display = 'none'; v.style.display = 'flex';
     }
@@ -2623,250 +2586,6 @@ function openPrivacySettings() {
         });
         _savePrivacy(key,btn.dataset.val);
     });
-}
-
-// ══════════════════════════════════════════════════════════
-//  ВИДЕО-КРУЖОК (как в Telegram)
-// ══════════════════════════════════════════════════════════
-let _camModeActive = false;
-let _videoRecStream = null;
-let _videoRecorder  = null;
-let _videoChunks    = [];
-let _videoTimer     = null;
-let _videoSec       = 0;
-let _videoFlashOn   = false;
-let _videoFacing    = 'user';
-
-function _restoreVoiceBtn() {
-    _camModeActive = false;
-    const v = document.getElementById('voice-btn-main');
-    if (!v) return;
-    v.dataset.mode  = 'voice';
-    v.innerHTML     = ICONS.mic.replace('rgba(255,255,255,0.5)','white');
-    v.style.background  = 'rgba(255,255,255,0.12)';
-    v.style.transform   = '';
-    v.style.boxShadow   = 'none';
-    v.style.transition  = 'transform 0.2s, background 0.2s';
-}
-
-function _activateCamMode() {
-    _camModeActive = true;
-    const v = document.getElementById('voice-btn-main');
-    if (!v) return;
-    v.dataset.mode  = 'camera';
-
-    v.style.transition = 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1), background 0.2s';
-    v.style.transform = 'scale(0)';
-    setTimeout(() => {
-        v.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
-            + '<circle cx="12" cy="12" r="3.5" fill="white"/>'
-            + '<circle cx="12" cy="12" r="9" stroke="white" stroke-width="2"/>'
-            + '<circle cx="18.5" cy="5.5" r="1.5" fill="white"/>'
-            + '</svg>';
-        v.style.background = 'rgba(239,68,68,0.85)';
-        v.style.transform  = 'scale(1)';
-        v.style.boxShadow  = '0 0 16px rgba(239,68,68,0.5)';
-        v.title = 'Зажмите для видео-кружка';
-    }, 150);
-    showToast('Зажмите для записи видео 🎥','info',2000);
-}
-
-function _startVideoCircle() {
-    if (_videoRecStream) return;
-
-    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-        showToast('Нет доступа к камере. Настройки → Safari → Камера → Разрешить', 'error', 5000);
-        return;
-    }
-
-    // ⚠️ КРИТИЧНО ДЛЯ iOS SAFARI: getUserMedia вызывается СИНХРОННО
-    // без await перед ним — иначе Safari не покажет диалог разрешений
-    _videoFacing = _videoFacing || 'user';
-    const mediaPromise = navigator.mediaDevices.getUserMedia({
-        video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } },
-        audio: { echoCancellation: true, noiseSuppression: true }
-    }).catch(() => navigator.mediaDevices.getUserMedia({
-        video: { facingMode: _videoFacing },
-        audio: true
-    }));
-
-    mediaPromise.then(stream => {
-        _videoRecStream = stream;
-        _sessionPerms['camera'] = 'granted';
-        _doStartVideoCircleUI();
-    }).catch(e => {
-        _videoRecStream = null;
-        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-            _sessionPerms['camera'] = 'denied';
-            _showPermDeniedGuide('camera');
-        } else {
-            showToast('Нет доступа к камере: ' + (e.message || e.name), 'error', 4000);
-        }
-    });
-}
-
-function _doStartVideoCircleUI() {
-
-    vibrate(40);
-    _videoChunks = []; _videoSec = 0;
-
-    // Показываем UI кружка
-    const overlay = document.createElement('div');
-    overlay.id = 'video-circle-ui';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px';
-
-    // Кружок с видео
-    const circle = document.createElement('div');
-    circle.style.cssText = 'width:min(80vw,320px);height:min(80vw,320px);border-radius:50%;overflow:hidden;position:relative;border:3px solid var(--accent);box-shadow:0 0 0 0 rgba(16,185,129,0.6)';
-    circle.style.animation = 'circleGlow 1s ease-in-out infinite';
-
-    const vid = document.createElement('video');
-    vid.srcObject = _videoRecStream; vid.autoplay = true; vid.muted = true; vid.playsInline = true;
-    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;transform:scaleX('+((_videoFacing==='user')?'-1':'1')+')';
-    circle.appendChild(vid);
-
-    // Прогресс-кольцо SVG
-    const progress = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    progress.setAttribute('viewBox','0 0 100 100');
-    progress.style.cssText = 'position:absolute;inset:-3px;width:calc(100% + 6px);height:calc(100% + 6px);transform:rotate(-90deg);pointer-events:none';
-    const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    circ.setAttribute('cx','50'); circ.setAttribute('cy','50'); circ.setAttribute('r','47');
-    circ.setAttribute('fill','none'); circ.setAttribute('stroke','var(--accent)'); circ.setAttribute('stroke-width','3');
-    circ.setAttribute('stroke-dasharray','295'); circ.setAttribute('stroke-dashoffset','295');
-    circ.id = 'vc-progress';
-    progress.appendChild(circ); circle.appendChild(progress);
-
-    // Таймер
-    const timerEl = document.createElement('div');
-    timerEl.id = 'vc-timer';
-    timerEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:13px;font-weight:700;color:white;text-shadow:0 1px 4px rgba(0,0,0,0.8)';
-    timerEl.textContent = '0:00';
-    circle.appendChild(timerEl);
-
-    overlay.appendChild(circle);
-
-    // Кнопки управления
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:24px;align-items:center';
-
-    function mkBtn(icon, label, action) {
-        const b = document.createElement('div');
-        b.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer';
-        b.innerHTML = '<div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:22px;backdrop-filter:blur(10px)">'+icon+'</div>'
-            +'<div style="font-size:11px;color:rgba(255,255,255,0.7);font-weight:600">'+label+'</div>';
-        b.onclick = action;
-        return b;
-    }
-
-    const cancelBtn = mkBtn('✕','Отмена', ()=>{
-        _cancelVideoCircle(overlay);
-    });
-    const flipBtn = mkBtn('🔄','Камера', ()=>{
-        _videoFacing = _videoFacing==='user'?'environment':'user';
-        vid.style.transform = 'scaleX('+(_videoFacing==='user'?'-1':'1')+')';
-        // Перезапускаем поток
-        _videoRecStream.getVideoTracks().forEach(t=>t.stop());
-        navigator.mediaDevices.getUserMedia({
-            video:{facingMode:_videoFacing,width:{ideal:480},height:{ideal:480}},audio:false
-        }).then(s=>{
-            const newTrack = s.getVideoTracks()[0];
-            _videoRecStream.removeTrack(_videoRecStream.getVideoTracks()[0]);
-            _videoRecStream.addTrack(newTrack);
-            vid.srcObject = _videoRecStream;
-        }).catch(()=>{});
-    });
-    const flashBtn = mkBtn('⚡','Вспышка', ()=>{
-        _videoFlashOn = !_videoFlashOn;
-        const track = _videoRecStream.getVideoTracks()[0];
-        try { track.applyConstraints({ advanced:[{torch:_videoFlashOn}] }); } catch(e){}
-        flashBtn.querySelector('div').style.background = _videoFlashOn ? 'rgba(255,220,0,0.4)' : 'rgba(255,255,255,0.15)';
-    });
-    const stopBtn = mkBtn('⏹','Отправить', ()=>{
-        _stopVideoCircle();
-    });
-
-    btns.appendChild(cancelBtn); btns.appendChild(flipBtn);
-    btns.appendChild(flashBtn);  btns.appendChild(stopBtn);
-    overlay.appendChild(btns);
-
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5)';
-    hint.textContent = 'Отпустите или нажмите ⏹ чтобы отправить';
-    overlay.appendChild(hint);
-
-    document.body.appendChild(overlay);
-
-    // Добавляем CSS анимацию
-    if (!document.getElementById('vc-style')) {
-        const st = document.createElement('style');
-        st.id = 'vc-style';
-        st.textContent = '@keyframes circleGlow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0.6)}50%{box-shadow:0 0 0 8px rgba(16,185,129,0)}}';
-        document.head.appendChild(st);
-    }
-
-    // Начинаем запись
-    const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4']
-        .find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
-    _videoRecorder = new MediaRecorder(_videoRecStream, {mimeType:mime});
-    _videoRecorder.ondataavailable = e => { if(e.data?.size>0) _videoChunks.push(e.data); };
-    _videoRecorder.onstop = () => _sendVideoCircle(mime);
-    _videoRecorder.start(100);
-
-    const MAX_SEC = 60;
-    _videoTimer = setInterval(()=>{
-        _videoSec++;
-        const tEl = document.getElementById('vc-timer');
-        const pEl = document.getElementById('vc-progress');
-        if(tEl) tEl.textContent = fmtSec(_videoSec);
-        if(pEl) pEl.setAttribute('stroke-dashoffset', String(295 - (295*_videoSec/MAX_SEC)));
-        if(_videoSec >= MAX_SEC) _stopVideoCircle();
-    }, 1000);
-}
-
-function _cancelVideoCircle(overlay) {
-    clearInterval(_videoTimer); _videoTimer=null;
-    if(_videoRecorder && _videoRecorder.state!=='inactive') {
-        _videoRecorder.ondataavailable=null; _videoRecorder.onstop=null;
-        _videoRecorder.stop();
-    }
-    _videoRecStream?.getTracks().forEach(t=>t.stop());
-    _videoRecStream=null; _videoRecorder=null; _videoChunks=[];
-    (overlay||document.getElementById('video-circle-ui'))?.remove();
-}
-
-function _stopVideoCircle() {
-    if(!_videoRecorder || _videoRecorder.state==='inactive') return;
-    clearInterval(_videoTimer); _videoTimer=null;
-    _videoRecorder.stop();
-    _videoRecStream?.getTracks().forEach(t=>t.stop());
-    document.getElementById('video-circle-ui')?.remove();
-}
-
-async function _sendVideoCircle(mime) {
-    if(!_videoChunks.length || !currentChatId) { _videoRecStream=null; _videoRecorder=null; _videoChunks=[]; return; }
-    const ext = mime.includes('mp4')?'mp4':'webm';
-    const blob = new Blob(_videoChunks, {type:mime});
-    _videoRecStream=null; _videoRecorder=null; _videoChunks=[];
-    if(blob.size < 5000) return; // слишком короткое
-
-    showToast('Отправка видео-кружка...','info');
-    const fd = new FormData();
-    fd.append('file', blob, 'video_circle.'+ext);
-    fd.append('video_circle','1'); // флаг для рендера кружка
-    try {
-        const r = await apiFetch('/upload_media',{method:'POST',body:fd});
-        const d = await r.json();
-        if(d.url) {
-            socket.emit('send_message', {
-                chat_id:   currentChatId,
-                type_msg:  'video_circle',
-                file_url:  d.url,
-                sender_id: currentUser.id,
-                content:   ''
-            });
-            showToast('Видео-кружок отправлен 🎥','success');
-        }
-    } catch(e) { showToast('Ошибка отправки','error'); }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3067,48 +2786,8 @@ function setupVoiceRecording() {
         e.preventDefault();
         _pressTs  = Date.now();
         _holdDone = false;
-        const isCam = document.getElementById('voice-btn-main')?.dataset.mode === 'camera';
-
-        if (isCam) {
-            // ⚠️ КРИТИЧНО ДЛЯ iOS SAFARI:
-            // getUserMedia вызываем ЗДЕСЬ синхронно из touchstart
-            // setTimeout убивает user gesture — камера не запрашивается
-            if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-                showToast('Нет доступа к камере. Настройки → Safari → Камера → Разрешить', 'error', 5000);
-                return;
-            }
-            _videoFacing = _videoFacing || 'user';
-            const camPromise = navigator.mediaDevices.getUserMedia({
-                video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } },
-                audio: { echoCancellation: true, noiseSuppression: true }
-            }).catch(() => navigator.mediaDevices.getUserMedia({
-                video: { facingMode: _videoFacing },
-                audio: true
-            }));
-
-            _pressTimer = setTimeout(() => {
-                _holdDone = true;
-                vibrate(45);
-                camPromise.then(stream => {
-                    if (_videoRecStream) { stream.getTracks().forEach(t => t.stop()); return; }
-                    _videoRecStream = stream;
-                    _sessionPerms['camera'] = 'granted';
-                    _doStartVideoCircleUI();
-                }).catch(e => {
-                    _videoRecStream = null;
-                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                        _sessionPerms['camera'] = 'denied';
-                        _showPermDeniedGuide('camera');
-                    } else {
-                        showToast('Нет доступа к камере: ' + (e.message || e.name), 'error', 4000);
-                    }
-                });
-            }, 300);
-            return;
-        }
 
         // Микрофон — вызываем getUserMedia ПРЯМО ЗДЕСЬ из user gesture
-        // Safari требует синхронный вызов без await перед ним
         const streamPromise = _getStream();
 
         _pressTimer = setTimeout(() => {
@@ -3125,22 +2804,14 @@ function setupVoiceRecording() {
 
     function _pressEnd(e) {
         clearTimeout(_pressTimer);
-        const dt  = Date.now() - _pressTs;
-        const cur = document.getElementById('voice-btn-main');
+        const dt = Date.now() - _pressTs;
 
         if (!_holdDone && dt < 250) {
-            // Короткий тап — переключаем режим
-            if (cur?.dataset.mode === 'camera') {
-                _restoreVoiceBtn();
-            } else {
-                _activateCamMode();
-            }
-            return;
+            return; // короткий тап — ничего не делаем
         }
 
         if (_holdDone) {
             if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
         }
         _holdDone = false;
     }
