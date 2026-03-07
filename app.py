@@ -466,7 +466,7 @@ class Message(db.Model):
     chat_id     = db.Column(db.Integer,     db.ForeignKey('chat.id'), nullable=False, index=True)
     sender_id   = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
     sender_name = db.Column(db.String(120), default='')
-    type        = db.Column(db.String(20),  default='text')
+    type        = db.Column(db.String(10),  default='text')
     content     = db.Column(db.Text)
     file_url    = db.Column(db.String(300))
     is_read     = db.Column(db.Boolean,     default=False, index=True)
@@ -2415,7 +2415,6 @@ def run_migrations():
         )''',
         # Индексы для производительности (5-10k пользователей)
         'CREATE INDEX IF NOT EXISTS ix_msg_sender_id    ON message(sender_id)',
-        'ALTER TABLE message ALTER COLUMN type TYPE VARCHAR(20)',
         'CREATE INDEX IF NOT EXISTS ix_msg_media_type   ON message(media_type)',
         'CREATE INDEX IF NOT EXISTS ix_moment_user_id   ON moment(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_moment_expires   ON moment(expires_at)',
@@ -2814,15 +2813,22 @@ def shutdown_session(exception=None):
     db.session.remove()
 
 # ══════════════════════════════════════════════════════════
-#  ЗАПУСК
+#  ИНИЦИАЛИЗАЦИЯ — выполняется и на Render (gunicorn), и локально
 # ══════════════════════════════════════════════════════════
-if __name__ == '__main__':
-    with app.app_context():
+with app.app_context():
+    try:
         os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
         db.create_all()
         run_migrations()
+    except Exception as _init_err:
+        print(f'⚠️  Init error: {_init_err}')
 
-    eventlet.spawn(background_cleanup)
+eventlet.spawn(background_cleanup)
+
+# ══════════════════════════════════════════════════════════
+#  ЗАПУСК
+# ══════════════════════════════════════════════════════════
+if __name__ == '__main__':
 
     print('╔══════════════════════════════════════════════════════╗')
     print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
