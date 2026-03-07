@@ -112,14 +112,32 @@ class TTLCache:
 
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
-_user_dict_cache  = TTLCache(maxsize=1000, ttl=60.0)   # {id: dict}
-_chat_cache       = TTLCache(maxsize=2000, ttl=10.0)
-_online_cache     = TTLCache(maxsize=2000, ttl=5.0)
-_partner_cache    = TTLCache(maxsize=1000, ttl=30.0)
+_user_dict_cache  = TTLCache(maxsize=3000, ttl=120.0)  # 3k юзеров × 2min
+_chat_cache       = TTLCache(maxsize=8000, ttl=15.0)   # больше чатов
+_online_cache     = TTLCache(maxsize=8000, ttl=8.0)
+_partner_cache    = TTLCache(maxsize=3000, ttl=60.0)
 _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 
 _rate_limits     = defaultdict(lambda: defaultdict(list))
+_ip_rate_limits  = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
+
+
+def ip_rate_limit(endpoint, max_calls=5, window_sec=60):
+    """Rate limit по IP — защита логина/регистрации от брутфорса"""
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            ip  = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr or 'unknown').split(',')[0].strip()
+            now = time.monotonic()
+            calls = _ip_rate_limits[ip][endpoint]
+            calls[:] = [t for t in calls if now - t < window_sec]
+            if len(calls) >= max_calls:
+                return jsonify({'success': False, 'error': 'Слишком много попыток. Подождите минуту.'}), 429
+            calls.append(now)
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 # ══════════════════════════════════════════════════════════
 #  ПРИЛОЖЕНИЕ
@@ -130,22 +148,38 @@ app = Flask(__name__,
             static_url_path='/static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
+# Gzip — экономит до 70% трафика (pip install flask-compress)
+try:
+    from flask_compress import Compress
+    _compress = Compress()
+    _compress.init_app(app)
+    app.config['COMPRESS_MIMETYPES'] = [
+        'text/html', 'text/css', 'application/json',
+        'application/javascript', 'text/javascript'
+    ]
+    app.config['COMPRESS_LEVEL'] = 6
+    app.config['COMPRESS_MIN_SIZE'] = 500
+except ImportError:
+    pass
+
 app.config.update(
     SQLALCHEMY_DATABASE_URI        = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
-        'pool_pre_ping': True,
-        'pool_recycle':  300,
-        'pool_size':     5,
-        'max_overflow':  10,
+        'pool_pre_ping':  True,
+        'pool_recycle':   300,
+        'pool_size':      10,    # 5k+ юзеров
+        'max_overflow':   20,    # пик нагрузки
+        'pool_timeout':   30,
+        'connect_args':   {'connect_timeout': 10},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
-    MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,
+    MAX_CONTENT_LENGTH       = 20 * 1024 * 1024,   # 20MB защита от перегрузки
     SESSION_COOKIE_SAMESITE  = 'Lax',
-    SESSION_COOKIE_SECURE    = False,
+    SESSION_COOKIE_SECURE    = True,    # HTTPS Render
     SESSION_COOKIE_HTTPONLY  = True,
     REMEMBER_COOKIE_SAMESITE = 'Lax',
-    REMEMBER_COOKIE_SECURE   = False,
+    REMEMBER_COOKIE_SECURE   = True,    # HTTPS Render
     REMEMBER_COOKIE_DURATION = timedelta(days=30),
     SESSION_PROTECTION       = None,
     JSON_SORT_KEYS           = False,
@@ -159,15 +193,16 @@ login_manager.login_view = 'login'
 
 socketio = SocketIO(
     app,
-    async_mode           = 'eventlet',
-    cors_allowed_origins = '*',
-    manage_session       = True,
-    path                 = '/socket.io',
-    ping_timeout         = 20,
-    ping_interval        = 10,
-    max_http_buffer_size = 10 * 1024 * 1024,
-    logger               = False,
-    engineio_logger      = False,
+    async_mode            = 'eventlet',
+    cors_allowed_origins  = '*',
+    manage_session        = True,
+    path                  = '/socket.io',
+    ping_timeout          = 30,               # мобильные сети — дольше ждём
+    ping_interval         = 25,               # реже пингуем — меньше трафика
+    max_http_buffer_size  = 5 * 1024 * 1024,  # 5MB буфер (было 10)
+    logger                = False,
+    engineio_logger       = False,
+    compression_threshold = 1024,             # gzip пакеты >1KB
 )
 
 # ══════════════════════════════════════════════════════════
@@ -693,6 +728,7 @@ def rate_limit(endpoint, max_calls=30, window_sec=60):
 #  AUTH
 # ══════════════════════════════════════════════════════════
 @app.route('/login', methods=['GET', 'POST'])
+@ip_rate_limit('login', max_calls=10, window_sec=60)
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
@@ -753,6 +789,7 @@ def _gen_code():
 
 
 @app.route('/check_phone', methods=['POST'])
+@ip_rate_limit('check_phone', max_calls=10, window_sec=60)
 def check_phone():
     try:
         data  = request.get_json() if request.is_json else request.form
@@ -767,6 +804,7 @@ def check_phone():
 
 
 @app.route('/send_code', methods=['POST'])
+@ip_rate_limit('send_code', max_calls=5, window_sec=60)
 def send_code():
     try:
         data     = request.get_json() if request.is_json else request.form
@@ -814,6 +852,7 @@ def send_code():
 
 
 @app.route('/verify_code', methods=['POST'])
+@ip_rate_limit('verify_code', max_calls=10, window_sec=60)
 def verify_code():
     try:
         data  = request.get_json() if request.is_json else request.form
@@ -2286,24 +2325,26 @@ def handle_end_call(data):
 #  ФОНОВАЯ ОЧИСТКА
 # ══════════════════════════════════════════════════════════
 def background_cleanup():
+    _cleanup_cycle = 0
     while True:
         eventlet.sleep(300)
+        _cleanup_cycle += 1
         try:
             with app.app_context():
+                # ── Удаляем истёкшие моменты ──
                 expired = Moment.query.filter(Moment.expires_at < datetime.utcnow()).all()
                 for m in expired:
                     if m.media_url and m.media_url.startswith('/static/'):
                         path = os.path.join(BASE_DIR, m.media_url.lstrip('/'))
                         if os.path.exists(path):
-                            try:
-                                os.remove(path)
-                            except Exception:
-                                pass
+                            try: os.remove(path)
+                            except Exception: pass
                     db.session.delete(m)
                 if expired:
                     db.session.commit()
                     _moments_cache.delete('all')
 
+                # ── Сбрасываем статус оффлайн ──
                 stale = User.query.filter(
                     User.is_online == True,
                     User.last_seen < datetime.utcnow() - timedelta(minutes=10)
@@ -2314,6 +2355,30 @@ def background_cleanup():
                     _user_dict_cache.delete(u.id)
                 if stale:
                     db.session.commit()
+
+                # ── Каждые 30 минут: архив старых сообщений ──
+                if _cleanup_cycle % 6 == 0:
+                    cutoff = datetime.utcnow() - timedelta(days=90)
+                    old_cnt = db.session.execute(
+                        text('SELECT COUNT(*) FROM message WHERE timestamp < :c'), {'c': cutoff}
+                    ).scalar() or 0
+                    if old_cnt > 50000:
+                        db.session.execute(
+                            text('DELETE FROM message WHERE id IN (SELECT id FROM message WHERE timestamp < :c ORDER BY timestamp LIMIT 5000)'),
+                            {'c': cutoff}
+                        )
+                        db.session.commit()
+                        app.logger.info(f'Archived 5000 old messages (total old: {old_cnt})')
+
+                # ── Каждый час: чистим память ip_rate_limits ──
+                if _cleanup_cycle % 12 == 0:
+                    now_m = time.monotonic()
+                    for ip in list(_ip_rate_limits.keys()):
+                        for ep in list(_ip_rate_limits[ip].keys()):
+                            _ip_rate_limits[ip][ep] = [t for t in _ip_rate_limits[ip][ep] if now_m - t < 3600]
+                        if not any(_ip_rate_limits[ip].values()):
+                            del _ip_rate_limits[ip]
+
         except Exception as e:
             app.logger.error(f'Cleanup error: {e}')
 
@@ -2348,6 +2413,14 @@ def run_migrations():
             details TEXT DEFAULT \'\',
             created_at TIMESTAMP DEFAULT NOW()
         )''',
+        # Индексы для производительности (5-10k пользователей)
+        'CREATE INDEX IF NOT EXISTS ix_msg_sender_id    ON message(sender_id)',
+        'CREATE INDEX IF NOT EXISTS ix_msg_media_type   ON message(media_type)',
+        'CREATE INDEX IF NOT EXISTS ix_moment_user_id   ON moment(user_id)',
+        'CREATE INDEX IF NOT EXISTS ix_moment_expires   ON moment(expires_at)',
+        'CREATE INDEX IF NOT EXISTS ix_gmember_user_id  ON group_member(user_id)',
+        'CREATE INDEX IF NOT EXISTS ix_user_last_seen   ON "user"(last_seen)',
+        'CREATE INDEX IF NOT EXISTS ix_user_is_online   ON "user"(is_online) WHERE is_online = TRUE',
     ]
     for sql in migrations:
         try:
