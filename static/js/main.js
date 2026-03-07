@@ -181,7 +181,34 @@ let chatPartnerAvatarSrc = {};
 // ══ КЭШИ МОМЕНТОВ ══
 let momentsCache      = null;
 let momentsLastLoad   = 0;
-let _viewedMomentUsers = new Set(); // uid пользователей чьи моменты уже просмотрены
+let _viewedMomentUsers = (() => {
+    try { return new Set(JSON.parse(localStorage.getItem('wc_viewed_moments') || '[]').map(Number)); }
+    catch(e) { return new Set(); }
+})();
+
+// ── Кеш медиа в памяти ──
+const _mediaCache = new Map();
+async function _getCachedMedia(url) {
+    if (!url) return url;
+    if (_mediaCache.has(url)) return _mediaCache.get(url);
+    try {
+        const r = await fetch(url);
+        if (!r.ok) return url;
+        const blob = await r.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        _mediaCache.set(url, blobUrl);
+        if (_mediaCache.size > 15) {
+            const k = _mediaCache.keys().next().value;
+            try { URL.revokeObjectURL(_mediaCache.get(k)); } catch(e) {}
+            _mediaCache.delete(k);
+        }
+        return blobUrl;
+    } catch(e) { return url; }
+}
+function _preloadMedia(url) {
+    if (!url || _mediaCache.has(url)) return;
+    _getCachedMedia(url).catch(() => {});
+}
 
 // ══ КЭШ СООБЩЕНИЙ — главная фича ══
 // { chatId: { messages: [], loadedAll: bool, lastFetch: timestamp } }
@@ -4503,7 +4530,7 @@ async function loadMoments() {
     }
 
     try {
-        const r = await fetch('/get_moments', { credentials: 'include' });
+        const r = await fetch('/get_moments', { credentials: 'include', cache: 'no-cache', headers: {'Accept-Encoding': 'gzip, deflate'} });
         if (!r.ok) { console.error('get_moments:', r.status); return; }
         const moments = await r.json();
         if (!Array.isArray(moments)) { console.error('not array:', moments); return; }
@@ -4624,6 +4651,20 @@ function renderMomentsList(container, moments) {
         row.appendChild(info);
         container.appendChild(row);
     });
+
+    // Предзагрузка первых 5 медиа в фоне
+    moments.slice(0, 5).forEach(m => {
+        if (m.media_url && !m.media_url.match(/\.(mp4|mov|webm)/i)) {
+            // Для фото — предзагружаем через Image
+            if (!_mediaCache.has(m.media_url)) {
+                const img = new Image();
+                img.src = m.media_url;
+            }
+        }
+        // Для видео — только первые 2 (тяжёлые)
+    });
+    if (moments[0]?.media_url) _preloadMedia(moments[0].media_url);
+    if (moments[1]?.media_url) _preloadMedia(moments[1].media_url);
 }
 
 function _renderUploadingCard(container) {
@@ -4775,10 +4816,10 @@ function _runMomentsViewer(list, startIdx) {
         if (m.media_url) {
             const isVideo = /\.(mp4|mov|webm)/i.test(m.media_url);
 
-            // Размытая обложка — сразу видна
+            // Размытый фон — показывается мгновенно
             const blurBg = document.createElement('div');
             blurBg.id = 'mb-blur';
-            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(m.media_url)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.5s ease';
+            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(m.media_url)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.4s ease';
             bg.appendChild(blurBg);
 
             // Спиннер
@@ -4792,38 +4833,41 @@ function _runMomentsViewer(list, startIdx) {
                 if (mediaLoaded) return;
                 mediaLoaded = true;
                 const media = bg.querySelector('video,img');
-                if (media) {
-                    media.style.opacity = '1';
-                    blurBg.style.opacity = '0';
-                    spin.style.display = 'none';
-                }
-                // Стартуем прогресс только после загрузки
+                if (media) { media.style.opacity = '1'; }
+                blurBg.style.opacity = '0';
+                spin.style.display = 'none';
                 const dur = isVideo
                     ? Math.min((bg.querySelector('video')?.duration||7)*1000, 30000)
                     : 6000;
                 const fill = document.getElementById('mpf');
-                if (fill) {
-                    fill.style.transition = 'width '+(dur/1000)+'s linear';
-                    fill.style.width = '100%';
-                }
+                if (fill) { fill.style.transition='width '+(dur/1000)+'s linear'; fill.style.width='100%'; }
                 autoTimer = setTimeout(() => next(), dur + 200);
+                // Предзагружаем следующее медиа
+                if (list[idx+1]?.media_url) _preloadMedia(list[idx+1].media_url);
             }
 
             if (isVideo) {
                 const vid = document.createElement('video');
-                vid.src = m.media_url;
                 vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
-                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.4s';
+                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
                 vid.oncanplay = onReady;
                 vid.onended = () => next();
                 vid.onerror = onReady;
+                // Используем кешированный blob если есть, иначе прямой URL
+                if (_mediaCache.has(m.media_url)) {
+                    vid.src = _mediaCache.get(m.media_url);
+                } else {
+                    vid.src = m.media_url;
+                    // Предзагружаем текущее в кеш пока играет
+                    _getCachedMedia(m.media_url).catch(() => {});
+                }
                 bg.appendChild(vid);
             } else {
                 const img = document.createElement('img');
-                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.4s';
+                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
                 img.onload = onReady;
                 img.onerror = onReady;
-                img.src = m.media_url;
+                img.src = _mediaCache.get(m.media_url) || m.media_url;
                 bg.appendChild(img);
             }
 
