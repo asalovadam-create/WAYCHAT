@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
-    <title>VartoChat</title>
+    <title>WayChat</title>
 
     <link rel="apple-touch-icon" sizes="180x180" href="/static/logo.png">
     <link rel="icon" type="image/png" sizes="512x512" href="/static/logo.png">
@@ -14,7 +14,7 @@
 
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="VartoChat">
+    <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="theme-color" content="#000000">
 
     <meta name="mobile-web-app-capable" content="yes">
@@ -58,36 +58,53 @@
 </head>
 <body class="bg-black">
 
+    {# FIX: используем getattr чтобы birthday не падал если поле ещё не смигрировано #}
     <div id="user-data-bridge"
-         data-user='{{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar, "phone": current_user.phone, "bio": current_user.bio, "birthday": current_user.birthday.isoformat() if current_user.birthday else None, "is_verified": current_user.is_verified, "verified_type": current_user.verified_type or ""} | tojson | safe }}'
+         data-user='{{ {
+             "id":            current_user.id,
+             "name":          current_user.name,
+             "username":      current_user.username,
+             "avatar":        current_user.avatar,
+             "phone":         current_user.phone,
+             "bio":           current_user.bio or "",
+             "birthday":      current_user.birthday.isoformat() if current_user.birthday else None,
+             "is_verified":   current_user.is_verified,
+             "verified_type": current_user.verified_type or ""
+         } | tojson | safe }}'
          style="display: none;">
     </div>
 
     <script>
         (function() {
             try {
-                const bridge = document.getElementById('user-data-bridge');
-                const rawData = bridge.dataset.user;
+                var bridge = document.getElementById('user-data-bridge');
+                var rawData = bridge ? bridge.dataset.user : null;
+                if (!rawData) throw new Error('no bridge');
 
                 // Парсим данные от сервера
                 window.currentUser = JSON.parse(rawData);
 
                 // Сразу сохраняем в локальный кеш, чтобы аватарка не моргала при перезаходе
                 if (window.currentUser && window.currentUser.id) {
-                    localStorage.setItem('varto_user_cache', JSON.stringify(window.currentUser));
+                    try { localStorage.setItem('varto_user_cache', JSON.stringify(window.currentUser)); } catch(e) {}
                 }
 
-                console.log('✅ Данные профиля синхронизированы');
+                console.log('\u2705 \u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d\u044b');
             } catch (e) {
-                console.warn('⚠️ Ошибка сервера, достаем профиль из кеша...');
-                const cache = localStorage.getItem('varto_user_cache');
-                window.currentUser = cache ? JSON.parse(cache) : { id: 0, name: 'Гость', avatar: '/static/default_avatar.png' };
+                console.warn('\u26a0\ufe0f \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430, \u0434\u043e\u0441\u0442\u0430\u0451\u043c \u043f\u0440\u043e\u0444\u0438\u043b\u044c \u0438\u0437 \u043a\u044d\u0448\u0430...', e);
+                try {
+                    var cache = localStorage.getItem('varto_user_cache');
+                    window.currentUser = cache ? JSON.parse(cache) : { id: 0, name: '\u0413\u043e\u0441\u0442\u044c', avatar: '/static/default_avatar.png' };
+                } catch(e2) {
+                    window.currentUser = { id: 0, name: '\u0413\u043e\u0441\u0442\u044c', avatar: '/static/default_avatar.png' };
+                }
             }
         })();
     </script>
 
     <div id="root" class="h-full w-full"></div>
 
-    <script src="/static/js/main.js" defer></script>
+    {# FIX: убран defer — main.js должен запускаться после того как window.currentUser уже задан #}
+    <script src="/static/js/main.js"></script>
 </body>
 </html>
