@@ -1462,16 +1462,25 @@ function renderChatList(chats) {
                 const _sv=document.createElementNS(_ns,'svg');
                 _sv.setAttribute('width','58');_sv.setAttribute('height','58');_sv.setAttribute('viewBox','0 0 58 58');
                 _sv.style.cssText='position:absolute;inset:0;pointer-events:none';
-                const _cx=29,_cy=29,_r=27,_gap=mc>1?5:0,_seg=(360-_gap*mc)/mc;
-                for(let i=0;i<mc;i++){
-                    const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
-                    const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
-                    const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
-                    const _p=document.createElementNS(_ns,'path');
-                    _p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-                    _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','3.5');
-                    _p.setAttribute('fill','none');_p.setAttribute('stroke-linecap','round');
-                    _sv.appendChild(_p);
+                const _cx=29,_cy=29,_r=27;
+                if (mc === 1) {
+                    // FIX: arc 360° не рисуется — используем <circle>
+                    const _c=document.createElementNS(_ns,'circle');
+                    _c.setAttribute('cx',String(_cx));_c.setAttribute('cy',String(_cy));_c.setAttribute('r',String(_r));
+                    _c.setAttribute('fill','none');_c.setAttribute('stroke','var(--accent)');_c.setAttribute('stroke-width','3.5');
+                    _sv.appendChild(_c);
+                } else {
+                    const _gap=5,_seg=(360-_gap*mc)/mc;
+                    for(let i=0;i<mc;i++){
+                        const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
+                        const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
+                        const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
+                        const _p=document.createElementNS(_ns,'path');
+                        _p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+                        _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','3.5');
+                        _p.setAttribute('fill','none');_p.setAttribute('stroke-linecap','round');
+                        _sv.appendChild(_p);
+                    }
                 }
                 avaWrap.appendChild(_sv);
             }
@@ -4668,27 +4677,40 @@ function renderMomentsList(container, moments) {
         avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
         avaWrap.appendChild(avaInner);
 
-        // SVG кольцо
+        // SVG кольцо — FIX: arc 360° не рисуется, для 1 момента используем <circle>
         const NS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(NS, 'svg');
         svg.setAttribute('width','62'); svg.setAttribute('height','62'); svg.setAttribute('viewBox','0 0 62 62');
         svg.style.cssText = 'position:absolute;inset:0;pointer-events:none';
         const CX=31, CY=31, R=29;
-        const GAP_DEG = cnt > 1 ? 6 : 0;
-        const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
         const ringColor = viewed ? 'rgba(255,255,255,0.2)' : 'var(--accent)';
-        for (let i=0; i<cnt; i++) {
-            const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
-            const tr = d => d*Math.PI/180;
-            const x1=CX+R*Math.cos(tr(s)), y1=CY+R*Math.sin(tr(s));
-            const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
-            const path = document.createElementNS(NS, 'path');
-            path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
-            path.setAttribute('stroke', ringColor);
-            path.setAttribute('stroke-width', viewed ? '2.5' : '3.5');
-            path.setAttribute('fill','none');
-            path.setAttribute('stroke-linecap','round');
-            svg.appendChild(path);
+        const ringWidth = viewed ? '2.5' : '3.5';
+        if (cnt === 1) {
+            // Один момент — полный круг через <circle> (arc 360° через path не работает в SVG)
+            const circ = document.createElementNS(NS, 'circle');
+            circ.setAttribute('cx', String(CX));
+            circ.setAttribute('cy', String(CY));
+            circ.setAttribute('r',  String(R));
+            circ.setAttribute('fill', 'none');
+            circ.setAttribute('stroke', ringColor);
+            circ.setAttribute('stroke-width', ringWidth);
+            svg.appendChild(circ);
+        } else {
+            const GAP_DEG = 6;
+            const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
+            for (let i=0; i<cnt; i++) {
+                const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
+                const tr = d => d*Math.PI/180;
+                const x1=CX+R*Math.cos(tr(s)), y1=CY+R*Math.sin(tr(s));
+                const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
+                const path = document.createElementNS(NS, 'path');
+                path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
+                path.setAttribute('stroke', ringColor);
+                path.setAttribute('stroke-width', ringWidth);
+                path.setAttribute('fill','none');
+                path.setAttribute('stroke-linecap','round');
+                svg.appendChild(path);
+            }
         }
         avaWrap.appendChild(svg);
         row.appendChild(avaWrap);
