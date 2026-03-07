@@ -383,6 +383,7 @@ class User(UserMixin, db.Model):
     ban_reason    = db.Column(db.String(500),  default='')      # причина
     last_ip       = db.Column(db.String(64),   default='')      # последний IP
     reg_ip        = db.Column(db.String(64),   default='')      # IP при регистрации
+    birthday      = db.Column(db.Date,         nullable=True)   # дата рождения
 
     @property
     def online_status(self):
