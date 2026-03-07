@@ -4200,8 +4200,11 @@ async function pickMedia(context) {
     const input = document.createElement('input');
     input.type  = 'file';
     input.accept = 'image/*,video/*';
+    input.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none';
+    document.body.appendChild(input);
     input.onchange = async () => {
         const file = input.files[0];
+        document.body.removeChild(input);
         if (!file) return;
         if (context === 'moment') { _showMomentEditor(file); return; }
         // Сообщение — грузим как раньше
@@ -4218,6 +4221,7 @@ async function pickMedia(context) {
             }
         } catch(e){ showToast('Ошибка загрузки','error'); }
     };
+    input.addEventListener('cancel', () => { try { document.body.removeChild(input); } catch(e){} });
     input.click();
 }
 
@@ -4231,11 +4235,11 @@ function _showMomentEditor(file) {
 
     const ov = document.createElement('div');
     ov.id = 'me-ov';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display",sans-serif';
 
-    // Медиа-фон
+    // Медиа-фон — скруглённые углы как в iOS
     const bg = document.createElement('div');
-    bg.style.cssText = 'position:absolute;inset:0;overflow:hidden';
+    bg.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:200px;overflow:hidden;border-radius:0 0 28px 28px';
     if (isVid) {
         const vid = document.createElement('video');
         vid.src=url; vid.autoplay=true; vid.muted=true; vid.loop=true; vid.playsInline=true;
@@ -4248,59 +4252,106 @@ function _showMomentEditor(file) {
     }
     ov.appendChild(bg);
 
+    // Хедер с кнопкой закрыть
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:10;padding:max(env(safe-area-inset-top),52px) 16px 0;display:flex;align-items:center;justify-content:space-between;background:linear-gradient(to bottom,rgba(0,0,0,0.55) 0%,transparent 100%)';
+    hdr.innerHTML = `
+        <button id="me-close-btn" style="width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+        <div style="font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.2px">Новый момент</div>
+        <div style="width:34px"></div>
+    `;
+    hdr.querySelector('#me-close-btn').onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
+    ov.appendChild(hdr);
+
+    // Плавающие инструменты — кнопки сверху справа (iOS стиль)
+    const floatTools = document.createElement('div');
+    floatTools.style.cssText = 'position:absolute;top:max(calc(env(safe-area-inset-top) + 52px),96px);right:14px;z-index:10;display:flex;flex-direction:column;gap:10px';
+
+    const geoBtn = document.createElement('button');
+    geoBtn.id='me-geo-btn';
+    geoBtn.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s';
+    geoBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg>';
+    geoBtn.title='Геолокация';
+
+    const txtBtn = document.createElement('button');
+    txtBtn.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s';
+    txtBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="white" stroke-width="2.2" stroke-linecap="round"/></svg>';
+    txtBtn.title='Добавить текст';
+
+    floatTools.appendChild(geoBtn);
+    floatTools.appendChild(txtBtn);
+    ov.appendChild(floatTools);
+
     // Перетаскиваемая гео-метка
     const geoTag = document.createElement('div');
     geoTag.id = 'me-geo-tag';
-    geoTag.style.cssText = 'position:absolute;left:50%;top:35%;background:rgba(0,0,0,0.6);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.28);border-radius:22px;padding:9px 16px;color:#fff;font-size:14px;font-weight:600;cursor:grab;display:none;align-items:center;gap:7px;white-space:nowrap;user-select:none;-webkit-user-select:none;z-index:5;transform:translateX(-50%)';
+    geoTag.style.cssText = 'position:absolute;left:50%;top:35%;background:rgba(0,0,0,0.55);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,0.22);border-radius:24px;padding:8px 16px;color:#fff;font-size:13px;font-weight:600;cursor:grab;display:none;align-items:center;gap:6px;white-space:nowrap;user-select:none;-webkit-user-select:none;z-index:8;transform:translateX(-50%)';
     geoTag.innerHTML = '📍 <span id="me-geo-txt">...</span>';
     _makeDraggable(geoTag, ov);
     ov.appendChild(geoTag);
 
-    // Текстовая надпись (перетаскиваемая)
+    // Перетаскиваемая текстовая надпись
     const capTag = document.createElement('div');
     capTag.id = 'me-cap-tag';
-    capTag.style.cssText = 'position:absolute;left:50%;bottom:200px;transform:translateX(-50%);background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:16px;padding:2px 6px;display:none;z-index:5;min-width:120px;max-width:80vw';
+    capTag.style.cssText = 'position:absolute;left:50%;bottom:230px;transform:translateX(-50%);background:rgba(0,0,0,0.45);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.15);border-radius:18px;padding:2px 8px;display:none;z-index:8;min-width:130px;max-width:82vw';
     const capInput = document.createElement('input');
-    capInput.id='me-cap'; capInput.placeholder='Текст...';
-    capInput.style.cssText='background:transparent;border:none;outline:none;color:#fff;font-size:18px;font-weight:600;text-align:center;padding:10px 14px;width:100%;font-family:inherit';
+    capInput.id='me-cap'; capInput.placeholder='Добавить текст...';
+    capInput.style.cssText='background:transparent;border:none;outline:none;color:#fff;font-size:19px;font-weight:700;text-align:center;padding:10px 12px;width:100%;font-family:inherit;letter-spacing:-0.2px';
     capTag.appendChild(capInput);
     _makeDraggable(capTag, ov);
     ov.appendChild(capTag);
 
-    // Панель инструментов снизу
-    const panel = document.createElement('div');
-    panel.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:6;background:rgba(0,0,0,0.85);backdrop-filter:blur(20px);padding:12px 16px max(calc(env(safe-area-inset-bottom,0px)+12px),22px);display:flex;flex-direction:column;gap:10px';
-
-    // Кнопки: Гео | Текст
-    const tools = document.createElement('div'); tools.style.cssText='display:flex;gap:8px';
-
-    const geoBtn = document.createElement('button');
-    geoBtn.id='me-geo-btn';
-    geoBtn.style.cssText='flex:1;padding:10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);border-radius:12px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:inherit';
-    geoBtn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg><span id="me-geo-lbl">Геолокация</span>';
+    // Обработчики кнопок инструментов
     geoBtn.onclick = () => _requestMeGeo(geoBtn, geoTag);
+    txtBtn.onclick = () => {
+        const sh = capTag.style.display === 'flex' ? 'none' : 'flex';
+        capTag.style.display = sh;
+        txtBtn.style.background = sh === 'flex' ? 'rgba(255,255,255,0.28)' : 'rgba(0,0,0,0.45)';
+        if (sh === 'flex') capInput.focus();
+    };
 
-    const txtBtn = document.createElement('button');
-    txtBtn.style.cssText='flex:1;padding:10px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.18);border-radius:12px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:inherit';
-    txtBtn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>Текст';
-    txtBtn.onclick = () => { const sh=capTag.style.display==='flex'?'none':'flex'; capTag.style.display=sh; if(sh==='flex') capInput.focus(); };
+    // Нижняя панель — iOS 26 стиль: «стекло» + скруглённые карточки
+    const panel = document.createElement('div');
+    panel.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:10;background:rgba(18,18,18,0.92);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border-top:0.5px solid rgba(255,255,255,0.1);padding:16px 16px max(calc(env(safe-area-inset-bottom) + 14px),28px)';
 
-    tools.appendChild(geoBtn); tools.appendChild(txtBtn);
-    panel.appendChild(tools);
+    // Строка: аватар + "Ваша история" + время
+    const meRow = document.createElement('div');
+    meRow.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:14px';
+    const avaEl = getAvatarHtml(currentUser, 'w-10 h-10');
+    meRow.innerHTML = `
+        <div style="width:40px;height:40px;border-radius:50%;overflow:hidden;border:2px solid var(--accent,#10b981);flex-shrink:0">${avaEl}</div>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:15px;font-weight:700;color:#fff;letter-spacing:-0.2px">Ваша история</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:1px">Исчезнет через 24 часа</div>
+        </div>
+        <div style="font-size:12px;color:rgba(255,255,255,0.35);font-weight:500">Все контакты</div>
+    `;
+    panel.appendChild(meRow);
 
-    // Отмена / Поделиться
-    const acts = document.createElement('div'); acts.style.cssText='display:flex;gap:10px';
+    // Разделитель
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.08);margin-bottom:14px';
+    panel.appendChild(sep);
+
+    // Кнопки действий
+    const acts = document.createElement('div');
+    acts.style.cssText = 'display:flex;gap:10px';
+
     const cBtn = document.createElement('button');
-    cBtn.style.cssText='flex:1;padding:14px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);border-radius:16px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    cBtn.textContent='Отмена';
+    cBtn.style.cssText = 'flex:1;padding:15px;background:rgba(255,255,255,0.1);border:none;border-radius:18px;color:#fff;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;-webkit-tap-highlight-color:transparent;active:opacity-60';
+    cBtn.textContent = 'Отмена';
     cBtn.onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
 
     const sBtn = document.createElement('button');
-    sBtn.id='me-share'; sBtn.style.cssText='flex:2;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    sBtn.textContent='Поделиться →';
+    sBtn.id = 'me-share';
+    sBtn.style.cssText = 'flex:2;padding:15px;background:var(--accent,#10b981);border:none;border-radius:18px;color:#fff;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;display:flex;align-items:center;justify-content:center;gap:8px;-webkit-tap-highlight-color:transparent;box-shadow:0 4px 20px rgba(16,185,129,0.35)';
+    sBtn.innerHTML = 'Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     sBtn.onclick = () => _publishMomentEditor(ov, file, url);
 
-    acts.appendChild(cBtn); acts.appendChild(sBtn);
+    acts.appendChild(cBtn);
+    acts.appendChild(sBtn);
     panel.appendChild(acts);
     ov.appendChild(panel);
     document.body.appendChild(ov);
@@ -4330,17 +4381,17 @@ function _makeDraggable(el, container) {
 }
 
 async function _requestMeGeo(btn, geoTag) {
-    const lbl = document.getElementById('me-geo-lbl');
-    // Сброс
+    // Сброс если уже активна
     if (_meGeo) {
         _meGeo=null; geoTag.style.display='none';
-        btn.style.background='rgba(255,255,255,0.1)'; btn.style.borderColor='rgba(255,255,255,0.18)';
-        if(lbl) lbl.textContent='Геолокация'; return;
+        btn.style.background='rgba(0,0,0,0.45)'; btn.style.borderColor='rgba(255,255,255,0.18)';
+        btn.title='Геолокация'; return;
     }
-    if(lbl) lbl.textContent='Определяю...';
+    btn.title='Определяю...';
+    btn.style.background='rgba(255,255,255,0.18)';
     if (!navigator.geolocation) {
         showToast('Геолокация не поддерживается','warning');
-        if(lbl) lbl.textContent='Геолокация'; return;
+        btn.style.background='rgba(0,0,0,0.45)'; return;
     }
     try {
         const pos = await new Promise((res,rej) =>
@@ -4353,15 +4404,15 @@ async function _requestMeGeo(btn, geoTag) {
             name = d.address?.city||d.address?.town||d.address?.village||d.address?.county||name;
         } catch(e){}
         _meGeo = {name, lat:pos.coords.latitude.toFixed(5), lng:pos.coords.longitude.toFixed(5)};
-        if(lbl) lbl.textContent = name.length>16 ? name.slice(0,15)+'…' : name;
-        btn.style.background='rgba(16,185,129,0.25)'; btn.style.borderColor='#10b981';
+        btn.title = name.length>16 ? name.slice(0,15)+'…' : name;
+        btn.style.background='rgba(16,185,129,0.4)'; btn.style.borderColor='#10b981';
         const gt = document.getElementById('me-geo-txt');
         if(gt) gt.textContent = name.length>22 ? name.slice(0,20)+'…' : name;
         geoTag.style.display='flex';
     } catch(e) {
         const msg = e.code===1 ? 'Разрешите геолокацию в настройках Safari' : e.code===2 ? 'GPS недоступен' : 'Истёк тайм-аут';
         showToast(msg,'warning',4000);
-        if(lbl) lbl.textContent='Геолокация';
+        btn.style.background='rgba(0,0,0,0.45)';
     }
 }
 
@@ -5631,6 +5682,16 @@ document.addEventListener('visibilitychange', () => {
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
     }
 });
+
+// ══════════════════════════════════════════════════════════
+//  ВЫХОД ИЗ АККАУНТА
+// ══════════════════════════════════════════════════════════
+async function doLogout() {
+    try {
+        await fetch('/logout', { method: 'GET', credentials: 'same-origin' });
+    } catch(e) {}
+    window.location.href = '/login';
+}
 
 // ══════════════════════════════════════════════════════════
 //  ЗАПУСК
