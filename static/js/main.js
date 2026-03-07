@@ -207,7 +207,9 @@ async function _getCachedMedia(url) {
 }
 function _preloadMedia(url) {
     if (!url || _mediaCache.has(url)) return;
-    _getCachedMedia(url).catch(() => {}
+    _getCachedMedia(url).catch(() => {});
+}
+
 // Кеш профилей — не запрашиваем одно и то же дважды
 const _profileCache = new Map(); // id → {data, ts}
 const _PROFILE_TTL  = 5 * 60 * 1000; // 5 мин
@@ -221,8 +223,6 @@ async function _cachedProfile(userId) {
         _profileCache.set(userId, {data, ts: Date.now()});
         return data;
     } catch(e) { return null; }
-}
-);
 }
 
 // ══ КЭШ СООБЩЕНИЙ — главная фича ══
