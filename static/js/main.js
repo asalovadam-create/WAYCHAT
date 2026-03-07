@@ -1462,25 +1462,16 @@ function renderChatList(chats) {
                 const _sv=document.createElementNS(_ns,'svg');
                 _sv.setAttribute('width','58');_sv.setAttribute('height','58');_sv.setAttribute('viewBox','0 0 58 58');
                 _sv.style.cssText='position:absolute;inset:0;pointer-events:none';
-                const _cx=29,_cy=29,_r=27;
-                if (mc === 1) {
-                    // FIX: arc 360° не рисуется — используем <circle>
-                    const _c=document.createElementNS(_ns,'circle');
-                    _c.setAttribute('cx',String(_cx));_c.setAttribute('cy',String(_cy));_c.setAttribute('r',String(_r));
-                    _c.setAttribute('fill','none');_c.setAttribute('stroke','var(--accent)');_c.setAttribute('stroke-width','3.5');
-                    _sv.appendChild(_c);
-                } else {
-                    const _gap=5,_seg=(360-_gap*mc)/mc;
-                    for(let i=0;i<mc;i++){
-                        const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
-                        const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
-                        const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
-                        const _p=document.createElementNS(_ns,'path');
-                        _p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-                        _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','3.5');
-                        _p.setAttribute('fill','none');_p.setAttribute('stroke-linecap','round');
-                        _sv.appendChild(_p);
-                    }
+                const _cx=29,_cy=29,_r=27,_gap=mc>1?5:0,_seg=(360-_gap*mc)/mc;
+                for(let i=0;i<mc;i++){
+                    const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
+                    const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
+                    const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
+                    const _p=document.createElementNS(_ns,'path');
+                    _p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+                    _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','3.5');
+                    _p.setAttribute('fill','none');_p.setAttribute('stroke-linecap','round');
+                    _sv.appendChild(_p);
                 }
                 avaWrap.appendChild(_sv);
             }
@@ -4677,40 +4668,27 @@ function renderMomentsList(container, moments) {
         avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
         avaWrap.appendChild(avaInner);
 
-        // SVG кольцо — FIX: arc 360° не рисуется, для 1 момента используем <circle>
+        // SVG кольцо
         const NS = 'http://www.w3.org/2000/svg';
         const svg = document.createElementNS(NS, 'svg');
         svg.setAttribute('width','62'); svg.setAttribute('height','62'); svg.setAttribute('viewBox','0 0 62 62');
         svg.style.cssText = 'position:absolute;inset:0;pointer-events:none';
         const CX=31, CY=31, R=29;
+        const GAP_DEG = cnt > 1 ? 6 : 0;
+        const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
         const ringColor = viewed ? 'rgba(255,255,255,0.2)' : 'var(--accent)';
-        const ringWidth = viewed ? '2.5' : '3.5';
-        if (cnt === 1) {
-            // Один момент — полный круг через <circle> (arc 360° через path не работает в SVG)
-            const circ = document.createElementNS(NS, 'circle');
-            circ.setAttribute('cx', String(CX));
-            circ.setAttribute('cy', String(CY));
-            circ.setAttribute('r',  String(R));
-            circ.setAttribute('fill', 'none');
-            circ.setAttribute('stroke', ringColor);
-            circ.setAttribute('stroke-width', ringWidth);
-            svg.appendChild(circ);
-        } else {
-            const GAP_DEG = 6;
-            const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
-            for (let i=0; i<cnt; i++) {
-                const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
-                const tr = d => d*Math.PI/180;
-                const x1=CX+R*Math.cos(tr(s)), y1=CY+R*Math.sin(tr(s));
-                const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
-                const path = document.createElementNS(NS, 'path');
-                path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
-                path.setAttribute('stroke', ringColor);
-                path.setAttribute('stroke-width', ringWidth);
-                path.setAttribute('fill','none');
-                path.setAttribute('stroke-linecap','round');
-                svg.appendChild(path);
-            }
+        for (let i=0; i<cnt; i++) {
+            const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
+            const tr = d => d*Math.PI/180;
+            const x1=CX+R*Math.cos(tr(s)), y1=CY+R*Math.sin(tr(s));
+            const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
+            const path = document.createElementNS(NS, 'path');
+            path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
+            path.setAttribute('stroke', ringColor);
+            path.setAttribute('stroke-width', viewed ? '2.5' : '3.5');
+            path.setAttribute('fill','none');
+            path.setAttribute('stroke-linecap','round');
+            svg.appendChild(path);
         }
         avaWrap.appendChild(svg);
         row.appendChild(avaWrap);
@@ -5048,15 +5026,45 @@ function _runMomentsViewer(list, startIdx) {
 
         if (isMe) {
             const acts = document.createElement('div');
-            acts.style.cssText = 'display:flex;gap:8px;align-items:center;flex-shrink:0';
+            acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
+
+            // Кнопка глазка — просмотры
             const viewBtn = document.createElement('button');
-            viewBtn.style.cssText = 'background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);border-radius:12px;color:#fff;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px';
-            viewBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg> ' + (m.view_count||0);
-            viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id); };
+            viewBtn.style.cssText = [
+                'display:flex;align-items:center;gap:6px',
+                'background:rgba(255,255,255,0.14)',
+                'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)',
+                'border:1px solid rgba(255,255,255,0.22)',
+                'border-radius:50px',
+                'color:#fff;padding:8px 14px',
+                'font-size:14px;font-weight:600',
+                'cursor:pointer;font-family:inherit',
+                'transition:background 0.15s,transform 0.1s',
+                'box-shadow:0 2px 12px rgba(0,0,0,0.3)'
+            ].join(';');
+            viewBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.2"/></svg><span id="vbtn-cnt-'+m.id+'">'+(m.view_count||0)+'</span>';
+            viewBtn.onpointerdown = () => { viewBtn.style.transform='scale(0.93)'; viewBtn.style.background='rgba(255,255,255,0.22)'; };
+            viewBtn.onpointerup   = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
+            viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id, viewBtn); };
+
+            // Кнопка удалить — красное ведро
             const del = document.createElement('button');
-            del.style.cssText = 'background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);border-radius:12px;color:#fff;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit';
-            del.textContent = 'Удалить';
+            del.style.cssText = [
+                'display:flex;align-items:center;justify-content:center',
+                'width:38px;height:38px',
+                'background:rgba(239,68,68,0.18)',
+                'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)',
+                'border:1px solid rgba(239,68,68,0.35)',
+                'border-radius:50%',
+                'cursor:pointer',
+                'transition:background 0.15s,transform 0.1s',
+                'box-shadow:0 2px 12px rgba(239,68,68,0.2)'
+            ].join(';');
+            del.innerHTML = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            del.onpointerdown = () => { del.style.transform='scale(0.88)'; del.style.background='rgba(239,68,68,0.35)'; };
+            del.onpointerup   = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
             del.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _confirmDeleteMoment(m.id, ov); };
+
             acts.appendChild(viewBtn); acts.appendChild(del);
             btm.appendChild(acts);
         }
@@ -5089,43 +5097,169 @@ function _runMomentsViewer(list, startIdx) {
 const _viewersCache = {};
 
 function _renderViewersList(container, viewers) {
-    if (!viewers.length) {
-        container.innerHTML = '<div style="text-align:center;padding:32px 20px;color:var(--text-2);font-size:14px">👁 Ещё никто не смотрел</div>';
+    if (!viewers || !viewers.length) {
+        container.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:44px 0 20px;opacity:0.35">'
+            + '<svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="1.5"/></svg>'
+            + '<div style="font-size:15px;font-weight:500">Ещё никто не смотрел</div>'
+            + '</div>';
         return;
     }
-    container.innerHTML = viewers.map(v =>
-        '<div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--border)">'
-        + getAvatarHtml({id:v.id,name:v.name,avatar:v.avatar},'w-10 h-10')
-        + '<div style="flex:1"><div style="font-weight:600;font-size:14px">'+escHtml(v.name)+'</div>'
-        + '<div style="font-size:12px;color:var(--text-2);margin-top:1px">'+v.time+'</div></div>'
-        + '</div>'
-    ).join('');
+    container.innerHTML = viewers.map((v, i) => {
+        const isLast = i === viewers.length - 1;
+        return '<div style="display:flex;align-items:center;gap:14px;padding:11px 0;'+(isLast?'':'border-bottom:0.5px solid rgba(255,255,255,0.06)')+'">'
+            + getAvatarHtml({id:v.id,name:v.name,avatar:v.avatar},'w-11 h-11')
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="font-weight:600;font-size:15px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escHtml(v.name)+'</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:2px;display:flex;align-items:center;gap:4px">'
+            + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + v.time
+            + '</div>'
+            + '</div>'
+            + '</div>';
+    }).join('');
 }
 
-async function _showMomentViewers(momentId) {
+async function _showMomentViewers(momentId, triggerBtn) {
+    // Удаляем старое окно если есть
+    document.getElementById('mv-overlay-'+momentId)?.remove();
+
     const cached = _viewersCache[momentId];
+
+    // Оверлей — z-index выше момента (момент обычно 9000, ставим 10000)
     const ov = document.createElement('div');
-    ov.className = 'modal-overlay';
-    ov.onclick = e => { if (e.target===ov) ov.remove(); };
-    const sh = document.createElement('div'); sh.className='modal-sheet';
-    sh.innerHTML='<div class="modal-handle"></div>'
-        +'<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">'
-        +'<span style="font-size:17px;font-weight:700">👁 Кто смотрел</span>'
-        +'<span id="mv-cnt" style="font-size:13px;color:var(--text-2);background:var(--surface2);border-radius:10px;padding:2px 8px">'+(cached?cached.length:'')+'</span></div>'
-        +'<div id="mv-list" style="max-height:55vh;overflow-y:auto">'
-        +(cached ? '' : '<div style="text-align:center;padding:20px;opacity:0.4">Загрузка...</div>')
-        +'</div>';
-    ov.appendChild(sh); document.body.appendChild(ov);
-    if (cached) { _renderViewersList(sh.querySelector('#mv-list'), cached); return; }
+    ov.id = 'mv-overlay-'+momentId;
+    ov.style.cssText = [
+        'position:fixed;inset:0',
+        'z-index:10000',
+        'display:flex;align-items:flex-end',
+        'animation:mvFadeIn 0.22s ease'
+    ].join(';');
+
+    // Подложка — тап закрывает
+    const backdrop = document.createElement('div');
+    backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)';
+    backdrop.onclick = () => _closeMomentViewers(ov);
+    ov.appendChild(backdrop);
+
+    // Шторка iOS26
+    const sh = document.createElement('div');
+    sh.style.cssText = [
+        'position:relative;width:100%',
+        'background:rgba(18,18,24,0.96)',
+        'backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%)',
+        'border-radius:28px 28px 0 0',
+        'border-top:0.5px solid rgba(255,255,255,0.12)',
+        'padding:0 0 max(env(safe-area-inset-bottom),28px)',
+        'animation:mvSlideUp 0.32s cubic-bezier(0.22,1,0.36,1)',
+        'max-height:72vh;display:flex;flex-direction:column'
+    ].join(';');
+
+    // Хэндл
+    const handle = document.createElement('div');
+    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 0;flex-shrink:0';
+
+    // Заголовок
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:18px 20px 14px;flex-shrink:0';
+    header.innerHTML = '<div style="display:flex;align-items:center;gap:10px">'
+        + '<div style="width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.2"/></svg>'
+        + '</div>'
+        + '<div>'
+        + '<div style="font-size:17px;font-weight:700;letter-spacing:-0.3px">Просмотры</div>'
+        + '<div id="mv-sub-'+momentId+'" style="font-size:12px;color:rgba(255,255,255,0.45);margin-top:1px">'
+        + (cached ? (cached.length + ' ' + _pluralViews(cached.length)) : 'загрузка...')
+        + '</div>'
+        + '</div>'
+        + '</div>'
+        + '<button id="mv-close-btn-'+momentId+'" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>'
+        + '</button>';
+
+    // Разделитель
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.07);margin:0 20px;flex-shrink:0';
+
+    // Список
+    const list = document.createElement('div');
+    list.id = 'mv-list-'+momentId;
+    list.style.cssText = 'flex:1;overflow-y:auto;padding:8px 20px 0;-webkit-overflow-scrolling:touch';
+    if (!cached) {
+        list.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:40px 0;opacity:0.35">'
+            + '<svg width="32" height="32" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="white" stroke-width="1.5"/><path d="M12 8v4M12 16h.01" stroke="white" stroke-width="1.5" stroke-linecap="round"/></svg>'
+            + '<div style="font-size:14px">Загрузка...</div>'
+            + '</div>';
+    }
+
+    sh.appendChild(handle);
+    sh.appendChild(header);
+    sh.appendChild(sep);
+    sh.appendChild(list);
+    ov.appendChild(sh);
+
+    // Кнопка закрытия — вешаем после добавления в DOM
+    const closeBtn = document.getElementById('mv-close-btn-'+momentId);
+    if (closeBtn) closeBtn.onclick = () => _closeMomentViewers(ov);
+
+    // Свайп вниз — закрыть
+    let _ty = 0, _sy = 0;
+    sh.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; _ty = 0; }, {passive:true});
+    sh.addEventListener('touchmove', e => {
+        _ty = e.touches[0].clientY - _sy;
+        if (_ty > 0) sh.style.transform = 'translateY('+_ty+'px)';
+    }, {passive:true});
+    sh.addEventListener('touchend', () => {
+        if (_ty > 80) _closeMomentViewers(ov);
+        else sh.style.transform = '';
+    }, {passive:true});
+
+    // Инжектим анимации если ещё нет
+    if (!document.getElementById('mv-keyframes')) {
+        const st = document.createElement('style');
+        st.id = 'mv-keyframes';
+        st.textContent = '@keyframes mvFadeIn{from{opacity:0}to{opacity:1}}@keyframes mvSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}';
+        document.head.appendChild(st);
+    }
+
+    document.body.appendChild(ov);
+
+    if (cached) {
+        _renderViewersList(list, cached);
+        return;
+    }
+
     try {
         const r = await apiFetch('/moment_viewers/'+momentId);
-        if (!r) return;
-        const viewers = await r.json();
+        if (!r || !r.ok) throw new Error('no response');
+        const data = await r.json();
+        const viewers = data.viewers || data || [];
         _viewersCache[momentId] = viewers;
-        const cnt = sh.querySelector('#mv-cnt');
-        if (cnt) cnt.textContent = viewers.length;
-        _renderViewersList(sh.querySelector('#mv-list'), viewers);
-    } catch(e) {}
+
+        // Обновляем счётчик на кнопке-триггере
+        const vbtnCnt = document.getElementById('vbtn-cnt-'+momentId);
+        if (vbtnCnt) vbtnCnt.textContent = viewers.length;
+
+        const sub = document.getElementById('mv-sub-'+momentId);
+        if (sub) sub.textContent = viewers.length + ' ' + _pluralViews(viewers.length);
+
+        _renderViewersList(list, viewers);
+    } catch(e) {
+        list.innerHTML = '<div style="text-align:center;padding:40px 0;opacity:0.35;font-size:14px">Не удалось загрузить</div>';
+    }
+}
+
+function _closeMomentViewers(ov) {
+    if (!ov) return;
+    ov.style.animation = 'mvFadeIn 0.18s ease reverse forwards';
+    const sh = ov.querySelector('div:last-child');
+    if (sh) sh.style.animation = 'mvSlideUp 0.22s cubic-bezier(0.22,1,0.36,1) reverse forwards';
+    setTimeout(() => ov.remove(), 200);
+}
+
+function _pluralViews(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return 'просмотр';
+    if ([2,3,4].includes(n%10) && ![12,13,14].includes(n%100)) return 'просмотра';
+    return 'просмотров';
 }
 
 async function _confirmDeleteMoment(momentId, viewer) {
