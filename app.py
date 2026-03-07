@@ -1209,9 +1209,10 @@ def get_my_chats():
 
     moment_users = set()
     if partner_ids_all:
+        from sqlalchemy import func
         moment_rows = db.session.execute(
-            text('SELECT DISTINCT user_id FROM moment WHERE user_id IN :ids AND expires_at > NOW()'),
-            {'ids': tuple(partner_ids_all) if len(partner_ids_all) > 1 else (partner_ids_all[0], partner_ids_all[0])}
+            text('SELECT DISTINCT user_id FROM moment WHERE user_id = ANY(:ids) AND expires_at > NOW()'),
+            {'ids': list(partner_ids_all)}
         ).fetchall()
         moment_users = {r.user_id for r in moment_rows}
 
