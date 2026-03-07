@@ -1931,22 +1931,23 @@ function buildMessageRow(msg, animate = true) {
         const dur = parseInt(msg.content || msg.text || '0', 10) || 0;
         const mins = Math.floor(dur / 60);
         const secs = dur % 60;
-        const durStr = mins > 0 ? `${mins} мин ${secs} сек.` : `${secs} сек.`;
+        const durStr = mins > 0 ? (mins + ' мин ' + secs + ' сек.') : (secs + ' сек.');
         const isVideo = type === 'call_video';
-        const callIcon = isVideo
-            ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M23 7l-7 5 7 5V7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="currentColor" stroke-width="2"/></svg>`
-            : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81 19.79 19.79 0 01.54 1.09 2 2 0 012.53 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 8.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
         const label = isVideo ? 'Видеозвонок' : 'Аудиозвонок';
-        contentHtml = `
-            <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;min-width:180px">
-                <div style="width:38px;height:38px;border-radius:50%;background:rgba(16,185,129,0.18);display:flex;align-items:center;justify-content:center;color:var(--accent);flex-shrink:0">
-                    ${callIcon}
-                </div>
-                <div>
-                    <div style="font-size:14px;font-weight:700;letter-spacing:-0.1px">${label}</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:2px">${durStr}</div>
-                </div>
-            </div>`;
+        // SVG иконки без вложенных backticks
+        const audioSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="white"/></svg>';
+        const videoSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" fill="white"/></svg>';
+        const icon = isVideo ? videoSvg : audioSvg;
+        const iconBg = isMe ? 'rgba(255,255,255,0.2)' : 'rgba(16,185,129,0.25)';
+        contentHtml = '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px 4px;min-width:190px">'
+            + '<div style="width:42px;height:42px;border-radius:50%;background:' + iconBg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+            + icon
+            + '</div>'
+            + '<div>'
+            + '<div style="font-size:15px;font-weight:700;letter-spacing:-0.2px">' + label + '</div>'
+            + '<div style="font-size:12px;opacity:0.6;margin-top:3px">' + durStr + '</div>'
+            + '</div>'
+            + '</div>';
     } else if (type === 'image') {
         contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
     } else if (type === 'video') {
