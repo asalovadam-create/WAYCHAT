@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 
 from flask import (
     Flask, render_template, request, redirect,
-    url_for, flash, jsonify, session, make_response
+    url_for, flash, jsonify, session, make_response, send_from_directory
 )
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
@@ -156,23 +156,6 @@ CORS(app, supports_credentials=True, origins=['*'])
 db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
-
-# ══ АВТО-МИГРАЦИЯ ══════════════════════════════════════════
-# Выполняется СРАЗУ при импорте модуля (работает с gunicorn).
-# Добавляем колонки которых может не хватать в боевой БД.
-def _run_startup_migrations():
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS birthday DATE'))
-            conn.commit()
-    except Exception as _e:
-        app.logger.warning(f'startup migration birthday: {_e}')
-
-with app.app_context():
-    try:
-        _run_startup_migrations()
-    except Exception as _e:
-        app.logger.warning(f'startup migration failed: {_e}')
 
 socketio = SocketIO(
     app,
@@ -384,13 +367,19 @@ class User(UserMixin, db.Model):
     username      = db.Column(db.String(80),   unique=True, nullable=False, index=True)
     name          = db.Column(db.String(120),  nullable=False)
     bio           = db.Column(db.Text,         default='')
-    birthday      = db.Column(db.Date,         nullable=True)
     password_hash = db.Column(db.String(256),  nullable=True)
     avatar        = db.Column(db.String(300),  default='/static/default_avatar.png')
     is_online     = db.Column(db.Boolean,      default=False, index=True)
     last_seen     = db.Column(db.DateTime,     default=datetime.utcnow)
     created_at    = db.Column(db.DateTime,     default=datetime.utcnow)
     is_blocked    = db.Column(db.Boolean,      default=False)
+    is_verified   = db.Column(db.Boolean,      default=False)   # галочка верификации
+    verified_type = db.Column(db.String(30),   default='')      # 'official','star','dev','press'
+    is_super_admin= db.Column(db.Boolean,      default=False)   # суперадмин
+    ban_until     = db.Column(db.DateTime,     nullable=True)   # временная блокировка
+    ban_reason    = db.Column(db.String(500),  default='')      # причина
+    last_ip       = db.Column(db.String(64),   default='')      # последний IP
+    reg_ip        = db.Column(db.String(64),   default='')      # IP при регистрации
 
     @property
     def online_status(self):
@@ -412,12 +401,14 @@ class User(UserMixin, db.Model):
             'username':   self.username,
             'name':       self.name,
             'bio':        self.bio or '',
-            'birthday':   self.birthday.isoformat() if self.birthday else None,
             'avatar':     self.avatar or '/static/default_avatar.png',
             'is_online':  self.is_online,
             'last_seen':  self.last_seen.isoformat() if self.last_seen else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'is_blocked': self.is_blocked,
+            'is_blocked':   self.is_blocked,
+            'is_verified':  self.is_verified,
+            'verified_type':self.verified_type or '',
+            'ban_until':    self.ban_until.isoformat() if self.ban_until else None,
         }
 
     def invalidate_cache(self):
@@ -528,6 +519,29 @@ class BlockedUser(db.Model):
     __table_args__ = (db.UniqueConstraint('blocker_id', 'blocked_id', name='uq_block'),)
 
 
+class UserReport(db.Model):
+    """Жалобы пользователей"""
+    __tablename__ = 'user_report'
+    id          = db.Column(db.Integer,     primary_key=True)
+    reporter_id = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False, index=True)
+    target_id   = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False, index=True)
+    reason      = db.Column(db.String(100), default='other')
+    comment     = db.Column(db.String(500), default='')
+    created_at  = db.Column(db.DateTime,    default=datetime.utcnow)
+    resolved    = db.Column(db.Boolean,     default=False)
+
+
+class AdminLog(db.Model):
+    """Лог действий администратора"""
+    __tablename__ = 'admin_log'
+    id         = db.Column(db.Integer,     primary_key=True)
+    admin_id   = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
+    action     = db.Column(db.String(100), nullable=False)
+    target_id  = db.Column(db.Integer,     nullable=True)
+    details    = db.Column(db.Text,        default='')
+    created_at = db.Column(db.DateTime,    default=datetime.utcnow)
+
+
 class PushSubscription(db.Model):
     __tablename__ = 'push_subscription'
     id         = db.Column(db.Integer,     primary_key=True)
@@ -613,6 +627,38 @@ def emit_to_user(user_id, event, data, skip_sid=None):
     socketio.emit(event, data, room=f'user_{user_id}', skip_sid=skip_sid)
 
 
+def _get_ip():
+    """Получаем реальный IP клиента (через прокси/Render)"""
+    for header in ('X-Forwarded-For', 'X-Real-IP', 'CF-Connecting-IP'):
+        val = request.headers.get(header)
+        if val:
+            return val.split(',')[0].strip()[:64]
+    return (request.remote_addr or '')[:64]
+
+
+@app.before_request
+def _check_ban_and_ip():
+    """Снимаем временный бан если время вышло; обновляем IP"""
+    if current_user.is_authenticated:
+        try:
+            u = current_user._get_current_object()
+            changed = False
+            if u.ban_until and u.ban_until < datetime.utcnow():
+                u.is_blocked = False
+                u.ban_until  = None
+                u.ban_reason = ''
+                changed = True
+            ip = _get_ip()
+            if ip and u.last_ip != ip:
+                u.last_ip = ip
+                changed = True
+            if changed:
+                db.session.commit()
+                u.invalidate_cache()
+        except Exception:
+            pass
+
+
 def broadcast_status(user_id, online, throttle_ms=500):
     now  = time.monotonic()
     last = _status_throttle.get(user_id, 0)
@@ -677,6 +723,7 @@ def login():
             login_user(u, remember=True)
             u.is_online = True
             u.last_seen = datetime.utcnow()
+            u.last_ip   = _get_ip()
             db.session.commit()
             u.invalidate_cache()
             broadcast_status(u.id, True)
@@ -892,11 +939,14 @@ def register_step2_page():
         if User.query.filter_by(username=pending['username']).first():
             return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
 
+        ip_addr = _get_ip()
         u = User(
             phone         = phone,
             name          = pending['name'][:120],
             username      = pending['username'][:80],
             password_hash = generate_password_hash('__passwordless__'),
+            reg_ip        = ip_addr,
+            last_ip       = ip_addr,
         )
         db.session.add(u)
         db.session.commit()
@@ -986,7 +1036,7 @@ def push_unsubscribe():
     return jsonify({'success': True})
 
 
-@app.route('/logout', methods=['GET', 'POST'])
+@app.route('/logout')
 @login_required
 def logout():
     try:
@@ -1001,9 +1051,6 @@ def logout():
     except Exception as e:
         app.logger.error(f'logout error: {e}')
     logout_user()
-    session.clear()
-    if request.method == 'POST':
-        return jsonify({'success': True})
     return redirect(url_for('login'))
 
 # ══════════════════════════════════════════════════════════
@@ -1058,7 +1105,6 @@ def get_user_profile(user_id):
         'username':   u.username,
         'avatar':     u.avatar,
         'bio':        u.bio or '',
-        'birthday':   u.birthday.isoformat() if u.birthday else None,
         'online':     online,
         'phone':      u.phone,
         'created_at': u.created_at.isoformat() if u.created_at else None,
@@ -1067,16 +1113,6 @@ def get_user_profile(user_id):
     resp = make_response(jsonify(data))
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
-
-
-@app.route('/get_user_by_username/<username>')
-@login_required
-def get_user_by_username(username):
-    username = username.lstrip('@').lower()
-    u = User.query.filter_by(username=username).first()
-    if not u:
-        return jsonify({'error': 'Пользователь не найден'}), 404
-    return jsonify({'id': u.id, 'name': u.name, 'username': u.username, 'avatar': u.avatar})
 
 # ══════════════════════════════════════════════════════════
 #  ЧАТЫ
@@ -1579,10 +1615,10 @@ def search_users():
 @login_required
 @rate_limit('update_profile', max_calls=10, window_sec=60)
 def update_profile():
-    data     = request.get_json() or {}
-    name     = data.get('name', '').strip()
-    bio      = data.get('bio', None)
-    uid      = current_user.id
+    data = request.get_json() or {}
+    name = data.get('name', '').strip()
+    bio  = data.get('bio', None)
+    uid  = current_user.id
 
     u = db.session.get(User, uid)
     if not u:
@@ -1592,12 +1628,6 @@ def update_profile():
         u.name = name[:120]
     if bio is not None:
         u.bio = bio[:500]
-    if 'birthday' in data:
-        try:
-            from datetime import date as _date
-            u.birthday = _date.fromisoformat(data['birthday']) if data['birthday'] else None
-        except Exception:
-            pass
 
     db.session.commit()
     u.invalidate_cache()
@@ -1755,17 +1785,7 @@ def get_moments():
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.asc()).all()
-
-    # Один запрос для всех view_count вместо N запросов
-    moment_ids = [m.Moment.id for m in moments]
-    view_counts = {}
-    if moment_ids:
-        placeholders = ','.join(str(i) for i in moment_ids)
-        rows = db.session.execute(
-            text(f'SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id IN ({placeholders}) GROUP BY moment_id')
-        ).fetchall()
-        view_counts = {r[0]: r[1] for r in rows}
+    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
 
     data = [{
         'id':            m.Moment.id,
@@ -1777,7 +1797,7 @@ def get_moments():
         'geo_name':      m.Moment.geo_name or '',
         'timestamp':     to_moscow_str(m.Moment.timestamp),
         'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    view_counts.get(m.Moment.id, 0),
+        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
         'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
@@ -2299,18 +2319,43 @@ def background_cleanup():
 #  МИГРАЦИИ
 # ══════════════════════════════════════════════════════════
 def run_migrations():
-    try:
-        with db.engine.connect() as conn:
-            conn.execute(text('''CREATE TABLE IF NOT EXISTS moment_view (
-                id SERIAL PRIMARY KEY,
-                moment_id INTEGER NOT NULL REFERENCES moment(id),
-                viewer_id INTEGER NOT NULL REFERENCES "user"(id),
-                viewed_at TIMESTAMP DEFAULT NOW(),
-                UNIQUE(moment_id, viewer_id)
-            )'''))
-            conn.commit()
-    except Exception as e:
-        app.logger.warning(f'moment_view migration: {e}')
+    migrations = [
+        'CREATE TABLE IF NOT EXISTS moment_view (id SERIAL PRIMARY KEY, moment_id INTEGER NOT NULL REFERENCES moment(id), viewer_id INTEGER NOT NULL REFERENCES "user"(id), viewed_at TIMESTAMP DEFAULT NOW(), UNIQUE(moment_id, viewer_id))',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS verified_type VARCHAR(30) DEFAULT \'\'',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN DEFAULT FALSE',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ban_until TIMESTAMP',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ban_reason VARCHAR(500) DEFAULT \'\'',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_ip VARCHAR(64) DEFAULT \'\'',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS reg_ip VARCHAR(64) DEFAULT \'\'',
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS birthday DATE',
+        '''CREATE TABLE IF NOT EXISTS user_report (
+            id SERIAL PRIMARY KEY,
+            reporter_id INTEGER NOT NULL REFERENCES "user"(id),
+            target_id INTEGER NOT NULL REFERENCES "user"(id),
+            reason VARCHAR(100) DEFAULT \'other\',
+            comment VARCHAR(500) DEFAULT \'\',
+            created_at TIMESTAMP DEFAULT NOW(),
+            resolved BOOLEAN DEFAULT FALSE
+        )''',
+        '''CREATE TABLE IF NOT EXISTS admin_log (
+            id SERIAL PRIMARY KEY,
+            admin_id INTEGER NOT NULL REFERENCES "user"(id),
+            action VARCHAR(100) NOT NULL,
+            target_id INTEGER,
+            details TEXT DEFAULT \'\',
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+    ]
+    for sql in migrations:
+        try:
+            with db.engine.connect() as conn:
+                conn.execute(text(sql))
+                conn.commit()
+        except Exception as e:
+            app.logger.warning(f'migration skip: {e}')
+
+    # Passwordless fix
     try:
         with db.engine.connect() as conn:
             conn.execute(text(
@@ -2319,6 +2364,330 @@ def run_migrations():
             conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
+
+
+
+# ══════════════════════════════════════════════════════════
+#  ADMIN PANEL
+# ══════════════════════════════════════════════════════════
+import functools
+
+def require_admin(f):
+    @functools.wraps(f)
+    def decorated(*args, **kwargs):
+        if not current_user.is_authenticated or not current_user.is_super_admin:
+            return jsonify({'error': 'Forbidden'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+
+def _admin_log(action, target_id=None, details=''):
+    try:
+        db.session.add(AdminLog(
+            admin_id=current_user.id,
+            action=action,
+            target_id=target_id,
+            details=str(details)[:500]
+        ))
+        db.session.commit()
+    except Exception:
+        pass
+
+
+@app.route('/admin')
+@login_required
+def admin_panel():
+    if not current_user.is_super_admin:
+        return redirect(url_for('index'))
+    return send_from_directory(os.path.join(BASE_DIR, 'static'), 'admin.html')
+
+
+@app.route('/admin/api/stats')
+@login_required
+@require_admin
+def admin_stats():
+    total_users   = User.query.count()
+    online_users  = User.query.filter_by(is_online=True).count()
+    blocked_users = User.query.filter_by(is_blocked=True).count()
+    verified_users= User.query.filter_by(is_verified=True).count()
+    total_reports = UserReport.query.filter_by(resolved=False).count()
+    total_msgs    = Message.query.count()
+    return jsonify({
+        'total_users':   total_users,
+        'online_users':  online_users,
+        'blocked_users': blocked_users,
+        'verified_users':verified_users,
+        'open_reports':  total_reports,
+        'total_messages':total_msgs,
+    })
+
+
+@app.route('/admin/api/users')
+@login_required
+@require_admin
+def admin_users():
+    page     = int(request.args.get('page', 1))
+    per_page = int(request.args.get('per', 30))
+    q        = request.args.get('q', '').strip()
+    filt     = request.args.get('filter', 'all')  # all|blocked|verified|reported
+
+    query = User.query
+    if q:
+        query = query.filter(
+            db.or_(
+                User.username.ilike(f'%{q}%'),
+                User.name.ilike(f'%{q}%'),
+                User.phone.ilike(f'%{q}%'),
+                User.last_ip.ilike(f'%{q}%'),
+            )
+        )
+    if filt == 'blocked':
+        query = query.filter(User.is_blocked == True)
+    elif filt == 'verified':
+        query = query.filter(User.is_verified == True)
+    elif filt == 'reported':
+        reported_ids = db.session.query(UserReport.target_id).filter_by(resolved=False).distinct()
+        query = query.filter(User.id.in_(reported_ids))
+
+    query = query.order_by(User.id.desc())
+    total = query.count()
+    users = query.offset((page-1)*per_page).limit(per_page).all()
+
+    result = []
+    for u in users:
+        report_count = UserReport.query.filter_by(target_id=u.id, resolved=False).count()
+        result.append({
+            'id':           u.id,
+            'name':         u.name,
+            'username':     u.username,
+            'phone':        u.phone,
+            'avatar':       u.avatar or '',
+            'is_blocked':   u.is_blocked,
+            'ban_until':    u.ban_until.isoformat() if u.ban_until else None,
+            'ban_reason':   u.ban_reason or '',
+            'is_verified':  u.is_verified,
+            'verified_type':u.verified_type or '',
+            'is_online':    u.is_online,
+            'last_seen':    u.last_seen.isoformat() if u.last_seen else None,
+            'created_at':   u.created_at.isoformat() if u.created_at else None,
+            'last_ip':      u.last_ip or '',
+            'reg_ip':       u.reg_ip or '',
+            'bio':          u.bio or '',
+            'report_count': report_count,
+            'is_super_admin': u.is_super_admin,
+        })
+    return jsonify({'users': result, 'total': total, 'page': page, 'per': per_page})
+
+
+@app.route('/admin/api/user/<int:uid>')
+@login_required
+@require_admin
+def admin_user_detail(uid):
+    u = db.session.get(User, uid)
+    if not u:
+        return jsonify({'error': 'Not found'}), 404
+
+    reports = UserReport.query.filter_by(target_id=uid).order_by(UserReport.created_at.desc()).limit(20).all()
+    reports_data = []
+    for r in reports:
+        reporter = db.session.get(User, r.reporter_id)
+        reports_data.append({
+            'id':       r.id,
+            'reporter': reporter.username if reporter else '?',
+            'reason':   r.reason,
+            'comment':  r.comment,
+            'date':     r.created_at.isoformat(),
+            'resolved': r.resolved,
+        })
+
+    logs = AdminLog.query.filter_by(target_id=uid).order_by(AdminLog.created_at.desc()).limit(20).all()
+    logs_data = []
+    for l in logs:
+        admin = db.session.get(User, l.admin_id)
+        logs_data.append({
+            'action':  l.action,
+            'admin':   admin.username if admin else '?',
+            'details': l.details,
+            'date':    l.created_at.isoformat(),
+        })
+
+    msg_count   = Message.query.filter_by(sender_id=uid).count()
+    moment_count= Moment.query.filter_by(user_id=uid).count()
+
+    return jsonify({
+        'id':           u.id,
+        'name':         u.name,
+        'username':     u.username,
+        'phone':        u.phone,
+        'avatar':       u.avatar or '',
+        'bio':          u.bio or '',
+        'is_blocked':   u.is_blocked,
+        'ban_until':    u.ban_until.isoformat() if u.ban_until else None,
+        'ban_reason':   u.ban_reason or '',
+        'is_verified':  u.is_verified,
+        'verified_type':u.verified_type or '',
+        'is_online':    u.is_online,
+        'last_seen':    u.last_seen.isoformat() if u.last_seen else None,
+        'created_at':   u.created_at.isoformat() if u.created_at else None,
+        'last_ip':      u.last_ip or '',
+        'reg_ip':       u.reg_ip or '',
+        'is_super_admin': u.is_super_admin,
+        'msg_count':    msg_count,
+        'moment_count': moment_count,
+        'reports':      reports_data,
+        'admin_logs':   logs_data,
+    })
+
+
+@app.route('/admin/api/ban', methods=['POST'])
+@login_required
+@require_admin
+def admin_ban():
+    data     = request.get_json()
+    uid      = data.get('user_id')
+    mode     = data.get('mode', 'permanent')   # 'permanent' | 'hours' | 'days' | 'unban'
+    duration = int(data.get('duration', 24))
+    reason   = data.get('reason', '')[:500]
+
+    u = db.session.get(User, uid)
+    if not u:
+        return jsonify({'error': 'User not found'}), 404
+    if u.is_super_admin:
+        return jsonify({'error': 'Cannot ban admin'}), 403
+
+    if mode == 'unban':
+        u.is_blocked = False
+        u.ban_until  = None
+        u.ban_reason = ''
+        _admin_log('unban', uid, f'Разбанен')
+    elif mode == 'permanent':
+        u.is_blocked = True
+        u.ban_until  = None
+        u.ban_reason = reason
+        _admin_log('ban_permanent', uid, reason)
+    elif mode == 'hours':
+        u.is_blocked = True
+        u.ban_until  = datetime.utcnow() + timedelta(hours=duration)
+        u.ban_reason = reason
+        _admin_log('ban_temp', uid, f'{duration}ч: {reason}')
+    elif mode == 'days':
+        u.is_blocked = True
+        u.ban_until  = datetime.utcnow() + timedelta(days=duration)
+        u.ban_reason = reason
+        _admin_log('ban_temp', uid, f'{duration}д: {reason}')
+
+    u.invalidate_cache()
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/admin/api/verify', methods=['POST'])
+@login_required
+@require_admin
+def admin_verify():
+    data  = request.get_json()
+    uid   = data.get('user_id')
+    badge = data.get('badge', '')    # '' = убрать, 'official','star','dev','press','partner'
+    u = db.session.get(User, uid)
+    if not u:
+        return jsonify({'error': 'Not found'}), 404
+
+    if badge:
+        u.is_verified   = True
+        u.verified_type = badge
+        _admin_log('verify', uid, f'badge={badge}')
+    else:
+        u.is_verified   = False
+        u.verified_type = ''
+        _admin_log('unverify', uid)
+
+    u.invalidate_cache()
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/admin/api/reports')
+@login_required
+@require_admin
+def admin_reports():
+    page     = int(request.args.get('page', 1))
+    per_page = 30
+    resolved = request.args.get('resolved', 'false') == 'true'
+
+    reports = UserReport.query.filter_by(resolved=resolved)\
+        .order_by(UserReport.created_at.desc())\
+        .offset((page-1)*per_page).limit(per_page).all()
+
+    result = []
+    for r in reports:
+        reporter = db.session.get(User, r.reporter_id)
+        target   = db.session.get(User, r.target_id)
+        result.append({
+            'id':       r.id,
+            'reporter': {'id': r.reporter_id, 'username': reporter.username if reporter else '?'},
+            'target':   {'id': r.target_id, 'username': target.username if target else '?', 'name': target.name if target else '?'},
+            'reason':   r.reason,
+            'comment':  r.comment,
+            'date':     r.created_at.isoformat(),
+            'resolved': r.resolved,
+        })
+    total = UserReport.query.filter_by(resolved=resolved).count()
+    return jsonify({'reports': result, 'total': total})
+
+
+@app.route('/admin/api/report/resolve', methods=['POST'])
+@login_required
+@require_admin
+def admin_resolve_report():
+    data = request.get_json()
+    rid  = data.get('report_id')
+    r    = db.session.get(UserReport, rid)
+    if not r:
+        return jsonify({'error': 'Not found'}), 404
+    r.resolved = True
+    db.session.commit()
+    return jsonify({'success': True})
+
+
+@app.route('/admin/api/logs')
+@login_required
+@require_admin
+def admin_logs():
+    page  = int(request.args.get('page', 1))
+    per   = 50
+    logs  = AdminLog.query.order_by(AdminLog.created_at.desc())\
+        .offset((page-1)*per).limit(per).all()
+    result = []
+    for l in logs:
+        admin  = db.session.get(User, l.admin_id)
+        target = db.session.get(User, l.target_id) if l.target_id else None
+        result.append({
+            'action':  l.action,
+            'admin':   admin.username if admin else '?',
+            'target':  target.username if target else None,
+            'details': l.details,
+            'date':    l.created_at.isoformat(),
+        })
+    return jsonify({'logs': result, 'total': AdminLog.query.count()})
+
+
+@app.route('/report_user', methods=['POST'])
+@login_required
+def report_user():
+    data      = request.get_json()
+    target_id = data.get('user_id')
+    reason    = data.get('reason', 'other')[:100]
+    comment   = data.get('comment', '')[:500]
+    uid       = current_user.id
+    if not target_id or target_id == uid:
+        return jsonify({'error': 'Invalid'}), 400
+    existing = UserReport.query.filter_by(reporter_id=uid, target_id=target_id, resolved=False).first()
+    if existing:
+        return jsonify({'error': 'Уже отправлена жалоба'}), 400
+    db.session.add(UserReport(reporter_id=uid, target_id=target_id, reason=reason, comment=comment))
+    db.session.commit()
+    return jsonify({'success': True})
+
 
 # ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
