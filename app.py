@@ -2415,7 +2415,7 @@ def run_migrations():
         )''',
         # Индексы для производительности (5-10k пользователей)
         'CREATE INDEX IF NOT EXISTS ix_msg_sender_id    ON message(sender_id)',
-        'CREATE INDEX IF NOT EXISTS ix_msg_media_type   ON message(media_type)',
+        'ALTER TABLE message ALTER COLUMN type TYPE VARCHAR(20)',
         'CREATE INDEX IF NOT EXISTS ix_moment_user_id   ON moment(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_moment_expires   ON moment(expires_at)',
         'CREATE INDEX IF NOT EXISTS ix_gmember_user_id  ON group_member(user_id)',
@@ -2765,28 +2765,6 @@ def report_user():
 
 
 # ══════════════════════════════════════════════════════════
-#  ОДНОРАЗОВАЯ МИГРАЦИЯ — после применения УДАЛИ этот роут
-# ══════════════════════════════════════════════════════════
-@app.route('/run_fix_migration')
-def run_fix_migration():
-    secret = request.args.get('secret', '')
-    if secret != os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me')[:16]:
-        return 'forbidden', 403
-    results = []
-    sqls = [
-        'ALTER TABLE message ALTER COLUMN type TYPE VARCHAR(20)',
-    ]
-    for sql in sqls:
-        try:
-            with db.engine.connect() as conn:
-                conn.execute(text(sql))
-                conn.commit()
-            results.append(f'OK: {sql}')
-        except Exception as e:
-            results.append(f'SKIP ({e}): {sql}')
-    return '<br>'.join(results)
-
-# ══════════════════════════════════════════════════════════
 #  HEALTHCHECK
 # ══════════════════════════════════════════════════════════
 @app.route('/health')
@@ -2837,14 +2815,23 @@ def shutdown_session(exception=None):
 # ══════════════════════════════════════════════════════════
 #  ЗАПУСК
 # ══════════════════════════════════════════════════════════
-if __name__ == '__main__':
-    with app.app_context():
+# ══════════════════════════════════════════════════════════
+#  ЗАПУСК
+# ══════════════════════════════════════════════════════════
+
+# Выполняется при любом старте — и gunicorn на Render, и python app.py локально
+with app.app_context():
+    try:
         os.makedirs(os.path.join(BASE_DIR, 'instance'), exist_ok=True)
         db.create_all()
         run_migrations()
+        print('✅ DB init OK')
+    except Exception as _e:
+        print(f'⚠️  DB init error: {_e}')
 
-    eventlet.spawn(background_cleanup)
+eventlet.spawn(background_cleanup)
 
+if __name__ == '__main__':
     print('╔══════════════════════════════════════════════════════╗')
     print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
     print('╚══════════════════════════════════════════════════════╝')
