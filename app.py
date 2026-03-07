@@ -130,16 +130,6 @@ app = Flask(__name__,
             static_url_path='/static')
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
-@app.route('/static/sw.js')
-def service_worker():
-    """Service Worker — нужен в корне для правильного scope."""
-    from flask import send_from_directory
-    resp = send_from_directory(os.path.join(BASE_DIR, 'static'), 'sw.js')
-    resp.headers['Content-Type'] = 'application/javascript'
-    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-    return resp
-
-
 @app.after_request
 def _add_cache_headers(response):
     if request.path.startswith('/static/'):
@@ -1020,16 +1010,16 @@ def vapid_public_key():
 @app.route('/sw.js')
 def service_worker():
     from flask import Response
-    sw_path = os.path.join(BASE_DIR, 'sw.js')
-    try:
-        with open(sw_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        resp = Response(content, mimetype='application/javascript')
-        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        resp.headers['Service-Worker-Allowed'] = '/'
-        return resp
-    except FileNotFoundError:
-        return Response('// sw not found', mimetype='application/javascript', status=404)
+    # Ищем sw.js сначала в static/, потом в корне проекта
+    for sw_path in [os.path.join(BASE_DIR, 'static', 'sw.js'), os.path.join(BASE_DIR, 'sw.js')]:
+        if os.path.exists(sw_path):
+            with open(sw_path, 'r', encoding='utf-8') as f:
+                sw_content = f.read()
+            resp = Response(sw_content, mimetype='application/javascript')
+            resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            resp.headers['Service-Worker-Allowed'] = '/'
+            return resp
+    return Response('// sw not found', mimetype='application/javascript', status=404)
 
 
 @app.route('/manifest.json')
