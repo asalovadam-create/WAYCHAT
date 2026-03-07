@@ -1336,6 +1336,58 @@ def get_messages(chat_id):
     _chat_cache.delete(uid)
     return jsonify([m.to_dict() for m in reversed(msgs)])
 
+
+
+# ══════════════════════════════════════════════════════════
+#  HTTP ОТПРАВКА СООБЩЕНИЯ (video_circle и другие через fetch)
+# ══════════════════════════════════════════════════════════
+@app.route("/send_message", methods=["POST"])
+@login_required
+@rate_limit("send_http_msg", max_calls=60, window_sec=60)
+def send_message_http():
+    data     = request.get_json() or {}
+    chat_id  = data.get("chat_id")
+    media_url= (data.get("media_url") or "").strip()
+    msg_type = data.get("media_type") or data.get("type", "text")
+    content  = (data.get("text") or data.get("content") or "")[:10000]
+    if not chat_id:
+        return jsonify({"success": False, "error": "chat_id required"}), 400
+    uid   = current_user.id
+    uname = current_user.name
+    chat  = db.session.get(Chat, chat_id)
+    if not chat:
+        return jsonify({"success": False, "error": "Chat not found"}), 404
+    msg = Message(chat_id=chat_id, sender_id=uid, sender_name=uname,
+        type=msg_type, content=content, file_url=media_url or None)
+    db.session.add(msg)
+    db.session.commit()
+    _chat_cache.delete(uid)
+    payload = msg.to_dict()
+    payload["chat_id"] = chat_id
+    if chat.room_key.startswith("group_"):
+        group = Group.query.filter_by(chat_id=chat_id).first()
+        if group:
+            payload["is_group_msg"] = True
+            payload["group_id"] = group.id
+            members = GroupMember.query.filter_by(group_id=group.id).all()
+            for m in members:
+                _chat_cache.delete(m.user_id)
+                socketio.emit("new_message", payload, room=f"user_{m.user_id}")
+    else:
+        payload["is_group_msg"] = False
+        parts = chat.room_key.replace("chat_", "").split("_")
+        for uid_str in parts:
+            if uid_str.isdigit():
+                uid_int = int(uid_str)
+                _chat_cache.delete(uid_int)
+                socketio.emit("new_message", payload, room=f"user_{uid_str}")
+                if uid_int != uid:
+                    is_online = _online_cache.get(uid_int)
+                    if not is_online:
+                        push_preview = "🎥 Видео-кружок" if msg_type == "video_circle" else (content[:80] or "...")
+                        eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
+    return jsonify({"success": True, "msg_id": msg.id})
+
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
 # ══════════════════════════════════════════════════════════
