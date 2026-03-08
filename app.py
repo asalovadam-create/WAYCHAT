@@ -52,10 +52,17 @@ try:
     from cryptography.hazmat.primitives.hashes import SHA256
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     from cryptography.hazmat.primitives.asymmetric.ec import ECDH
-    PUSH_AVAILABLE = True
+    CRYPTO_AVAILABLE = True
 except ImportError as _e:
+    CRYPTO_AVAILABLE = False
+    print(f'⚠️  Crypto недоступен: {_e}')
+
+try:
+    from pywebpush import webpush, WebPushException
+    PUSH_AVAILABLE = True
+except ImportError:
     PUSH_AVAILABLE = False
-    print(f'⚠️  Web Push недоступен: {_e}')
+    print('⚠️  pywebpush не установлен: pip install pywebpush')
 
 # ══════════════════════════════════════════════════════════
 #  ПУТИ И ПАПКИ
@@ -250,7 +257,7 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
 #  VAPID — WEB PUSH
 # ══════════════════════════════════════════════════════════
 def _vapid_init():
-    if not PUSH_AVAILABLE:
+    if not CRYPTO_AVAILABLE:
         return None, None
 
     key_file = os.path.join(BASE_DIR, 'instance', 'vapid_keys.json')
@@ -289,79 +296,68 @@ def _get_vapid_keys():
 
 
 def _send_web_push(subscription_info, payload_dict):
+    """Отправка Web Push через pywebpush — работает с Apple, Google, Firefox"""
     if not PUSH_AVAILABLE:
+        app.logger.warning('pywebpush не установлен')
         return False
 
     pub_b64, priv_b64 = _get_vapid_keys()
-    if not pub_b64:
+    if not pub_b64 or not priv_b64:
+        app.logger.warning('VAPID ключи не найдены')
         return False
 
     endpoint = subscription_info.get('endpoint', '')
     p256dh   = subscription_info.get('p256dh', '')
-    auth     = subscription_info.get('auth', '')
-    if not endpoint or not p256dh or not auth:
+    auth_key = subscription_info.get('auth', '')
+    if not endpoint or not p256dh or not auth_key:
         return False
 
     try:
-        from urllib.parse import urlparse
-        parsed   = urlparse(endpoint)
-        audience = f'{parsed.scheme}://{parsed.netloc}'
+        payload_str = json.dumps(payload_dict, ensure_ascii=False)
 
-        now    = int(time.time())
-        claims = {'aud': audience, 'exp': now + 43200, 'sub': 'mailto:admin@waychat.app'}
-
-        priv_bytes = base64.urlsafe_b64decode(priv_b64 + '==')
-        priv_int   = int.from_bytes(priv_bytes, 'big')
-        priv_key   = ec.derive_private_key(priv_int, ec.SECP256R1(), default_backend())
-        pem        = priv_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
-        token      = pyjwt.encode(claims, pem, algorithm='ES256')
-
-        payload_bytes = json.dumps(payload_dict, ensure_ascii=False).encode('utf-8')
-
-        _pad = lambda s: s + '==' [:(4 - len(s) % 4) % 4]
-        sub_pub_bytes = base64.urlsafe_b64decode(_pad(p256dh))
-        auth_bytes    = base64.urlsafe_b64decode(_pad(auth))
-
-        eph_key       = ec.generate_private_key(ec.SECP256R1(), default_backend())
-        eph_pub       = eph_key.public_key()
-        eph_pub_bytes = eph_pub.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-
-        sub_pub_key   = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), sub_pub_bytes)
-        shared_secret = eph_key.exchange(ECDH(), sub_pub_key)
-
-        salt = os.urandom(16)
-
-        prk_info = b'WebPush: info\x00' + sub_pub_bytes + eph_pub_bytes
-        prk = HKDF(algorithm=SHA256(), length=32, salt=auth_bytes,
-                   info=prk_info, backend=default_backend()).derive(shared_secret)
-
-        cek   = HKDF(algorithm=SHA256(), length=16, salt=salt,
-                     info=b'Content-Encoding: aes128gcm\x00', backend=default_backend()).derive(prk)
-        nonce = HKDF(algorithm=SHA256(), length=12, salt=salt,
-                     info=b'Content-Encoding: nonce\x00', backend=default_backend()).derive(prk)
-
-        ciphertext  = AESGCM(cek).encrypt(nonce, payload_bytes + b'\x02', None)
-        record_size = len(ciphertext) + 16
-        body        = salt + struct.pack('>I', record_size) + struct.pack('B', len(eph_pub_bytes)) + eph_pub_bytes + ciphertext
-
-        headers = {
-            'Authorization':    f'vapid t={token},k={pub_b64}',
-            'Content-Type':     'application/octet-stream',
-            'Content-Encoding': 'aes128gcm',
-            'TTL':              '86400',
+        # pywebpush требует private key в формате base64url
+        vapid_claims = {
+            'sub': 'mailto:' + os.environ.get('VAPID_EMAIL', 'admin@waychat.app'),
         }
-        resp = req_lib.post(endpoint, data=body, headers=headers, timeout=10)
-        return resp.status_code in (200, 201, 202)
 
+        response = webpush(
+            subscription_info={
+                'endpoint': endpoint,
+                'keys': {
+                    'p256dh': p256dh,
+                    'auth':   auth_key,
+                }
+            },
+            data=payload_str,
+            vapid_private_key=priv_b64,
+            vapid_claims=vapid_claims,
+            ttl=86400,
+            timeout=15,
+        )
+        ok = response.status_code in (200, 201, 202)
+        if not ok:
+            app.logger.warning(f'Push failed: {response.status_code} {response.text[:200]}')
+        return ok
+
+    except WebPushException as e:
+        status = e.response.status_code if e.response is not None else 0
+        # 410 Gone / 404 — подписка устарела, нужно удалить
+        if status in (404, 410):
+            app.logger.info(f'Push subscription expired ({status}), will delete')
+            return 'expired'
+        app.logger.error(f'WebPushException: {status} {str(e)[:200]}')
+        return False
     except Exception as e:
-        app.logger.error(f'Web push error: {e}')
+        app.logger.error(f'Web push error: {type(e).__name__}: {e}')
         return False
 
 
 def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
     subs = PushSubscription.query.filter_by(user_id=user_id).all()
     if not subs:
+        app.logger.info(f'Push: нет подписок для user_id={user_id}')
         return
+    app.logger.info(f'Push: отправляем {len(subs)} подписок для user_id={user_id}')
 
     payload = {
         'title':   title,
@@ -382,15 +378,19 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
                 'auth':     sub.auth,
             }
             ok = _send_web_push(info, payload)
-            if not ok:
+            if not ok:  # False или 'expired' — удаляем
                 dead.append(sub.id)
         except Exception as e:
             app.logger.error(f'Push send error uid={user_id}: {e}')
             dead.append(sub.id)
 
     if dead:
-        PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
-        db.session.commit()
+        try:
+            PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
+            db.session.commit()
+        except Exception as _de:
+            app.logger.error(f'Delete dead subs error: {_de}')
+            db.session.rollback()
 
 # ══════════════════════════════════════════════════════════
 #  МОДЕЛИ
