@@ -377,38 +377,48 @@ def _send_web_push(subscription_info, payload_dict):
 
 
 def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
-    subs = PushSubscription.query.filter_by(user_id=user_id).all()
-    if not subs:
-        return
+    # eventlet.spawn запускает без Flask context — оборачиваем обязательно
+    with app.app_context():
+        if not PUSH_AVAILABLE:
+            return
 
-    payload = {
-        'title':   title,
-        'body':    body,
-        'icon':    icon or '/static/img/icon-192.png',
-        'badge':   '/static/img/badge-96.png',
-        'tag':     f'msg-{chat_id or user_id}',
-        'chat_id': chat_id,
-        'url':     '/',
-    }
+        subs = PushSubscription.query.filter_by(user_id=user_id).all()
+        if not subs:
+            return
 
-    dead = []
-    for sub in subs:
-        try:
-            info = {
-                'endpoint': sub.endpoint,
-                'p256dh':   sub.p256dh,
-                'auth':     sub.auth,
-            }
-            ok = _send_web_push(info, payload)
-            if not ok:
+        app.logger.info(f'Push → user_id={user_id}: {title} | {body[:40]}')
+
+        payload = {
+            'title':   title,
+            'body':    body,
+            'icon':    icon or '/static/img/icon-192.png',
+            'badge':   '/static/img/badge-96.png',
+            'tag':     f'msg-{chat_id or user_id}',
+            'chat_id': chat_id,
+            'url':     f'/?open_chat={chat_id}' if chat_id else '/',
+        }
+
+        dead = []
+        for sub in subs:
+            try:
+                info = {
+                    'endpoint': sub.endpoint,
+                    'p256dh':   sub.p256dh,
+                    'auth':     sub.auth,
+                }
+                ok = _send_web_push(info, payload)
+                if not ok:
+                    dead.append(sub.id)
+            except Exception as e:
+                app.logger.error(f'Push send error uid={user_id}: {e}')
                 dead.append(sub.id)
-        except Exception as e:
-            app.logger.error(f'Push send error uid={user_id}: {e}')
-            dead.append(sub.id)
 
-    if dead:
-        PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
-        db.session.commit()
+        if dead:
+            try:
+                PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
 # ══════════════════════════════════════════════════════════
 #  МОДЕЛИ
@@ -1091,49 +1101,6 @@ def push_unsubscribe():
         PushSubscription.query.filter_by(user_id=uid).delete()
     db.session.commit()
     return jsonify({'success': True})
-
-
-@app.route('/admin/clear-push')
-@login_required
-def admin_clear_push():
-    """Удалить все push-подписки — только для суперадмина"""
-    if not current_user.is_super_admin:
-        return '<h2>403 — нет доступа</h2>', 403
-    try:
-        n = PushSubscription.query.count()
-        PushSubscription.query.delete()
-        db.session.commit()
-        pub, _ = _get_vapid_keys()
-        html = f'''<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  body{{font-family:-apple-system,sans-serif;background:#0a0a0f;color:#fff;
-        display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
-  .card{{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
-          border-radius:24px;padding:32px;max-width:480px;width:90%;text-align:center}}
-  h2{{color:#10b981;margin:0 0 12px}}
-  p{{color:rgba(255,255,255,0.6);font-size:14px;line-height:1.6;margin:8px 0}}
-  code{{background:rgba(255,255,255,0.08);border-radius:8px;padding:10px 14px;
-         font-size:11px;display:block;margin:12px 0;word-break:break-all;text-align:left}}
-  a{{display:inline-block;margin-top:20px;padding:12px 28px;background:#10b981;
-      color:#000;border-radius:50px;font-weight:700;text-decoration:none}}
-</style></head><body>
-<div class="card">
-  <h2>✅ Готово</h2>
-  <p>Удалено подписок: <b>{n}</b></p>
-  <p>Текущий VAPID публичный ключ:</p>
-  <code>{pub or "не найден"}</code>
-  <p style="color:rgba(255,255,255,0.4);font-size:12px">
-    Теперь пользователи при следующем входе автоматически<br>
-    переподпишутся с новым ключом.
-  </p>
-  <a href="/">← На главную</a>
-</div></body></html>'''
-        return html
-    except Exception as e:
-        db.session.rollback()
-        return f'<h2>Ошибка: {e}</h2>', 500
 
 
 @app.route('/logout')
