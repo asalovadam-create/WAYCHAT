@@ -63,7 +63,7 @@ try:
     print('✅ pywebpush загружен')
 except ImportError:
     PUSH_AVAILABLE = False
-    print('⚠️  pywebpush не установлен: добавь в requirements.txt')
+    print('⚠️  pywebpush не установлен')
 
 # ══════════════════════════════════════════════════════════
 #  ПУТИ И ПАПКИ
@@ -261,14 +261,24 @@ def _vapid_init():
     if not CRYPTO_AVAILABLE:
         return None, None
 
+    # Сначала проверяем env переменные (стабильны при редеплоях Render)
+    env_pub  = os.environ.get('VAPID_PUBLIC_KEY',  '').strip()
+    env_priv = os.environ.get('VAPID_PRIVATE_KEY', '').strip()
+    if env_pub and env_priv:
+        print(f'🔑 VAPID из ENV: {env_pub[:20]}...')
+        return env_pub, env_priv
+
+    # Fallback: файл (только для локальной разработки)
     key_file = os.path.join(BASE_DIR, 'instance', 'vapid_keys.json')
     os.makedirs(os.path.dirname(key_file), exist_ok=True)
 
     if os.path.exists(key_file):
         with open(key_file) as f:
             keys = json.load(f)
+        print(f'⚠️  VAPID из файла — добавь VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY в Render ENV!')
         return keys['public'], keys['private']
 
+    # Генерируем новые ключи
     key  = ec.generate_private_key(ec.SECP256R1(), default_backend())
     pub  = key.public_key()
     pub_bytes  = pub.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
@@ -280,7 +290,7 @@ def _vapid_init():
     with open(key_file, 'w') as f:
         json.dump({'public': pub_b64, 'private': priv_b64}, f)
 
-    print(f'\n🔑 VAPID public key: {pub_b64}\n')
+    print(f'\n🔑 НОВЫЕ VAPID ключи. Добавь в Render ENV:\nVAPID_PUBLIC_KEY={pub_b64}\nVAPID_PRIVATE_KEY={priv_b64}\n')
     return pub_b64, priv_b64
 
 _VAPID_PUBLIC  = None
@@ -297,70 +307,79 @@ def _get_vapid_keys():
 
 
 def _send_web_push(subscription_info, payload_dict):
-    """Отправка Web Push через pywebpush — RFC8291, работает с Apple и Google"""
     if not PUSH_AVAILABLE:
         return False
 
     pub_b64, priv_b64 = _get_vapid_keys()
-    if not pub_b64 or not priv_b64:
-        app.logger.warning('VAPID ключи не найдены')
+    if not pub_b64:
         return False
 
     endpoint = subscription_info.get('endpoint', '')
     p256dh   = subscription_info.get('p256dh', '')
-    auth_key = subscription_info.get('auth', '')
-    if not endpoint or not p256dh or not auth_key:
+    auth     = subscription_info.get('auth', '')
+    if not endpoint or not p256dh or not auth:
         return False
 
     try:
-        payload_str = json.dumps(payload_dict, ensure_ascii=False)
-        vapid_claims = {
-            'sub': 'mailto:' + os.environ.get('VAPID_EMAIL', 'admin@waychat.app'),
-        }
-        response = webpush(
-            subscription_info={
-                'endpoint': endpoint,
-                'keys': {'p256dh': p256dh, 'auth': auth_key}
-            },
-            data=payload_str,
-            vapid_private_key=priv_b64,
-            vapid_claims=vapid_claims,
-            ttl=86400,
-            timeout=15,
-        )
-        ok = response.status_code in (200, 201, 202)
-        if not ok:
-            app.logger.warning(f'Push HTTP {response.status_code}: {response.text[:100]}')
-        return ok
+        from urllib.parse import urlparse
+        parsed   = urlparse(endpoint)
+        audience = f'{parsed.scheme}://{parsed.netloc}'
 
-    except WebPushException as e:
-        status = e.response.status_code if e.response is not None else 0
-        if status in (404, 410):
-            return 'expired'  # подписка устарела — удалить
-        app.logger.error(f'WebPushException {status}: {str(e)[:150]}')
-        return False
+        now    = int(time.time())
+        claims = {'aud': audience, 'exp': now + 43200, 'sub': 'mailto:admin@waychat.app'}
+
+        priv_bytes = base64.urlsafe_b64decode(priv_b64 + '==')
+        priv_int   = int.from_bytes(priv_bytes, 'big')
+        priv_key   = ec.derive_private_key(priv_int, ec.SECP256R1(), default_backend())
+        pem        = priv_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption())
+        token      = pyjwt.encode(claims, pem, algorithm='ES256')
+
+        payload_bytes = json.dumps(payload_dict, ensure_ascii=False).encode('utf-8')
+
+        _pad = lambda s: s + '==' [:(4 - len(s) % 4) % 4]
+        sub_pub_bytes = base64.urlsafe_b64decode(_pad(p256dh))
+        auth_bytes    = base64.urlsafe_b64decode(_pad(auth))
+
+        eph_key       = ec.generate_private_key(ec.SECP256R1(), default_backend())
+        eph_pub       = eph_key.public_key()
+        eph_pub_bytes = eph_pub.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+
+        sub_pub_key   = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), sub_pub_bytes)
+        shared_secret = eph_key.exchange(ECDH(), sub_pub_key)
+
+        salt = os.urandom(16)
+
+        prk_info = b'WebPush: info\x00' + sub_pub_bytes + eph_pub_bytes
+        prk = HKDF(algorithm=SHA256(), length=32, salt=auth_bytes,
+                   info=prk_info, backend=default_backend()).derive(shared_secret)
+
+        cek   = HKDF(algorithm=SHA256(), length=16, salt=salt,
+                     info=b'Content-Encoding: aes128gcm\x00', backend=default_backend()).derive(prk)
+        nonce = HKDF(algorithm=SHA256(), length=12, salt=salt,
+                     info=b'Content-Encoding: nonce\x00', backend=default_backend()).derive(prk)
+
+        ciphertext  = AESGCM(cek).encrypt(nonce, payload_bytes + b'\x02', None)
+        record_size = len(ciphertext) + 16
+        body        = salt + struct.pack('>I', record_size) + struct.pack('B', len(eph_pub_bytes)) + eph_pub_bytes + ciphertext
+
+        headers = {
+            'Authorization':    f'vapid t={token},k={pub_b64}',
+            'Content-Type':     'application/octet-stream',
+            'Content-Encoding': 'aes128gcm',
+            'TTL':              '86400',
+        }
+        resp = req_lib.post(endpoint, data=body, headers=headers, timeout=10)
+        return resp.status_code in (200, 201, 202)
+
     except Exception as e:
-        app.logger.error(f'_send_web_push error: {type(e).__name__}: {e}')
+        app.logger.error(f'Web push error: {e}')
         return False
 
 
 def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
-    # КРИТИЧНО: eventlet.spawn запускает без Flask app context
-    # оборачиваем всё в with app.app_context()
-    with app.app_context():
-        _send_push_to_user_inner(user_id, title, body, chat_id, icon)
-
-
-def _send_push_to_user_inner(user_id, title, body, chat_id=None, icon=None):
-    if not PUSH_AVAILABLE:
-        return
-
     subs = PushSubscription.query.filter_by(user_id=user_id).all()
     if not subs:
-        app.logger.info(f'Push: нет подписок для user_id={user_id}')
         return
-
-    app.logger.info(f'Push: отправляем {len(subs)} подписок → user_id={user_id} | {title}: {body[:40]}')
 
     payload = {
         'title':   title,
@@ -369,13 +388,17 @@ def _send_push_to_user_inner(user_id, title, body, chat_id=None, icon=None):
         'badge':   '/static/img/badge-96.png',
         'tag':     f'msg-{chat_id or user_id}',
         'chat_id': chat_id,
-        'url':     f'/?open_chat={chat_id}' if chat_id else '/',
+        'url':     '/',
     }
 
     dead = []
     for sub in subs:
         try:
-            info = {'endpoint': sub.endpoint, 'p256dh': sub.p256dh, 'auth': sub.auth}
+            info = {
+                'endpoint': sub.endpoint,
+                'p256dh':   sub.p256dh,
+                'auth':     sub.auth,
+            }
             ok = _send_web_push(info, payload)
             if not ok:
                 dead.append(sub.id)
@@ -384,11 +407,8 @@ def _send_push_to_user_inner(user_id, title, body, chat_id=None, icon=None):
             dead.append(sub.id)
 
     if dead:
-        try:
-            PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
-            db.session.commit()
-        except Exception as _de:
-            db.session.rollback()
+        PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
+        db.session.commit()
 
 # ══════════════════════════════════════════════════════════
 #  МОДЕЛИ
@@ -1071,6 +1091,49 @@ def push_unsubscribe():
         PushSubscription.query.filter_by(user_id=uid).delete()
     db.session.commit()
     return jsonify({'success': True})
+
+
+@app.route('/admin/clear-push')
+@login_required
+def admin_clear_push():
+    """Удалить все push-подписки — только для суперадмина"""
+    if not current_user.is_super_admin:
+        return '<h2>403 — нет доступа</h2>', 403
+    try:
+        n = PushSubscription.query.count()
+        PushSubscription.query.delete()
+        db.session.commit()
+        pub, _ = _get_vapid_keys()
+        html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  body{{font-family:-apple-system,sans-serif;background:#0a0a0f;color:#fff;
+        display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}}
+  .card{{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+          border-radius:24px;padding:32px;max-width:480px;width:90%;text-align:center}}
+  h2{{color:#10b981;margin:0 0 12px}}
+  p{{color:rgba(255,255,255,0.6);font-size:14px;line-height:1.6;margin:8px 0}}
+  code{{background:rgba(255,255,255,0.08);border-radius:8px;padding:10px 14px;
+         font-size:11px;display:block;margin:12px 0;word-break:break-all;text-align:left}}
+  a{{display:inline-block;margin-top:20px;padding:12px 28px;background:#10b981;
+      color:#000;border-radius:50px;font-weight:700;text-decoration:none}}
+</style></head><body>
+<div class="card">
+  <h2>✅ Готово</h2>
+  <p>Удалено подписок: <b>{n}</b></p>
+  <p>Текущий VAPID публичный ключ:</p>
+  <code>{pub or "не найден"}</code>
+  <p style="color:rgba(255,255,255,0.4);font-size:12px">
+    Теперь пользователи при следующем входе автоматически<br>
+    переподпишутся с новым ключом.
+  </p>
+  <a href="/">← На главную</a>
+</div></body></html>'''
+        return html
+    except Exception as e:
+        db.session.rollback()
+        return f'<h2>Ошибка: {e}</h2>', 500
 
 
 @app.route('/logout')
