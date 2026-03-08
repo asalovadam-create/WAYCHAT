@@ -376,7 +376,18 @@ def _send_web_push(subscription_info, payload_dict):
         return False
 
 
-def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
+def _resolve_push_icon(avatar):
+    base = 'https://waychat-3.onrender.com'
+    if not avatar or avatar.startswith('emoji:') or avatar.startswith('data:'):
+        return f'{base}/static/img/icon-192.png'
+    if avatar.startswith('http'):
+        if 'cloudinary.com' in avatar and '/upload/' in avatar:
+            return avatar.replace('/upload/', '/upload/w_192,h_192,c_fill,r_max,f_auto/')
+        return avatar
+    return f'{base}{avatar}' if avatar.startswith('/') else f'{base}/static/img/icon-192.png'
+
+
+def send_push_to_user(user_id, title, body, chat_id=None, icon=None, sender_avatar=None):
     # eventlet.spawn запускает без Flask context — оборачиваем обязательно
     with app.app_context():
         if not PUSH_AVAILABLE:
@@ -388,10 +399,12 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
 
         app.logger.info(f'Push → user_id={user_id}: {title} | {body[:40]}')
 
+        push_icon = _resolve_push_icon(sender_avatar)
+
         payload = {
             'title':   title,
             'body':    body,
-            'icon':    icon or '/static/img/icon-192.png',
+            'icon':    push_icon,
             'badge':   '/static/img/badge-96.png',
             'tag':     f'msg-{chat_id or user_id}',
             'chat_id': chat_id,
@@ -2075,8 +2088,9 @@ def handle_msg(data):
         return
 
     try:
-        uid   = current_user.id
-        uname = current_user.name
+        uid     = current_user.id
+        uname   = current_user.name
+        uavatar = getattr(current_user, 'avatar', '') or ''
     except Exception:
         return
 
@@ -2098,12 +2112,15 @@ def handle_msg(data):
 
     if chat:
         push_preview = {
-            'text':  msg.content or '',
-            'image': '🖼 Фото',
-            'audio': '🎙 Голосовое',
-            'video': '📹 Видео',
+            'text':         msg.content or '...',
+            'image':        '📷 Фото',
+            'audio':        '🎙 Голосовое сообщение',
+            'video':        '📹 Видео',
+            'video_circle': '⭕ Видео-кружок',
+            'sticker':      '🎭 Стикер',
+            'file':         '📎 Файл',
         }.get(msg_type, msg.content or '...')
-        push_preview = push_preview[:80] if push_preview else '...'
+        push_preview = push_preview[:100] if push_preview else '...'
 
         if chat.room_key.startswith('group_'):
             group = Group.query.filter_by(chat_id=chat_id).first()
@@ -2118,7 +2135,8 @@ def handle_msg(data):
                         is_online = _online_cache.get(m.user_id)
                         if not is_online:
                             eventlet.spawn(send_push_to_user, m.user_id,
-                                f'{uname} → {group.name}', push_preview, chat_id)
+                                f'{uname} → {group.name}', push_preview, chat_id,
+                                None, uavatar)
         else:
             payload['is_group_msg'] = False
             parts = chat.room_key.replace('chat_', '').split('_')
@@ -2130,7 +2148,8 @@ def handle_msg(data):
                     if uid_int != uid:
                         is_online = _online_cache.get(uid_int)
                         if not is_online:
-                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
+                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id,
+                                None, uavatar)
 
 
 @socketio.on('mark_read')
