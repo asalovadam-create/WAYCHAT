@@ -55,14 +55,15 @@ try:
     CRYPTO_AVAILABLE = True
 except ImportError as _e:
     CRYPTO_AVAILABLE = False
-    print(f'⚠️  Crypto недоступен: {_e}')
+    print(f'⚠️  Crypto: {_e}')
 
 try:
     from pywebpush import webpush, WebPushException
     PUSH_AVAILABLE = True
+    print('✅ pywebpush загружен')
 except ImportError:
     PUSH_AVAILABLE = False
-    print('⚠️  pywebpush не установлен: pip install pywebpush')
+    print('⚠️  pywebpush не установлен: добавь в requirements.txt')
 
 # ══════════════════════════════════════════════════════════
 #  ПУТИ И ПАПКИ
@@ -296,9 +297,8 @@ def _get_vapid_keys():
 
 
 def _send_web_push(subscription_info, payload_dict):
-    """Отправка Web Push через pywebpush — работает с Apple, Google, Firefox"""
+    """Отправка Web Push через pywebpush — RFC8291, работает с Apple и Google"""
     if not PUSH_AVAILABLE:
-        app.logger.warning('pywebpush не установлен')
         return False
 
     pub_b64, priv_b64 = _get_vapid_keys()
@@ -314,19 +314,13 @@ def _send_web_push(subscription_info, payload_dict):
 
     try:
         payload_str = json.dumps(payload_dict, ensure_ascii=False)
-
-        # pywebpush требует private key в формате base64url
         vapid_claims = {
             'sub': 'mailto:' + os.environ.get('VAPID_EMAIL', 'admin@waychat.app'),
         }
-
         response = webpush(
             subscription_info={
                 'endpoint': endpoint,
-                'keys': {
-                    'p256dh': p256dh,
-                    'auth':   auth_key,
-                }
+                'keys': {'p256dh': p256dh, 'auth': auth_key}
             },
             data=payload_str,
             vapid_private_key=priv_b64,
@@ -336,28 +330,37 @@ def _send_web_push(subscription_info, payload_dict):
         )
         ok = response.status_code in (200, 201, 202)
         if not ok:
-            app.logger.warning(f'Push failed: {response.status_code} {response.text[:200]}')
+            app.logger.warning(f'Push HTTP {response.status_code}: {response.text[:100]}')
         return ok
 
     except WebPushException as e:
         status = e.response.status_code if e.response is not None else 0
-        # 410 Gone / 404 — подписка устарела, нужно удалить
         if status in (404, 410):
-            app.logger.info(f'Push subscription expired ({status}), will delete')
-            return 'expired'
-        app.logger.error(f'WebPushException: {status} {str(e)[:200]}')
+            return 'expired'  # подписка устарела — удалить
+        app.logger.error(f'WebPushException {status}: {str(e)[:150]}')
         return False
     except Exception as e:
-        app.logger.error(f'Web push error: {type(e).__name__}: {e}')
+        app.logger.error(f'_send_web_push error: {type(e).__name__}: {e}')
         return False
 
 
 def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
+    # КРИТИЧНО: eventlet.spawn запускает без Flask app context
+    # оборачиваем всё в with app.app_context()
+    with app.app_context():
+        _send_push_to_user_inner(user_id, title, body, chat_id, icon)
+
+
+def _send_push_to_user_inner(user_id, title, body, chat_id=None, icon=None):
+    if not PUSH_AVAILABLE:
+        return
+
     subs = PushSubscription.query.filter_by(user_id=user_id).all()
     if not subs:
         app.logger.info(f'Push: нет подписок для user_id={user_id}')
         return
-    app.logger.info(f'Push: отправляем {len(subs)} подписок для user_id={user_id}')
+
+    app.logger.info(f'Push: отправляем {len(subs)} подписок → user_id={user_id} | {title}: {body[:40]}')
 
     payload = {
         'title':   title,
@@ -366,19 +369,15 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
         'badge':   '/static/img/badge-96.png',
         'tag':     f'msg-{chat_id or user_id}',
         'chat_id': chat_id,
-        'url':     '/',
+        'url':     f'/?open_chat={chat_id}' if chat_id else '/',
     }
 
     dead = []
     for sub in subs:
         try:
-            info = {
-                'endpoint': sub.endpoint,
-                'p256dh':   sub.p256dh,
-                'auth':     sub.auth,
-            }
+            info = {'endpoint': sub.endpoint, 'p256dh': sub.p256dh, 'auth': sub.auth}
             ok = _send_web_push(info, payload)
-            if not ok:  # False или 'expired' — удаляем
+            if not ok:
                 dead.append(sub.id)
         except Exception as e:
             app.logger.error(f'Push send error uid={user_id}: {e}')
@@ -389,7 +388,6 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
             PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
             db.session.commit()
         except Exception as _de:
-            app.logger.error(f'Delete dead subs error: {_de}')
             db.session.rollback()
 
 # ══════════════════════════════════════════════════════════
