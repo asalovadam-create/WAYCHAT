@@ -377,14 +377,18 @@ def _send_web_push(subscription_info, payload_dict):
 
 
 def _resolve_push_icon(avatar):
+    """Возвращает абсолютный URL аватарки для иконки push-уведомления"""
     base = 'https://waychat-3.onrender.com'
     if not avatar or avatar.startswith('emoji:') or avatar.startswith('data:'):
         return f'{base}/static/img/icon-192.png'
     if avatar.startswith('http'):
+        # Cloudinary — добавляем трансформацию: круг 192px
         if 'cloudinary.com' in avatar and '/upload/' in avatar:
             return avatar.replace('/upload/', '/upload/w_192,h_192,c_fill,r_max,f_auto/')
         return avatar
-    return f'{base}{avatar}' if avatar.startswith('/') else f'{base}/static/img/icon-192.png'
+    if avatar.startswith('/'):
+        return f'{base}{avatar}'
+    return f'{base}/static/img/icon-192.png'
 
 
 def send_push_to_user(user_id, title, body, chat_id=None, icon=None, sender_avatar=None):
@@ -405,7 +409,6 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None, sender_avat
             'title':   title,
             'body':    body,
             'icon':    push_icon,
-            'badge':   '/static/img/badge-96.png',
             'tag':     f'msg-{chat_id or user_id}',
             'chat_id': chat_id,
             'url':     f'/?open_chat={chat_id}' if chat_id else '/',
