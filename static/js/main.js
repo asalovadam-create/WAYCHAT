@@ -470,9 +470,12 @@ async function init() {
     setTimeout(_updatePermsSummary, 600);
     setTimeout(initPushNotifications, 500);
 
-    // Service Worker — кешируем статику (JS, CSS, аватарки) навсегда
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+    // iOS PWA: открываем чат из push-уведомления (?open_chat=ID в URL)
+    const _urlParams = new URLSearchParams(window.location.search);
+    const _openChatId = _urlParams.get('open_chat');
+    if (_openChatId) {
+        history.replaceState({}, '', '/');
+        setTimeout(() => _openChatByChatId(parseInt(_openChatId)), 1200);
     }
 
     // loadChats по setInterval убран — WebSocket обновляет в реальном времени
@@ -6134,17 +6137,36 @@ function _showPushBanner() {
 async function _subscribeToPush() {
     if (!_swReg || !('PushManager' in window)) return;
     try {
+        // Получаем VAPID ключ с сервера
+        const keyRes = await fetch('/vapid-public-key', { credentials: 'same-origin' });
+        if (!keyRes.ok) { console.warn('VAPID key fetch failed:', keyRes.status); return; }
+        const keyData = await keyRes.json();
+        if (!keyData.publicKey) { console.warn('No VAPID key'); return; }
+        const serverKey = _urlBase64ToUint8Array(keyData.publicKey);
+
         let sub = await _swReg.pushManager.getSubscription();
+
+        // iOS / Chrome: если ключ сменился (редеплой) — переподписываемся
+        if (sub) {
+            const existingKey = sub.options?.applicationServerKey;
+            if (existingKey) {
+                const existingB64 = btoa(String.fromCharCode(...new Uint8Array(existingKey)))
+                    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+                if (existingB64 !== keyData.publicKey) {
+                    await sub.unsubscribe();
+                    sub = null;
+                    console.log('🔄 VAPID key changed — resubscribing');
+                }
+            }
+        }
+
         if (!sub) {
-            const keyRes  = await fetch('/vapid-public-key', { credentials: 'same-origin' });
-            if (!keyRes.ok) { console.warn('VAPID key fetch failed:', keyRes.status); return; }
-            const keyData = await keyRes.json();
-            if (!keyData.publicKey) { console.warn('No VAPID key'); return; }
             sub = await _swReg.pushManager.subscribe({
                 userVisibleOnly:      true,
-                applicationServerKey: _urlBase64ToUint8Array(keyData.publicKey),
+                applicationServerKey: serverKey,
             });
         }
+
         const subJson = sub.toJSON();
         const res = await apiFetch('/push-subscribe', {
             method:  'POST',
@@ -6155,19 +6177,17 @@ async function _subscribeToPush() {
                 auth:     subJson.keys?.auth   || '',
             }),
         });
-        if (res && res.ok !== false) {
+        if (res && res.ok) {
             console.log('✅ Push подписка активна');
             notifPermission = true;
         }
     } catch(e) {
-        console.warn('Push subscribe error:', e);
-        // Если подписка устарела — удаляем и пробуем заново один раз
-        if (e.name === 'InvalidStateError' || e.name === 'AbortError') {
-            try {
-                const oldSub = await _swReg.pushManager.getSubscription();
-                if (oldSub) await oldSub.unsubscribe();
-            } catch(e2) {}
-        }
+        console.warn('Push subscribe error:', e.name, e.message);
+        // Сброс при ошибке — следующий вызов создаст новую подписку
+        try {
+            const oldSub = await _swReg.pushManager.getSubscription();
+            if (oldSub) await oldSub.unsubscribe();
+        } catch(e2) {}
     }
 }
 
