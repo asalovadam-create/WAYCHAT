@@ -1,7 +1,7 @@
-// WayChat Service Worker v3 — aggressive caching for iPhone
-const CACHE_NAME = 'waychat-v3';
-const STATIC_CACHE = 'waychat-static-v3';
-const MEDIA_CACHE  = 'waychat-media-v3';
+// WayChat Service Worker v4 — push notifications + caching
+const CACHE_NAME = 'waychat-v4';
+const STATIC_CACHE = 'waychat-static-v4';
+const MEDIA_CACHE  = 'waychat-media-v4';
 
 // Файлы которые кешируем при установке
 const PRECACHE = [
@@ -22,7 +22,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys => Promise.all(
-      keys.filter(k => ![CACHE_NAME, STATIC_CACHE, MEDIA_CACHE].includes(k))
+      keys.filter(k => ![CACHE_NAME, STATIC_CACHE, MEDIA_CACHE].includes(k) && k.startsWith('waychat-'))
           .map(k => caches.delete(k))
     )).then(() => self.clients.claim())
   );
@@ -110,3 +110,101 @@ async function networkFirstWithCache(request, cacheName, maxAgeSeconds) {
     });
   }
 }
+
+// ══════════════════════════════════════════════════════════
+//  PUSH УВЕДОМЛЕНИЯ — iOS 16.4+ PWA + Android Chrome
+// ══════════════════════════════════════════════════════════
+self.addEventListener('push', e => {
+    let data = {};
+    try {
+        data = e.data ? e.data.json() : {};
+    } catch(err) {
+        data = { title: 'WayChat', body: e.data ? e.data.text() : 'Новое сообщение' };
+    }
+
+    const title   = data.title   || 'WayChat';
+    const body    = data.body    || 'Новое сообщение';
+    const icon    = data.icon    || '/static/img/icon-192.png';
+    const badge   = data.badge   || '/static/img/badge-96.png';
+    const tag     = data.tag     || 'waychat-msg';
+    const chatId  = data.chat_id || null;
+    const url     = data.url     || '/';
+
+    const options = {
+        body,
+        icon,
+        badge,
+        tag,
+        // renotify: true — новый звук даже если tag совпадает
+        renotify: true,
+        // requireInteraction: false — уведомление исчезает само
+        requireInteraction: false,
+        // vibrate — только Android, iOS игнорирует
+        vibrate: [200, 100, 200],
+        data: { url, chat_id: chatId },
+        // actions — только Android Chrome, iOS игнорирует но не ломает
+        actions: [
+            { action: 'open', title: 'Открыть' },
+            { action: 'dismiss', title: 'Закрыть' }
+        ]
+    };
+
+    // iOS требует showNotification из waitUntil — иначе не показывает
+    e.waitUntil(
+        self.registration.showNotification(title, options)
+    );
+});
+
+// ══════════════════════════════════════════════════════════
+//  КЛИК ПО УВЕДОМЛЕНИЮ
+// ══════════════════════════════════════════════════════════
+self.addEventListener('notificationclick', e => {
+    e.notification.close();
+
+    if (e.action === 'dismiss') return;
+
+    const chatId = e.notification.data?.chat_id;
+    const url    = e.notification.data?.url || '/';
+
+    e.waitUntil(
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
+            // Ищем уже открытую вкладку WayChat
+            for (const client of clientList) {
+                const clientUrl = new URL(client.url);
+                if (clientUrl.pathname === '/' || clientUrl.pathname.startsWith('/chat')) {
+                    // Фокусируем и сообщаем открыть конкретный чат
+                    client.focus();
+                    if (chatId) client.postMessage({ type: 'open_chat', chat_id: chatId });
+                    return;
+                }
+            }
+            // Открываем новую вкладку
+            const targetUrl = chatId ? `/?open_chat=${chatId}` : url;
+            return clients.openWindow(targetUrl);
+        })
+    );
+});
+
+// ══════════════════════════════════════════════════════════
+//  ОБНОВЛЕНИЕ ПОДПИСКИ (iOS пересоздаёт ключи)
+// ══════════════════════════════════════════════════════════
+self.addEventListener('pushsubscriptionchange', e => {
+    e.waitUntil(
+        self.registration.pushManager.subscribe({
+            userVisibleOnly:      true,
+            applicationServerKey: e.oldSubscription?.options?.applicationServerKey
+        }).then(sub => {
+            const subJson = sub.toJSON();
+            return fetch('/push-subscribe', {
+                method:  'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    endpoint: subJson.endpoint,
+                    p256dh:   subJson.keys?.p256dh || '',
+                    auth:     subJson.keys?.auth   || '',
+                })
+            });
+        }).catch(() => {})
+    );
+});
