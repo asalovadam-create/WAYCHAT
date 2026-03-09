@@ -493,7 +493,7 @@ class Message(db.Model):
     chat_id     = db.Column(db.Integer,     db.ForeignKey('chat.id'), nullable=False, index=True)
     sender_id   = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
     sender_name = db.Column(db.String(120), default='')
-    type        = db.Column(db.String(10),  default='text')
+    type        = db.Column(db.String(20),  default='text')
     content     = db.Column(db.Text)
     file_url    = db.Column(db.String(300))
     is_read     = db.Column(db.Boolean,     default=False, index=True)
@@ -2353,14 +2353,27 @@ def handle_call(data):
         uavat  = current_user.avatar
     except Exception:
         return
+    call_type = data.get('call_type', 'audio')
     emit('incoming_call', {
         'from':        uid,
         'from_name':   uname,
         'from_avatar': uavat,
         'offer':       data.get('offer'),
-        'call_type':   data.get('call_type', 'audio'),
+        'call_type':   call_type,
         'type':        data.get('type', 'audio'),
     }, room=f'user_{to}')
+    # Push если получатель оффлайн
+    try:
+        to_int   = int(to)
+        is_online = _online_cache.get(to_int)
+        if not is_online:
+            call_emoji = '📹' if call_type == 'video' else '📞'
+            push_title = f'{call_emoji} {uname} звонит'
+            push_body  = 'Видеозвонок' if call_type == 'video' else 'Аудиозвонок'
+            chat_id    = data.get('chat_id')
+            eventlet.spawn(send_push_to_user, to_int, push_title, push_body, chat_id)
+    except Exception as e:
+        app.logger.error(f'call push error: {e}')
 
 
 @socketio.on('answer_call')
