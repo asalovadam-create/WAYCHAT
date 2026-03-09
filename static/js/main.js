@@ -148,6 +148,16 @@ const ICONS = {
     wifi: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 };
 
+// Хелпер для иконок разрешений
+function _permIcon(key) {
+    const svgs = {
+        MIC:  `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="11" rx="3" stroke="currentColor" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3M8 22h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+        CAM:  `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="13" r="4" stroke="currentColor" stroke-width="2"/></svg>`,
+        BELL: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+    };
+    return svgs[key] || key;
+}
+
 // ══════════════════════════════════════════════════════════
 //  ГЛОБАЛЬНОЕ СОСТОЯНИЕ
 // ══════════════════════════════════════════════════════════
@@ -470,12 +480,9 @@ async function init() {
     setTimeout(_updatePermsSummary, 600);
     setTimeout(initPushNotifications, 500);
 
-    // iOS PWA: открываем чат из push-уведомления (?open_chat=ID в URL)
-    const _urlParams = new URLSearchParams(window.location.search);
-    const _openChatId = _urlParams.get('open_chat');
-    if (_openChatId) {
-        history.replaceState({}, '', '/');
-        setTimeout(() => _openChatByChatId(parseInt(_openChatId)), 1200);
+    // Service Worker — кешируем статику (JS, CSS, аватарки) навсегда
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
     }
 
     // loadChats по setInterval убран — WebSocket обновляет в реальном времени
@@ -1987,65 +1994,9 @@ function buildMessageRow(msg, animate = true) {
     const rawTime = msg.raw_timestamp || msg.timestamp || '';
     const displayTime = getMoscowTime(rawTime) || msg.timestamp || '';
 
-    // Видео-кружок
-    if ((msg.media_type === 'video_circle' || msg.type === 'video_circle') && (msg.media_url || msg.file_url)) {
-        const src = msg.media_url || msg.file_url;
-        const circRow = document.createElement('div');
-        circRow.className = `msg-row ${isMe ? 'out' : 'in'}`;
-        if (animate) circRow.classList.add('animate-msg');
-        circRow.setAttribute('data-msg-id', msg.id || '');
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex;flex-direction:column;align-items:'+(isMe?'flex-end':'flex-start');
-        const circ = document.createElement('div');
-        circ.style.cssText = 'width:180px;height:180px;border-radius:50%;overflow:hidden;border:2.5px solid var(--accent);cursor:pointer;position:relative;box-shadow:0 4px 20px rgba(16,185,129,0.3)';
-        const v = document.createElement('video');
-        v.src = src; v.playsInline = true; v.loop = true; v.muted = false;
-        v.style.cssText = 'width:100%;height:100%;object-fit:cover';
-        const playIcon = document.createElement('div');
-        playIcon.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.25);transition:opacity .2s';
-        playIcon.innerHTML = '<svg width="40" height="40" viewBox="0 0 24 24" fill="white" opacity=".8"><polygon points="5,3 19,12 5,21"/></svg>';
-        circ.appendChild(v); circ.appendChild(playIcon);
-        circ.onclick = () => {
-            if (v.paused) { v.play(); playIcon.style.opacity='0'; }
-            else { v.pause(); playIcon.style.opacity='1'; }
-        };
-        v.onplay = () => playIcon.style.opacity='0';
-        v.onpause = () => playIcon.style.opacity='1';
-        const io = new IntersectionObserver(([e])=>{if(e.isIntersecting)v.play();else v.pause();},{threshold:0.5});
-        io.observe(circ);
-        const timeEl = document.createElement('div');
-        timeEl.style.cssText = 'font-size:11px;color:var(--text-2);margin-top:4px;padding:0 4px';
-        timeEl.textContent = displayTime;
-        wrap.appendChild(circ); wrap.appendChild(timeEl);
-        if (!isMe) { circRow.appendChild(avatarHtml ? (() => { const d=document.createElement('div'); d.innerHTML=avatarHtml; return d.firstChild; })() : document.createTextNode('')); }
-        circRow.appendChild(wrap);
-        return circRow;
-    }
-
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
-        const dur = parseInt(msg.content || msg.text || '0', 10) || 0;
-        const mins = Math.floor(dur / 60);
-        const secs = dur % 60;
-        const durStr = mins > 0 ? (mins + ' мин ' + secs + ' сек.') : (secs + ' сек.');
-        const isVideo = type === 'call_video';
-        const label = isVideo ? 'Видеозвонок' : 'Аудиозвонок';
-        // SVG иконки без вложенных backticks
-        const audioSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="white"/></svg>';
-        const videoSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" fill="white"/></svg>';
-        const icon = isVideo ? videoSvg : audioSvg;
-        const iconBg = isMe ? 'rgba(255,255,255,0.2)' : 'rgba(16,185,129,0.25)';
-        contentHtml = '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px 4px;min-width:190px">'
-            + '<div style="width:42px;height:42px;border-radius:50%;background:' + iconBg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0">'
-            + icon
-            + '</div>'
-            + '<div>'
-            + '<div style="font-size:15px;font-weight:700;letter-spacing:-0.2px">' + label + '</div>'
-            + '<div style="font-size:12px;opacity:0.6;margin-top:3px">' + durStr + '</div>'
-            + '</div>'
-            + '</div>';
-    } else if (type === 'image') {
-        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='🖼️ Фото'"></div>`;
+        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='📷 Фото'"></div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
@@ -2561,7 +2512,7 @@ function updateSendButton() {
     if (txt) {
         s.style.display = 'flex'; v.style.display = 'none';
         // Сбрасываем cam-mode если печатаем
-        if (_camModeActive) { _camModeActive = false; _restoreVoiceBtn(); }
+    
     } else {
         s.style.display = 'none'; v.style.display = 'flex';
     }
@@ -2606,10 +2557,10 @@ function openPrivacySettings() {
         +'<div style="font-size:18px;font-weight:700;margin-bottom:4px">🔒 Конфиденциальность</div>'
         +'<div style="font-size:13px;color:var(--text-2);margin-bottom:20px">Управляй кто видит твой контент</div>'
         +'<div id="priv-rows">'
-        +buildRow('Мои моменты','🎬','moments_vis','Все','Кто может просматривать ваши моменты')
+        +buildRow('Мои моменты','moments_vis','Все','Кто может просматривать ваши моменты')
         +buildRow('Фото профиля','👤','avatar_vis','Все','Кто видит вашу аватарку в чатах и профиле')
-        +buildRow('Статус онлайн','🟢','online_vis','Все','Кто видит зелёную точку онлайн')
-        +buildRow('Последний визит','🕐','lastseen_vis','Только контакты','«Был(а) в ...» в профиле')
+        +buildRow('Статус онлайн','online_vis','Все','Кто видит зелёную точку онлайн')
+        +buildRow('Последний визит','lastseen_vis','Только контакты','«Был(а) в ...» в профиле')
         +'</div>';
     const doneBtn=document.createElement('button');
     doneBtn.style.cssText='width:100%;margin-top:8px;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
@@ -2632,199 +2583,11 @@ function openPrivacySettings() {
 //  ВИДЕО-КРУЖОК (как в Telegram)
 // ══════════════════════════════════════════════════════════
 let _camModeActive = false;
-let _videoRecStream = null;
-let _videoRecorder  = null;
 let _videoChunks    = [];
 let _videoTimer     = null;
 let _videoSec       = 0;
 let _videoFlashOn   = false;
 let _videoFacing    = 'user';
-
-function _restoreVoiceBtn() {
-    _camModeActive = false;
-    const v = document.getElementById('voice-btn-main');
-    if (!v) return;
-    v.dataset.mode  = 'voice';
-    v.innerHTML     = ICONS.mic.replace('rgba(255,255,255,0.5)','white');
-    v.style.background  = 'rgba(255,255,255,0.12)';
-    v.style.transform   = '';
-    v.style.boxShadow   = 'none';
-    v.style.transition  = 'transform 0.2s, background 0.2s';
-}
-
-function _activateCamMode() {
-    _camModeActive = true;
-    const v = document.getElementById('voice-btn-main');
-    if (!v) return;
-    v.dataset.mode  = 'camera';
-
-    v.style.transition = 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1), background 0.2s';
-    v.style.transform = 'scale(0)';
-    setTimeout(() => {
-        v.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none">'
-            + '<circle cx="12" cy="12" r="3.5" fill="white"/>'
-            + '<circle cx="12" cy="12" r="9" stroke="white" stroke-width="2"/>'
-            + '<circle cx="18.5" cy="5.5" r="1.5" fill="white"/>'
-            + '</svg>';
-        v.style.background = 'rgba(239,68,68,0.85)';
-        v.style.transform  = 'scale(1)';
-        v.style.boxShadow  = '0 0 16px rgba(239,68,68,0.5)';
-        v.title = 'Зажмите для видео-кружка';
-    }, 150);
-    showToast('Зажмите для записи видео 🎥','info',2000);
-}
-
-function _startVideoCircle() {
-    if (_videoRecStream) return;
-
-    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-        showToast('Нет доступа к камере. Настройки → Safari → Камера → Разрешить', 'error', 5000);
-        return;
-    }
-
-    // ⚠️ КРИТИЧНО ДЛЯ iOS SAFARI: getUserMedia вызывается СИНХРОННО
-    // без await перед ним — иначе Safari не покажет диалог разрешений
-    _videoFacing = _videoFacing || 'user';
-    const mediaPromise = navigator.mediaDevices.getUserMedia({
-        video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } },
-        audio: { echoCancellation: true, noiseSuppression: true }
-    }).catch(() => navigator.mediaDevices.getUserMedia({
-        video: { facingMode: _videoFacing },
-        audio: true
-    }));
-
-    mediaPromise.then(stream => {
-        _videoRecStream = stream;
-        _sessionPerms['camera'] = 'granted';
-        _doStartVideoCircleUI();
-    }).catch(e => {
-        _videoRecStream = null;
-        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-            _sessionPerms['camera'] = 'denied';
-            _showPermDeniedGuide('camera');
-        } else {
-            showToast('Нет доступа к камере: ' + (e.message || e.name), 'error', 4000);
-        }
-    });
-}
-
-function _doStartVideoCircleUI() {
-
-    vibrate(40);
-    _videoChunks = []; _videoSec = 0;
-
-    // Показываем UI кружка
-    const overlay = document.createElement('div');
-    overlay.id = 'video-circle-ui';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px';
-
-    // Кружок с видео
-    const circle = document.createElement('div');
-    circle.style.cssText = 'width:min(80vw,320px);height:min(80vw,320px);border-radius:50%;overflow:hidden;position:relative;border:3px solid var(--accent);box-shadow:0 0 0 0 rgba(16,185,129,0.6)';
-    circle.style.animation = 'circleGlow 1s ease-in-out infinite';
-
-    const vid = document.createElement('video');
-    vid.srcObject = _videoRecStream; vid.autoplay = true; vid.muted = true; vid.playsInline = true;
-    vid.style.cssText = 'width:100%;height:100%;object-fit:cover;transform:scaleX('+((_videoFacing==='user')?'-1':'1')+')';
-    circle.appendChild(vid);
-
-    // Прогресс-кольцо SVG
-    const progress = document.createElementNS('http://www.w3.org/2000/svg','svg');
-    progress.setAttribute('viewBox','0 0 100 100');
-    progress.style.cssText = 'position:absolute;inset:-3px;width:calc(100% + 6px);height:calc(100% + 6px);transform:rotate(-90deg);pointer-events:none';
-    const circ = document.createElementNS('http://www.w3.org/2000/svg','circle');
-    circ.setAttribute('cx','50'); circ.setAttribute('cy','50'); circ.setAttribute('r','47');
-    circ.setAttribute('fill','none'); circ.setAttribute('stroke','var(--accent)'); circ.setAttribute('stroke-width','3');
-    circ.setAttribute('stroke-dasharray','295'); circ.setAttribute('stroke-dashoffset','295');
-    circ.id = 'vc-progress';
-    progress.appendChild(circ); circle.appendChild(progress);
-
-    // Таймер
-    const timerEl = document.createElement('div');
-    timerEl.id = 'vc-timer';
-    timerEl.style.cssText = 'position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:13px;font-weight:700;color:white;text-shadow:0 1px 4px rgba(0,0,0,0.8)';
-    timerEl.textContent = '0:00';
-    circle.appendChild(timerEl);
-
-    overlay.appendChild(circle);
-
-    // Кнопки управления
-    const btns = document.createElement('div');
-    btns.style.cssText = 'display:flex;gap:24px;align-items:center';
-
-    function mkBtn(icon, label, action) {
-        const b = document.createElement('div');
-        b.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer';
-        b.innerHTML = '<div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;font-size:22px;backdrop-filter:blur(10px)">'+icon+'</div>'
-            +'<div style="font-size:11px;color:rgba(255,255,255,0.7);font-weight:600">'+label+'</div>';
-        b.onclick = action;
-        return b;
-    }
-
-    const cancelBtn = mkBtn('✕','Отмена', ()=>{
-        _cancelVideoCircle(overlay);
-    });
-    const flipBtn = mkBtn('🔄','Камера', ()=>{
-        _videoFacing = _videoFacing==='user'?'environment':'user';
-        vid.style.transform = 'scaleX('+(_videoFacing==='user'?'-1':'1')+')';
-        // Перезапускаем поток
-        _videoRecStream.getVideoTracks().forEach(t=>t.stop());
-        navigator.mediaDevices.getUserMedia({
-            video:{facingMode:_videoFacing,width:{ideal:480},height:{ideal:480}},audio:false
-        }).then(s=>{
-            const newTrack = s.getVideoTracks()[0];
-            _videoRecStream.removeTrack(_videoRecStream.getVideoTracks()[0]);
-            _videoRecStream.addTrack(newTrack);
-            vid.srcObject = _videoRecStream;
-        }).catch(()=>{});
-    });
-    const flashBtn = mkBtn('⚡','Вспышка', ()=>{
-        _videoFlashOn = !_videoFlashOn;
-        const track = _videoRecStream.getVideoTracks()[0];
-        try { track.applyConstraints({ advanced:[{torch:_videoFlashOn}] }); } catch(e){}
-        flashBtn.querySelector('div').style.background = _videoFlashOn ? 'rgba(255,220,0,0.4)' : 'rgba(255,255,255,0.15)';
-    });
-    const stopBtn = mkBtn('⏹','Отправить', ()=>{
-        _stopVideoCircle();
-    });
-
-    btns.appendChild(cancelBtn); btns.appendChild(flipBtn);
-    btns.appendChild(flashBtn);  btns.appendChild(stopBtn);
-    overlay.appendChild(btns);
-
-    const hint = document.createElement('div');
-    hint.style.cssText = 'font-size:13px;color:rgba(255,255,255,0.5)';
-    hint.textContent = 'Отпустите или нажмите ⏹ чтобы отправить';
-    overlay.appendChild(hint);
-
-    document.body.appendChild(overlay);
-
-    // Добавляем CSS анимацию
-    if (!document.getElementById('vc-style')) {
-        const st = document.createElement('style');
-        st.id = 'vc-style';
-        st.textContent = '@keyframes circleGlow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0.6)}50%{box-shadow:0 0 0 8px rgba(16,185,129,0)}}';
-        document.head.appendChild(st);
-    }
-
-    // Начинаем запись
-    const mime = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4']
-        .find(m=>MediaRecorder.isTypeSupported(m)) || 'video/webm';
-    _videoRecorder = new MediaRecorder(_videoRecStream, {mimeType:mime});
-    _videoRecorder.ondataavailable = e => { if(e.data?.size>0) _videoChunks.push(e.data); };
-    _videoRecorder.onstop = () => _sendVideoCircle(mime);
-    _videoRecorder.start(100);
-
-    const MAX_SEC = 60;
-    _videoTimer = setInterval(()=>{
-        _videoSec++;
-        const tEl = document.getElementById('vc-timer');
-        const pEl = document.getElementById('vc-progress');
-        if(tEl) tEl.textContent = fmtSec(_videoSec);
-        if(pEl) pEl.setAttribute('stroke-dashoffset', String(295 - (295*_videoSec/MAX_SEC)));
-        if(_videoSec >= MAX_SEC) _stopVideoCircle();
-    }, 1000);
-}
 
 function _cancelVideoCircle(overlay) {
     clearInterval(_videoTimer); _videoTimer=null;
@@ -2843,30 +2606,6 @@ function _stopVideoCircle() {
     _videoRecorder.stop();
     _videoRecStream?.getTracks().forEach(t=>t.stop());
     document.getElementById('video-circle-ui')?.remove();
-}
-
-async function _sendVideoCircle(mime) {
-    if(!_videoChunks.length || !currentChatId) { _videoRecStream=null; _videoRecorder=null; _videoChunks=[]; return; }
-    const ext = mime.includes('mp4')?'mp4':'webm';
-    const blob = new Blob(_videoChunks, {type:mime});
-    _videoRecStream=null; _videoRecorder=null; _videoChunks=[];
-    if(blob.size < 5000) return; // слишком короткое
-
-    showToast('Отправка видео-кружка...','info');
-    const fd = new FormData();
-    fd.append('file', blob, 'video_circle.'+ext);
-    fd.append('video_circle','1'); // флаг для рендера кружка
-    try {
-        const r = await apiFetch('/upload_media',{method:'POST',body:fd});
-        const d = await r.json();
-        if(d.url) {
-            await apiFetch('/send_message',{
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({chat_id:currentChatId, media_url:d.url, media_type:'video_circle', text:''})
-            });
-            showToast('Видео-кружок отправлен 🎥','success');
-        }
-    } catch(e) { showToast('Ошибка отправки','error'); }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -3067,46 +2806,6 @@ function setupVoiceRecording() {
         e.preventDefault();
         _pressTs  = Date.now();
         _holdDone = false;
-        const isCam = document.getElementById('voice-btn-main')?.dataset.mode === 'camera';
-
-        if (isCam) {
-            // ⚠️ КРИТИЧНО ДЛЯ iOS SAFARI:
-            // getUserMedia вызываем ЗДЕСЬ синхронно из touchstart
-            // setTimeout убивает user gesture — камера не запрашивается
-            if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-                showToast('Нет доступа к камере. Настройки → Safari → Камера → Разрешить', 'error', 5000);
-                return;
-            }
-            _videoFacing = _videoFacing || 'user';
-            const camPromise = navigator.mediaDevices.getUserMedia({
-                video: { facingMode: _videoFacing, width: { ideal: 480 }, height: { ideal: 480 } },
-                audio: { echoCancellation: true, noiseSuppression: true }
-            }).catch(() => navigator.mediaDevices.getUserMedia({
-                video: { facingMode: _videoFacing },
-                audio: true
-            }));
-
-            _pressTimer = setTimeout(() => {
-                _holdDone = true;
-                vibrate(45);
-                camPromise.then(stream => {
-                    if (_videoRecStream) { stream.getTracks().forEach(t => t.stop()); return; }
-                    _videoRecStream = stream;
-                    _sessionPerms['camera'] = 'granted';
-                    _doStartVideoCircleUI();
-                }).catch(e => {
-                    _videoRecStream = null;
-                    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                        _sessionPerms['camera'] = 'denied';
-                        _showPermDeniedGuide('camera');
-                    } else {
-                        showToast('Нет доступа к камере: ' + (e.message || e.name), 'error', 4000);
-                    }
-                });
-            }, 300);
-            return;
-        }
-
         // Микрофон — вызываем getUserMedia ПРЯМО ЗДЕСЬ из user gesture
         // Safari требует синхронный вызов без await перед ним
         const streamPromise = _getStream();
@@ -3130,17 +2829,13 @@ function setupVoiceRecording() {
 
         if (!_holdDone && dt < 250) {
             // Короткий тап — переключаем режим
-            if (cur?.dataset.mode === 'camera') {
-                _restoreVoiceBtn();
-            } else {
-                _activateCamMode();
-            }
+            // short tap — ничего не делаем
             return;
         }
 
         if (_holdDone) {
             if (isRecording) stopRecording();
-            else if (_videoRecorder && _videoRecorder.state !== 'inactive') _stopVideoCircle();
+
         }
         _holdDone = false;
     }
@@ -3593,7 +3288,7 @@ async function searchContactByPhone() {
         if (!r) return;
         const users = await r.json();
         if (!users || !users.length) {
-            resultDiv.innerHTML = `<div style="text-align:center;padding:10px"><div style="font-size:32px;margin-bottom:8px">🔍</div><p style="font-size:15px;font-weight:600;margin:0">Пользователь не найден</p><p style="font-size:13px;color:var(--text-2);margin:6px 0 0">По этому номеру нет аккаунта WayChat</p></div>`;
+            resultDiv.innerHTML = `<div style="text-align:center;padding:10px"><div style="margin-bottom:8px;display:flex;justify-content:center;opacity:0.4">${ICONS.search.replace('16','32').replace('16','32')}</div><p style="font-size:15px;font-weight:600;margin:0">Пользователь не найден</p><p style="font-size:13px;color:var(--text-2);margin:6px 0 0">По этому номеру нет аккаунта WayChat</p></div>`;
             return;
         }
         const u = users[0];
@@ -3613,7 +3308,7 @@ async function searchContactByPhone() {
                 </button>
                 <button onclick="${isSaved ? `removeContactById(${u.id})` : `saveContactFromSearch(${u.id},'${u.name.replace(/'/g,"\\'")}','${(u.avatar_url||u.avatar||'').replace(/'/g,"\\'")}','${u.username}')`}" id="save-contact-btn-${u.id}"
                     style="flex:1;padding:11px;background:${isSaved?'rgba(239,68,68,0.1)':'rgba(16,185,129,0.1)'};border:1px solid ${isSaved?'rgba(239,68,68,0.3)':'rgba(16,185,129,0.3)'};border-radius:14px;color:${isSaved?'#ef4444':'#10b981'};font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">
-                    ${isSaved ? '🗑 Убрать' : '👤 Сохранить'}
+                    ${isSaved ? 'Убрать' : 'Сохранить'}
                 </button>
             </div>`;
     } catch(e) {
@@ -3631,7 +3326,7 @@ function saveContactFromSearch(id, name, avatar, username) {
         vibrate(20);
         const btn = document.getElementById(`save-contact-btn-${id}`);
         if (btn) {
-            btn.textContent = '🗑 Убрать';
+            btn.textContent = 'Убрать';
             btn.style.background = 'rgba(239,68,68,0.1)';
             btn.style.borderColor = 'rgba(239,68,68,0.3)';
             btn.style.color = '#ef4444';
@@ -4095,9 +3790,9 @@ async function openPermissionsSettings() {
     }
 
     const perms = [
-        { type:'microphone',    icon:'🎤', name:'Микрофон',     desc:'Голосовые сообщения и звонки' },
-        { type:'camera',        icon:'📷', name:'Камера',       desc:'Видеозвонки и смена аватара' },
-        { type:'notifications', icon:'🔔', name:'Уведомления',  desc:'Push-уведомления о сообщениях' },
+        { type:'microphone',    icon:'MIC', name:'Микрофон',     desc:'Голосовые сообщения и звонки' },
+        { type:'camera',        icon:'CAM', name:'Камера',       desc:'Видеозвонки и смена аватара' },
+        { type:'notifications', icon:'BELL', name:'Уведомления',  desc:'Push-уведомления о сообщениях' },
     ];
 
     sh.innerHTML = '<div class="modal-handle"></div>'
@@ -4125,7 +3820,7 @@ async function openPermissionsSettings() {
         const state = await getPermStatus(p.type);
         const row = document.createElement('div');
         row.style.cssText='display:flex;align-items:center;gap:14px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;padding:14px 16px';
-        row.innerHTML='<div style="font-size:28px;flex-shrink:0">'+p.icon+'</div>'
+        row.innerHTML='<div style="display:flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:14px;background:rgba(255,255,255,0.08);flex-shrink:0">'+_permIcon(p.icon)+'</div>'
             +'<div style="flex:1;min-width:0">'
             +'<div style="font-size:15px;font-weight:600">'+p.name+'</div>'
             +'<div style="font-size:12px;color:var(--text-2);margin-top:2px">'+p.desc+'</div>'
@@ -4610,7 +4305,8 @@ async function loadMoments() {
         renderMomentsList(container, moments);
         // Предзагружаем первые 3 медиа фоново — не блокирует UI
         setTimeout(() => {
-            moments.slice(0, 3).forEach(m => { if (m.media_url) _preloadMedia(m.media_url); });
+            // Предзагружаем первые 6 — важнее скорость открытия первых
+            moments.slice(0, 6).forEach(m => { if (m.media_url) _preloadMedia(m.media_url); });
         }, 200);
     } catch(e) {
         console.error('loadMoments error:', e);
@@ -4914,8 +4610,8 @@ function _runMomentsViewer(list, startIdx) {
             // Спиннер
             const spin = document.createElement('div');
             spin.id = 'mb-spin';
-            spin.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3';
-            spin.innerHTML = '<div style="width:48px;height:48px;border:3px solid rgba(255,255,255,0.15);border-top-color:rgba(255,255,255,0.9);border-radius:50%;animation:spin 0.75s linear infinite"></div>';
+            spin.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;transition:opacity 0.2s';
+            spin.innerHTML = '<div style="width:40px;height:40px;border:2.5px solid rgba(255,255,255,0.1);border-top-color:rgba(255,255,255,0.85);border-radius:50%;animation:spin 0.65s linear infinite"></div>';
             bg.appendChild(spin);
 
             function onReady() {
@@ -4941,7 +4637,7 @@ function _runMomentsViewer(list, startIdx) {
             if (isVideo) {
                 const vid = document.createElement('video');
                 vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
-                vid.preload = 'auto';
+                vid.preload = 'auto'; // полная загрузка для плавного воспроизведения
                 // opacity:0 + visibility:hidden предотвращает мелькание первого кадра
                 vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s;visibility:hidden';
                 // poster = превью от Cloudinary (первый кадр как изображение) — убирает чёрный экран
@@ -4952,8 +4648,8 @@ function _runMomentsViewer(list, startIdx) {
                 vid.oncanplay = onReady;  // fallback
                 vid.onended = () => next();
                 vid.onerror = () => onReady();
-                // Таймаут 8с — если совсем не грузится, показываем что есть
-                const vidTimeout = setTimeout(() => onReady(), 8000);
+                // Таймаут 3с — быстрый показ постера и продолжение
+                const vidTimeout = setTimeout(() => onReady(), 3000);
                 const _origOnReady = onReady;
                 vid._clearTimeout = () => clearTimeout(vidTimeout);
                 const _patchedOnReady = function() { clearTimeout(vidTimeout); _origOnReady(); };
@@ -4962,6 +4658,8 @@ function _runMomentsViewer(list, startIdx) {
                 vid.onended = () => next();
                 if (_mediaCache.has(m.media_url)) {
                     vid.src = _mediaCache.get(m.media_url);
+                    // Уже в кеше — можем показать почти мгновенно
+                    vid.onloadeddata = () => { clearTimeout(vidTimeout); onReady(); };
                 } else {
                     vid.src = m.media_url;
                     _getCachedMedia(m.media_url).catch(() => {});
@@ -5425,7 +5123,7 @@ function requestPermission(type) {
         // Кнопка "Разрешить" вызывает getUserMedia СИНХРОННО из onclick (Safari требует)
         return new Promise(resolve => {
             const cfg = {
-                microphone: { icon:'🎤', title:'Доступ к микрофону', desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
+                microphone: { icon:'MIC', title:'Доступ к микрофону', desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
                 camera:     { icon:'📷', title:'Доступ к камере',    desc:'Нужен для видеозвонков и записи видео',  btn:'Разрешить камеру' },
             };
             const c = cfg[type];
@@ -5437,7 +5135,7 @@ function requestPermission(type) {
             sh.innerHTML =
                 '<div class="modal-handle"></div>'
                 + '<div style="text-align:center;padding:10px 0 22px">'
-                + '<div style="font-size:54px;margin-bottom:14px">'+c.icon+'</div>'
+                + '<div style="display:flex;align-items:center;justify-content:center;width:72px;height:72px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 16px">'+_permIcon(c.icon)+'</div>'
                 + '<div style="font-size:18px;font-weight:700;margin-bottom:10px">'+c.title+'</div>'
                 + '<div style="font-size:14px;color:var(--text-2);line-height:1.55">'+c.desc+'<br><br>'
                 + '<span style="font-size:13px;opacity:.7">Safari покажет системный запрос разрешения</span>'
@@ -5506,9 +5204,9 @@ function requestPermission(type) {
 function _showPermExplainer(type) {
     return new Promise(resolve => {
         const cfg = {
-            microphone:    { icon:'🎤', title:'Доступ к микрофону',    desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
-            camera:        { icon:'📷', title:'Доступ к камере',        desc:'Нужен для видеозвонков и аватара',       btn:'Разрешить камеру' },
-            notifications: { icon:'🔔', title:'Push-уведомления',       desc:'Чтобы получать сообщения когда приложение закрыто', btn:'Разрешить уведомления' },
+            microphone:    { icon:'MIC', title:'Доступ к микрофону',    desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
+            camera:        { icon:'CAM', title:'Доступ к камере',        desc:'Нужен для видеозвонков и аватара',       btn:'Разрешить камеру' },
+            notifications: { icon:'BELL', title:'Push-уведомления',       desc:'Чтобы получать сообщения когда приложение закрыто', btn:'Разрешить уведомления' },
         };
         const c = cfg[type] || { icon:'🔑', title:'Разрешение', desc:'', btn:'Продолжить' };
 
@@ -5518,7 +5216,7 @@ function _showPermExplainer(type) {
         const sh = document.createElement('div'); sh.className='modal-sheet';
         sh.innerHTML='<div class="modal-handle"></div>'
             +'<div style="text-align:center;padding:8px 0 20px">'
-            +'<div style="font-size:52px;margin-bottom:12px">'+c.icon+'</div>'
+            +'<div style="display:flex;align-items:center;justify-content:center;width:68px;height:68px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 14px">'+_permIcon(c.icon)+'</div>'
             +'<div style="font-size:18px;font-weight:700;margin-bottom:8px">'+c.title+'</div>'
             +'<div style="font-size:14px;color:var(--text-2);line-height:1.5">'+c.desc+'</div>'
             +'</div>';
@@ -5542,15 +5240,15 @@ function _showPermDeniedGuide(type) {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
     const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     const cfg = {
-        microphone: { icon:'🎤', name:'Микрофон',
+        microphone: { icon:'MIC', name:'Микрофон',
             ios_safari: 'Настройки iPhone → Safari → Микрофон → Разрешить',
             ios_pwa:    'Настройки iPhone → Конфиденциальность → Микрофон → включить WayChat',
             other:      'Нажмите 🔒 в адресной строке браузера → Разрешить микрофон' },
-        camera: { icon:'📷', name:'Камера',
+        camera: { icon:'CAM', name:'Камера',
             ios_safari: 'Настройки iPhone → Safari → Камера → Разрешить',
             ios_pwa:    'Настройки iPhone → Конфиденциальность → Камера → включить WayChat',
             other:      'Нажмите 🔒 в адресной строке браузера → Разрешить камеру' },
-        notifications: { icon:'🔔', name:'Уведомления',
+        notifications: { icon:'BELL', name:'Уведомления',
             ios_safari: 'Нужно добавить WayChat на экран Домой',
             ios_pwa:    'Настройки iPhone → WayChat → Уведомления → включить',
             other:      'Нажмите 🔒 в адресной строке браузера → Разрешить уведомления' },
@@ -5567,7 +5265,7 @@ function _showPermDeniedGuide(type) {
     const sh = document.createElement('div'); sh.className='modal-sheet';
     sh.innerHTML='<div class="modal-handle"></div>'
         +'<div style="text-align:center;padding:8px 0 20px">'
-        +'<div style="font-size:48px;margin-bottom:12px">'+c.icon+'</div>'
+        +'<div style="display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 14px">'+_permIcon(c.icon)+'</div>'
         +'<div style="font-size:17px;font-weight:700;margin-bottom:10px">'+c.name.charAt(0).toUpperCase()+c.name.slice(1)+' заблокирован</div>'
         +'<div style="font-size:14px;color:var(--text-2);line-height:1.6;text-align:left;background:var(--surface2);border-radius:14px;padding:14px">'
         +'Чтобы разрешить '+c.name+':<br><br>'
@@ -6137,36 +5835,17 @@ function _showPushBanner() {
 async function _subscribeToPush() {
     if (!_swReg || !('PushManager' in window)) return;
     try {
-        // Получаем VAPID ключ с сервера
-        const keyRes = await fetch('/vapid-public-key', { credentials: 'same-origin' });
-        if (!keyRes.ok) { console.warn('VAPID key fetch failed:', keyRes.status); return; }
-        const keyData = await keyRes.json();
-        if (!keyData.publicKey) { console.warn('No VAPID key'); return; }
-        const serverKey = _urlBase64ToUint8Array(keyData.publicKey);
-
         let sub = await _swReg.pushManager.getSubscription();
-
-        // iOS / Chrome: если ключ сменился (редеплой) — переподписываемся
-        if (sub) {
-            const existingKey = sub.options?.applicationServerKey;
-            if (existingKey) {
-                const existingB64 = btoa(String.fromCharCode(...new Uint8Array(existingKey)))
-                    .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
-                if (existingB64 !== keyData.publicKey) {
-                    await sub.unsubscribe();
-                    sub = null;
-                    console.log('🔄 VAPID key changed — resubscribing');
-                }
-            }
-        }
-
         if (!sub) {
+            const keyRes  = await fetch('/vapid-public-key', { credentials: 'same-origin' });
+            if (!keyRes.ok) { console.warn('VAPID key fetch failed:', keyRes.status); return; }
+            const keyData = await keyRes.json();
+            if (!keyData.publicKey) { console.warn('No VAPID key'); return; }
             sub = await _swReg.pushManager.subscribe({
                 userVisibleOnly:      true,
-                applicationServerKey: serverKey,
+                applicationServerKey: _urlBase64ToUint8Array(keyData.publicKey),
             });
         }
-
         const subJson = sub.toJSON();
         const res = await apiFetch('/push-subscribe', {
             method:  'POST',
@@ -6177,17 +5856,19 @@ async function _subscribeToPush() {
                 auth:     subJson.keys?.auth   || '',
             }),
         });
-        if (res && res.ok) {
+        if (res && res.ok !== false) {
             console.log('✅ Push подписка активна');
             notifPermission = true;
         }
     } catch(e) {
-        console.warn('Push subscribe error:', e.name, e.message);
-        // Сброс при ошибке — следующий вызов создаст новую подписку
-        try {
-            const oldSub = await _swReg.pushManager.getSubscription();
-            if (oldSub) await oldSub.unsubscribe();
-        } catch(e2) {}
+        console.warn('Push subscribe error:', e);
+        // Если подписка устарела — удаляем и пробуем заново один раз
+        if (e.name === 'InvalidStateError' || e.name === 'AbortError') {
+            try {
+                const oldSub = await _swReg.pushManager.getSubscription();
+                if (oldSub) await oldSub.unsubscribe();
+            } catch(e2) {}
+        }
     }
 }
 
