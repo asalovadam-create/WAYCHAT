@@ -784,29 +784,80 @@ body {
 .wave-bar:nth-child(3n) { animation-delay:0.2s; }
 @keyframes wave { 0%,100%{height:4px;} 50%{height:20px;} }
 
-/* ЗВОНОК */
-.call-screen { position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);display:flex;flex-direction:column;align-items:center;padding:0 24px;transition:opacity 0.3s; }
+/* ЗВОНОК — iOS 26 Style */
 .hidden { display:none !important; }
-.call-screen.hidden { display:none; }
-.call-bg { position:absolute;inset:0;z-index:0;opacity:0.15;filter:blur(60px);background:radial-gradient(circle at 50% 30%,var(--accent) 0%,transparent 60%);animation:callBgPulse 3s ease infinite; }
-@keyframes callBgPulse { 0%,100%{opacity:0.1;} 50%{opacity:0.25;} }
-.call-ring-1,.call-ring-2,.call-ring-3 { position:absolute;border-radius:50%;border:1px solid var(--accent);opacity:0;animation:ring 3s ease-out infinite; }
-.call-ring-1 { width:180px;height:180px;animation-delay:0s; }
-.call-ring-2 { width:240px;height:240px;animation-delay:0.6s; }
-.call-ring-3 { width:300px;height:300px;animation-delay:1.2s; }
-@keyframes ring { 0%{opacity:0.6;transform:scale(0.8);} 100%{opacity:0;transform:scale(1.2);} }
-.call-info { position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;margin-top:80px; }
-.call-btns { position:relative;z-index:1;display:flex;gap:20px;align-items:center;flex-wrap:wrap;justify-content:center;margin-top:auto;margin-bottom:60px;width:100%; }
-.call-btn { width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;transition:transform 0.15s,box-shadow 0.15s; }
-.call-btn:active { transform:scale(0.87); }
-.call-btn.danger { background:#ef4444;box-shadow:0 4px 20px rgba(239,68,68,0.4); }
-.call-btn.accept { background:var(--accent);box-shadow:var(--glow); }
-.call-btn.neutral { background:rgba(255,255,255,0.12); }
-.call-btn.active  { background:var(--accent-10);border:1px solid var(--accent-30); }
-.call-timer { font-size:14px;color:var(--text-2);font-variant-numeric:tabular-nums; }
+.call-screen { position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;overflow:hidden;background:#000; }
+.call-screen.hidden { display:none !important; }
+
+/* Вход/выход экрана звонка */
+@keyframes wcCallIn  { from{opacity:0;transform:translateY(50px) scale(0.95)} to{opacity:1;transform:none} }
+@keyframes wcCallOut { from{opacity:1;transform:none} to{opacity:0;transform:translateY(50px) scale(0.95)} }
+.call-screen.wc-in  { animation:wcCallIn  0.42s cubic-bezier(.32,.72,0,1) forwards; }
+.call-screen.wc-out { animation:wcCallOut 0.28s ease-in forwards; pointer-events:none; }
+
+/* Размытый аватар на весь фон */
+.call-bg-blur { position:absolute;inset:0;z-index:0;background-size:cover;background-position:center 15%;
+  filter:blur(52px) brightness(0.28) saturate(1.7);transform:scale(1.12);transition:opacity 0.6s; }
+/* Градиент снизу */
+.call-bg-grad { position:absolute;inset:0;z-index:1;
+  background:linear-gradient(to bottom,rgba(0,0,0,0) 0%,rgba(0,0,0,0) 30%,rgba(0,0,0,0.6) 65%,rgba(0,0,0,0.95) 100%); }
+
+/* Пульс кольца — только при входящем */
+@keyframes wcRing { 0%{transform:scale(1);opacity:.55} 75%{transform:scale(1.6);opacity:0} 100%{transform:scale(1.6);opacity:0} }
+.wc-ring { position:absolute;width:116px;height:116px;border-radius:50%;
+  border:2px solid rgba(255,255,255,0.4);animation:wcRing 2.2s ease-out infinite;pointer-events:none;z-index:2; }
+.wc-ring:nth-child(2){animation-delay:.55s}
+.wc-ring:nth-child(3){animation-delay:1.1s}
+
+/* Аватар */
+.wc-call-ava { position:relative;width:112px;height:112px;border-radius:50%;overflow:hidden;
+  box-shadow:0 0 0 3px rgba(255,255,255,0.18),0 14px 48px rgba(0,0,0,0.7);z-index:3;flex-shrink:0; }
+.wc-call-ava img,.wc-call-ava div { width:100%;height:100%;object-fit:cover;display:block; }
+
+/* Кнопки звонка */
+.wc-cbtn { display:flex;flex-direction:column;align-items:center;gap:7px;cursor:pointer; }
+.wc-cbtn-c { width:68px;height:68px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  border:none;cursor:pointer;transition:transform .13s cubic-bezier(.34,1.56,.64,1),filter .12s;
+  -webkit-tap-highlight-color:transparent; }
+.wc-cbtn-c:active { transform:scale(0.86);filter:brightness(0.82); }
+.wc-cbtn-lbl { font-size:11.5px;color:rgba(255,255,255,0.65);font-weight:500;letter-spacing:.05px;text-align:center;max-width:72px; }
+.wc-btn-neutral { background:rgba(255,255,255,0.16);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px); }
+.wc-btn-active  { background:rgba(255,255,255,0.88)!important; }
+.wc-btn-active svg [stroke] { stroke:#111!important; }
+.wc-btn-active svg [fill]:not([fill="none"]) { fill:#111!important; }
+.wc-btn-end    { background:#ff3b30;box-shadow:0 5px 24px rgba(255,59,48,.45);width:76px!important;height:76px!important; }
+.wc-btn-accept { background:#34c759;box-shadow:0 5px 24px rgba(52,199,89,.45); }
+.wc-btn-decline { background:#ff3b30;box-shadow:0 5px 24px rgba(255,59,48,.4); }
+
+/* Таймер */
+@keyframes timerIn { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:none} }
+#wc-call-timer { animation:timerIn .35s ease forwards;font-variant-numeric:tabular-nums; }
+
+/* Видео */
+.wc-video-bg { position:absolute;inset:0;z-index:0;background:#000; }
+.wc-video-bg video { width:100%;height:100%;object-fit:cover; }
+.wc-local-vid { position:absolute;top:max(env(safe-area-inset-top),52px);right:14px;
+  width:92px;height:128px;border-radius:14px;overflow:hidden;z-index:12;
+  box-shadow:0 4px 22px rgba(0,0,0,.55);border:1.5px solid rgba(255,255,255,.18);cursor:pointer;transition:transform .2s; }
+.wc-local-vid:active { transform:scale(.93); }
+.wc-local-vid video { width:100%;height:100%;object-fit:cover; }
+
+/* Пропущенный/состоявшийся звонок в ленте сообщений */
+.msg-call-row { display:inline-flex;align-items:center;gap:7px; }
+.msg-call-missed { color:#ff453a; }
+.msg-call-done   { color:var(--accent,#10b981); }
+
+/* Кнопка обратного звонка в сообщении */
+.msg-call-back { display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:5px 12px;
+  background:rgba(255,255,255,0.09);border-radius:20px;border:none;color:var(--accent);
+  font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s; }
+.msg-call-back:active { background:rgba(255,255,255,0.18); }
+
+/* Старые классы для совместимости */
+.call-btn { display:none; }
 .video-container { position:absolute;inset:0;z-index:0;background:#000; }
 #remote-video { width:100%;height:100%;object-fit:cover;display:none; }
-#local-video  { position:absolute;bottom:160px;right:16px;width:90px;height:130px;object-fit:cover;border-radius:14px;border:2px solid rgba(255,255,255,0.2);display:none;z-index:5;box-shadow:0 4px 20px rgba(0,0,0,0.5); }
+#local-video  { display:none; }
 
 /* НАСТРОЙКИ */
 .settings-hero { position:relative;height:280px;overflow:hidden;flex-shrink:0; }
@@ -1122,44 +1173,96 @@ body {
     </div>
 </div>
 
-<!-- ══ ЗВОНОК ══ -->
+<!-- ══ ЗВОНОК — iOS 26 Style ══ -->
 <div id="call-screen" class="call-screen hidden">
-    <div class="call-bg"></div>
-    <div id="call-video-container" class="video-container" style="display:none">
+
+    <!-- Видео (для видеозвонка) -->
+    <div id="wc-video-bg" class="wc-video-bg" style="display:none">
         <video id="remote-video" autoplay playsinline></video>
-        <video id="local-video"  autoplay playsinline muted></video>
     </div>
-    <!-- Анимация вызова -->
-    <div class="call-ring-1"></div><div class="call-ring-2"></div><div class="call-ring-3"></div>
-    <!-- Основная инфо -->
-    <div class="call-info" id="call-info">
-        <div id="call-avatar-box" style="margin-bottom:16px"></div>
-        <h2 id="call-name" style="font-size:26px;font-weight:800;letter-spacing:-0.3px;z-index:1;text-shadow:0 2px 12px rgba(0,0,0,0.5)">...</h2>
-        <div id="call-status-label" style="color:var(--text-2);font-size:15px;margin-top:6px;z-index:1">Вызов...</div>
-        <div id="call-timer" class="call-timer" style="margin-top:8px;display:none;font-size:20px;font-weight:700;color:white">0:00</div>
-        <div id="call-quality-label" style="display:none;font-size:11px;color:var(--text-2);margin-top:4px"></div>
+    <!-- Локальное видео (маленькое, угол) -->
+    <div id="wc-local-vid" class="wc-local-vid" style="display:none" onclick="flipCamera()">
+        <video id="local-video" autoplay playsinline muted></video>
     </div>
-    <!-- Участники групп. звонка -->
-    <div id="group-call-participants" style="display:none;position:absolute;top:max(env(safe-area-inset-top),44px);left:0;right:0;padding:8px 12px;display:none">
-        <div id="group-call-grid" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center"></div>
+
+    <!-- Размытый фон (аватар) -->
+    <div id="wc-call-bg-blur" class="call-bg-blur"></div>
+    <div class="call-bg-grad"></div>
+
+    <!-- Пульс-кольца (только входящий) -->
+    <div id="wc-rings-wrap" style="position:absolute;inset:0;z-index:2;display:flex;align-items:center;justify-content:center;pointer-events:none">
+        <div class="wc-ring"></div>
+        <div class="wc-ring"></div>
+        <div class="wc-ring"></div>
     </div>
-    <!-- Кнопки -->
-    <div class="call-btns">
-        <div style="display:flex;gap:16px;align-items:center;justify-content:center;margin-bottom:12px">
-            <button id="accept-btn" onclick="answerIncomingCall()" class="call-btn accept" style="display:none">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="white"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg>
+
+    <!-- Верхняя зона: статус-бар -->
+    <div style="position:relative;z-index:10;padding:max(env(safe-area-inset-top),16px) 20px 0;display:flex;align-items:center;justify-content:center">
+        <div id="wc-call-type-badge" style="font-size:12.5px;font-weight:600;color:rgba(255,255,255,0.55);letter-spacing:0.3px;text-transform:uppercase"></div>
+    </div>
+
+    <!-- Центр: аватар + имя -->
+    <div style="position:relative;z-index:10;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:0 24px;margin-top:-32px">
+        <!-- Аватар с кольцами -->
+        <div style="position:relative;display:flex;align-items:center;justify-content:center;margin-bottom:22px">
+            <div id="wc-call-ava" class="wc-call-ava"></div>
+        </div>
+        <!-- Имя -->
+        <div id="wc-call-name" style="font-size:28px;font-weight:800;letter-spacing:-0.5px;color:#fff;text-align:center;text-shadow:0 2px 16px rgba(0,0,0,0.5);line-height:1.1"></div>
+        <!-- Статус / таймер -->
+        <div style="margin-top:10px;min-height:28px;display:flex;flex-direction:column;align-items:center;gap:4px">
+            <div id="wc-call-status" style="font-size:15px;color:rgba(255,255,255,0.65);font-weight:400;text-align:center"></div>
+            <div id="wc-call-timer" style="font-size:20px;font-weight:700;color:#fff;display:none">0:00</div>
+        </div>
+    </div>
+
+    <!-- Кнопки снизу -->
+    <div style="position:relative;z-index:10;padding:0 20px calc(env(safe-area-inset-bottom)+32px);width:100%">
+
+        <!-- Вспомогательные кнопки (мут/видео/динамик/флип) -->
+        <div id="wc-aux-btns" style="display:flex;justify-content:space-around;align-items:center;margin-bottom:28px">
+            <button class="wc-cbtn" onclick="toggleMute()" id="wc-mute-wrap">
+                <div class="wc-cbtn-c wc-btn-neutral" id="wc-mute-btn">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <span class="wc-cbtn-lbl">Микрофон</span>
             </button>
-            <button id="mute-btn" onclick="toggleMute()" class="call-btn neutral" style="color:white" title="Микрофон">${ICONS.mic.replace('rgba(255,255,255,0.5)','white')}</button>
-            <button onclick="endCall(true)" class="call-btn danger" title="Завершить">${ICONS.phone_off}</button>
-            <button id="video-btn" onclick="toggleVideo()" class="call-btn neutral" style="color:white" title="Камера">${ICONS.video.replace('white','white')}</button>
-            <button id="speaker-btn" onclick="toggleSpeaker()" class="call-btn neutral" style="color:white" title="Динамик">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+            <button class="wc-cbtn" onclick="toggleVideo()" id="wc-video-wrap" style="display:none">
+                <div class="wc-cbtn-c wc-btn-neutral" id="wc-video-btn">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="23 7 16 12 23 17 23 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2" stroke="white" stroke-width="2"/></svg>
+                </div>
+                <span class="wc-cbtn-lbl">Камера</span>
+            </button>
+            <button class="wc-cbtn" onclick="toggleSpeaker()" id="wc-speaker-wrap">
+                <div class="wc-cbtn-c wc-btn-neutral" id="wc-speaker-btn">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="wc-cbtn-lbl">Динамик</span>
+            </button>
+            <button class="wc-cbtn" onclick="flipCamera()" id="wc-flip-wrap" style="display:none">
+                <div class="wc-cbtn-c wc-btn-neutral">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M1 4v6h6M23 20v-6h-6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <span class="wc-cbtn-lbl">Повернуть</span>
             </button>
         </div>
-        <div style="display:flex;gap:12px;justify-content:center">
-            <button id="flip-btn" onclick="flipCamera()" class="call-btn neutral" style="width:44px;height:44px;color:white;opacity:0.7" title="Перевернуть камеру">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M1 4v6h6M23 20v-6h-6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10M23 14l-4.64 4.36A9 9 0 013.51 15" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
+
+        <!-- Главные кнопки: принять / сбросить -->
+        <div style="display:flex;justify-content:space-around;align-items:center">
+            <!-- Кнопка "Принять" (только входящий) -->
+            <div id="wc-accept-wrap" class="wc-cbtn" style="display:none" onclick="answerIncomingCall()">
+                <div class="wc-cbtn-c wc-btn-accept">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="white"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg>
+                </div>
+                <span class="wc-cbtn-lbl">Ответить</span>
+            </div>
+            <!-- Кнопка "Завершить / Отклонить" -->
+            <div class="wc-cbtn" onclick="endCall(true)">
+                <div class="wc-cbtn-c wc-btn-end">
+                    <svg width="26" height="26" viewBox="0 0 24 24" fill="white"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c1.12.4 2.33.61 3.53.61A1 1 0 0122 16v3a1 1 0 01-.92 1C9.23 21.34 2 14.11 2 3a1 1 0 011-1h3a1 1 0 011 1c0 1.2.21 2.41.61 3.53a2 2 0 01-.45 2.11L6.68 9.9a16 16 0 002.6 3.41zM2 2l20 20" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+                </div>
+                <span class="wc-cbtn-lbl" id="wc-end-lbl">Завершить</span>
+            </div>
         </div>
     </div>
 </div>
@@ -2018,31 +2121,35 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
-        const rawContent = msg.content || msg.text || '0';
-        const isMissed   = rawContent === 'missed';
-        const dur        = isMissed ? 0 : (parseInt(rawContent, 10) || 0);
-        const mins = Math.floor(dur / 60);
-        const secs = dur % 60;
-        const durStr = isMissed
-            ? 'Пропущенный'
-            : (dur === 0 ? 'Нет ответа' : (mins > 0 ? (mins + ' мин ' + secs + ' сек.') : (secs + ' сек.')));
-        const isVideo = type === 'call_video';
-        const label   = isVideo ? 'Видеозвонок' : 'Аудиозвонок';
-        const audioSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="white"/></svg>';
-        const videoSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" fill="white"/></svg>';
-        const missedSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.42 19.42 0 013.07 9.12 19.79 19.79 0 01.5.5h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L5.08 8.41M23 1L1 23" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        const icon   = isMissed ? missedSvg : (isVideo ? videoSvg : audioSvg);
-        const iconBg = isMissed ? 'rgba(239,68,68,0.15)' : (isMe ? 'rgba(255,255,255,0.2)' : 'rgba(16,185,129,0.25)');
-        const subStyle = isMissed ? 'color:#ef4444;font-size:12px;margin-top:3px' : 'font-size:12px;opacity:0.6;margin-top:3px';
-        contentHtml = '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px 4px;min-width:190px">'
-            + '<div style="width:42px;height:42px;border-radius:50%;background:' + iconBg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0">'
-            + icon + '</div>'
-            + '<div>'
-            + '<div style="font-size:15px;font-weight:700;letter-spacing:-0.2px">' + label + '</div>'
-            + '<div style="' + subStyle + '">' + durStr + '</div>'
-            + '</div></div>';
-    } else if (type === 'image') {
-        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='📷 Фото'"></div>`;
+        const isMissed  = (msg.content === 'missed' || msg.content === '0' || !msg.content || msg.content === 'null');
+        const isVideo   = type === 'call_video';
+        const duration  = (!isMissed && msg.content) ? Number(msg.content) : 0;
+        const durationFmt = duration > 0 ? fmtSec(duration) : '';
+
+        const icon = isMissed
+            ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c1.12.4 2.33.61 3.53.61A1 1 0 0122 16v3a1 1 0 01-.92 1C9.23 21.34 2 14.11 2 3a1 1 0 011-1h3a1 1 0 011 1c0 1.2.21 2.41.61 3.53a2 2 0 01-.45 2.11L6.68 9.9a16 16 0 002.6 3.41zM2 2l20 20" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/></svg>`
+            : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="var(--accent,#10b981)" stroke-width="2" fill="none"/></svg>`;
+
+        const colorClass = isMissed ? '#ff453a' : 'var(--accent,#10b981)';
+        const label = isMissed
+            ? (isMe ? 'Нет ответа' : 'Пропущенный звонок')
+            : (isVideo ? `Видеозвонок${durationFmt ? ' · ' + durationFmt : ''}` : `Звонок${durationFmt ? ' · ' + durationFmt : ''}`);
+
+        // Кнопка перезвонить (только пропущенный, не от меня)
+        const callbackBtn = (isMissed && !isMe)
+            ? `<button class="msg-call-back" onclick="startCall('${isVideo ? 'video' : 'audio'}')" style="margin-top:6px">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+                Перезвонить
+               </button>`
+            : '';
+
+        contentHtml = `<div style="display:flex;flex-direction:column;gap:0">
+            <div style="display:inline-flex;align-items:center;gap:7px">
+                ${icon}
+                <span style="font-size:14px;font-weight:600;color:${colorClass}">${label}</span>
+            </div>
+            ${callbackBtn}
+        </div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
@@ -5341,7 +5448,7 @@ async function startCall(type) {
         callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
         const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
         await peerConnection.setLocalDescription(offer);
-        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type, chat_id: currentChatId });
+        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type });
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
@@ -5445,29 +5552,85 @@ async function flipCamera() {
     } catch(e) { showToast('Не удалось перевернуть камеру', 'error'); }
 }
 
-function setupCallScreen(type, isIncoming) {
+function setupCallScreen(type, isIncoming, callerData) {
     const screen = document.getElementById('call-screen');
     if (!screen) return;
-    screen.classList.remove('hidden');
-    const partnerName = document.getElementById('chat-name')?.textContent || 'Звонок';
-    const partnerAva  = chatPartnerAvatarSrc[currentPartnerId]
+
+    // Анимация входа
+    screen.classList.remove('hidden', 'wc-out');
+    screen.classList.add('wc-in');
+    setTimeout(() => screen.classList.remove('wc-in'), 500);
+
+    const partnerName = callerData?.from_name
+        || document.getElementById('chat-name')?.textContent
+        || 'Звонок';
+    const partnerAva  = callerData?.from_avatar
+        || chatPartnerAvatarSrc[currentPartnerId]
         || document.getElementById('chat-ava-header')?.querySelector('img')?.src
         || '';
 
-    const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
-    const statusText = isIncoming
-        ? (type === 'video' ? '📹 Входящий видеозвонок' : '📞 Входящий звонок')
-        : (type === 'video' ? 'Видеовызов...' : 'Вызов...');
+    // Размытый фон — аватар
+    const bgBlur = document.getElementById('wc-call-bg-blur');
+    if (bgBlur) {
+        if (partnerAva) {
+            bgBlur.style.backgroundImage = `url('${partnerAva}')`;
+            bgBlur.style.opacity = '1';
+        } else {
+            bgBlur.style.backgroundImage = 'none';
+            bgBlur.style.background = 'radial-gradient(circle at 50% 30%, #064e3b 0%, #000 70%)';
+        }
+    }
 
-    setEl('call-name',         el => el.textContent = partnerName);
-    setEl('call-status-label', el => el.textContent = statusText);
-    setEl('call-avatar-box',   el => el.innerHTML = getAvatarHtml({id: currentPartnerId, name: partnerName, avatar: partnerAva}, 'w-28 h-28'));
-    setEl('accept-btn',        el => el.style.display = isIncoming ? 'flex' : 'none');
-    setEl('call-timer',        el => el.style.display = 'none');
-    setEl('call-quality-label',el => el.style.display = 'none');
-    setEl('flip-btn',          el => el.style.display = type === 'video' ? 'flex' : 'none');
-    // Показываем кружки дозвона
-    document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'block');
+    // Аватар
+    const avaBox = document.getElementById('wc-call-ava');
+    if (avaBox) {
+        if (partnerAva) {
+            avaBox.innerHTML = `<img src="${partnerAva}" alt="${partnerName}" onerror="this.style.display='none'">`;
+        } else {
+            // Инициалы
+            const initials = partnerName.split(' ').map(w => w[0]).join('').slice(0,2).toUpperCase();
+            avaBox.innerHTML = `<div style="width:100%;height:100%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;font-size:38px;font-weight:800;color:#000">${initials}</div>`;
+        }
+    }
+
+    // Имя
+    const nameEl = document.getElementById('wc-call-name');
+    if (nameEl) nameEl.textContent = partnerName;
+
+    // Бейдж типа
+    const badge = document.getElementById('wc-call-type-badge');
+    if (badge) badge.textContent = type === 'video' ? 'Видеозвонок' : 'Аудиозвонок';
+
+    // Статус
+    const statusEl = document.getElementById('wc-call-status');
+    if (statusEl) {
+        if (isIncoming) {
+            statusEl.textContent = type === 'video' ? 'Входящий видеозвонок...' : 'Входящий звонок...';
+        } else {
+            statusEl.textContent = 'Вызов...';
+        }
+    }
+
+    // Таймер — скрываем
+    const timerEl = document.getElementById('wc-call-timer');
+    if (timerEl) timerEl.style.display = 'none';
+
+    // Кнопки: принять — только входящий
+    const acceptWrap = document.getElementById('wc-accept-wrap');
+    if (acceptWrap) acceptWrap.style.display = isIncoming ? 'flex' : 'none';
+    const endLbl = document.getElementById('wc-end-lbl');
+    if (endLbl) endLbl.textContent = isIncoming ? 'Отклонить' : 'Завершить';
+
+    // Видеокнопки — только видеозвонок
+    const vidWrap  = document.getElementById('wc-video-wrap');
+    const flipWrap = document.getElementById('wc-flip-wrap');
+    if (vidWrap)  vidWrap.style.display  = type === 'video' ? 'flex' : 'none';
+    if (flipWrap) flipWrap.style.display = type === 'video' ? 'flex' : 'none';
+
+    // Кольца — только входящий
+    const ringsWrap = document.getElementById('wc-rings-wrap');
+    if (ringsWrap) ringsWrap.style.display = isIncoming ? 'flex' : 'none';
+
     acquireWakeLock();
 }
 
@@ -5475,9 +5638,11 @@ async function acquireWakeLock() { try { if ('wakeLock' in navigator) wakelock =
 function releaseWakeLock() { if (wakelock) { wakelock.release().catch(()=>{}); wakelock = null; } }
 
 function showLocalVideo() {
-    const vc = document.getElementById('call-video-container');
-    const lv = document.getElementById('local-video');
-    if (vc) vc.style.display = 'block';
+    const lvWrap = document.getElementById('wc-local-vid');
+    const lv     = document.getElementById('local-video');
+    const vbg    = document.getElementById('wc-video-bg');
+    if (vbg) vbg.style.display = 'block';
+    if (lvWrap) lvWrap.style.display = 'block';
     if (lv && callLocalStream) {
         lv.srcObject = callLocalStream;
         lv.style.display = 'block';
@@ -5496,25 +5661,23 @@ function createPeerConnection() {
 
     pc.oniceconnectionstatechange = () => {
         const state = pc.iceConnectionState;
-        const label = document.getElementById('call-status-label');
+        const statusEl = document.getElementById('wc-call-status');
         console.log('ICE state:', state);
 
         if (state === 'connected' || state === 'completed') {
-            if (label) label.textContent = 'В эфире';
+            if (statusEl) statusEl.textContent = 'В эфире';
             startCallTimer();
-            document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'none');
         } else if (state === 'checking') {
-            if (label) label.textContent = 'Соединение...';
+            if (statusEl) statusEl.textContent = 'Соединение...';
         } else if (state === 'disconnected') {
-            if (label) label.textContent = 'Переподключение...';
-            // Автоматический ICE restart через 2 сек
+            if (statusEl) statusEl.textContent = 'Переподключение...';
             setTimeout(() => {
                 if (peerConnection?.iceConnectionState === 'disconnected') doIceRestart();
             }, 2000);
         } else if (state === 'failed') {
             if (iceRestartCount < MAX_ICE_RESTARTS) {
                 iceRestartCount++;
-                if (label) label.textContent = `Переподключение ${iceRestartCount}/${MAX_ICE_RESTARTS}...`;
+                if (statusEl) statusEl.textContent = `Переподключение ${iceRestartCount}/${MAX_ICE_RESTARTS}...`;
                 doIceRestart();
             } else {
                 showToast('Не удалось установить соединение', 'error');
@@ -5574,15 +5737,14 @@ async function doIceRestart() {
 function onIncomingCall(data) {
     incomingCallData = data; pendingIce = [];
     currentCallType = data.call_type || 'audio';
-    vibrate([400,200,400,200,400]);
-    const screen = document.getElementById('call-screen');
-    screen.classList.remove('hidden');
-    document.getElementById('call-name').textContent = data.from_name || 'Звонок';
-    document.getElementById('call-status-label').textContent = currentCallType === 'video' ? '📹 Видеозвонок' : '📞 Голосовой';
-    document.getElementById('call-avatar-box').innerHTML = getAvatarHtml({id: data.from, name: data.from_name, avatar: data.from_avatar}, 'w-28 h-28');
-    document.getElementById('accept-btn').style.display = 'flex';
-    document.getElementById('call-timer').style.display = 'none';
-    acquireWakeLock();
+    currentPartnerId = data.from;
+    vibrate([500, 200, 500, 200, 500]);
+    setupCallScreen(currentCallType, true, data);
+
+    // Push-уведомление если приложение в фоне (страница не активна)
+    if (document.hidden || document.visibilityState !== 'visible') {
+        _showIncomingCallPush(data);
+    }
 }
 
 async function onIceCandidate(data) {
@@ -5599,8 +5761,14 @@ async function flushPendingIce() {
 async function answerIncomingCall() {
     const data = incomingCallData;
     if (!data) return;
-    document.getElementById('accept-btn').style.display = 'none';
-    document.getElementById('call-status-label').textContent = 'Подключение...';
+    const acceptWrap = document.getElementById('wc-accept-wrap');
+    const statusEl   = document.getElementById('wc-call-status');
+    const endLbl     = document.getElementById('wc-end-lbl');
+    const ringsWrap  = document.getElementById('wc-rings-wrap');
+    if (acceptWrap) acceptWrap.style.display = 'none';
+    if (statusEl)   statusEl.textContent = 'Подключение...';
+    if (endLbl)     endLbl.textContent = 'Завершить';
+    if (ringsWrap)  ringsWrap.style.display = 'none';
     currentPartnerId = data.from; vibrate(30);
     try {
         callLocalStream = await getLocalStream(currentCallType);
@@ -5620,17 +5788,26 @@ async function onCallAnswered(data) {
     try {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
         await flushPendingIce();
-        document.getElementById('call-status-label').textContent = 'Соединение...';
+        const statusEl = document.getElementById('wc-call-status');
+        if (statusEl) statusEl.textContent = 'Соединение...';
     } catch(e) {}
 }
 
 function startCallTimer() {
     callStartTime = Date.now();
-    const el = document.getElementById('call-timer');
-    if (el) el.style.display = 'block';
+    // Прячем статус, показываем таймер
+    const statusEl = document.getElementById('wc-call-status');
+    const timerEl  = document.getElementById('wc-call-timer');
+    const endLbl   = document.getElementById('wc-end-lbl');
+    if (statusEl) statusEl.style.display = 'none';
+    if (timerEl)  { timerEl.style.display = 'block'; }
+    if (endLbl)   endLbl.textContent = 'Завершить';
+    // Прячем кольца
+    const ringsWrap = document.getElementById('wc-rings-wrap');
+    if (ringsWrap) ringsWrap.style.display = 'none';
     clearInterval(callTimerInterval);
     callTimerInterval = setInterval(() => {
-        if (el) el.textContent = fmtSec(Math.floor((Date.now() - callStartTime) / 1000));
+        if (timerEl) timerEl.textContent = fmtSec(Math.floor((Date.now() - callStartTime) / 1000));
     }, 1000);
 }
 
@@ -5639,34 +5816,53 @@ function endCall(notify = true) {
 
     // Отправляем сообщение о звонке в чат
     const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
-    if (currentChatId && currentPartnerId && duration > 0) {
+    if (currentChatId && currentPartnerId) {
         const callMsgType = currentCallType === 'video' ? 'call_video' : 'call_audio';
-        socket.emit('send_message', {
+        socket.emit('end_call', {
+            to:        currentPartnerId,
             chat_id:   currentChatId,
-            type_msg:  callMsgType,
-            content:   String(duration),
-            sender_id: currentUser.id,
+            call_type: currentCallType,
+            duration:  duration,
         });
+        // Если звонок состоялся (duration > 0) — отправляем сообщение с длительностью
+        if (duration > 0) {
+            socket.emit('send_message', {
+                chat_id:   currentChatId,
+                type_msg:  callMsgType,
+                content:   String(duration),
+                sender_id: currentUser.id,
+            });
+        }
+        // Если duration == 0 — сервер сам создаст missed call сообщение через end_call
+    } else if (notify && currentPartnerId) {
+        socket.emit('end_call', { to: currentPartnerId, duration: 0 });
     }
 
-    if (notify && currentPartnerId) socket.emit('end_call', {
-        to:        currentPartnerId,
-        chat_id:   currentChatId,
-        call_type: currentCallType || 'audio',
-        duration:  duration,
-    });
+    // Анимация закрытия
+    const screen = document.getElementById('call-screen');
+    if (screen && !screen.classList.contains('hidden')) {
+        screen.classList.add('wc-out');
+        setTimeout(() => {
+            screen.classList.add('hidden');
+            screen.classList.remove('wc-out');
+        }, 300);
+    }
+
     if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
     if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
-    // Очищаем remote audio
     const callAudio = document.getElementById('call-remote-audio');
     if (callAudio) { callAudio.srcObject = null; callAudio.remove(); }
-    const screen = document.getElementById('call-screen');
-    if (screen) screen.classList.add('hidden');
-    ['remote-video','local-video'].forEach(id => { const el = document.getElementById(id); if (el) { el.srcObject = null; el.style.display = 'none'; } });
-    const vc = document.getElementById('call-video-container');
-    if (vc) vc.style.display = 'none';
-    const ci = document.getElementById('call-info');
-    if (ci) ci.style.opacity = '1';
+
+    // Видео
+    ['remote-video','local-video'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.srcObject = null; el.style.display = 'none'; }
+    });
+    const vbg = document.getElementById('wc-video-bg');
+    if (vbg) vbg.style.display = 'none';
+    const lvid = document.getElementById('wc-local-vid');
+    if (lvid) lvid.style.display = 'none';
+
     callStartTime = null;
     incomingCallData = null; pendingIce = []; isMuted = false; isVideoOff = false;
     releaseWakeLock(); vibrate(15);
@@ -5675,28 +5871,70 @@ function endCall(notify = true) {
 function toggleMute() {
     isMuted = !isMuted;
     callLocalStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
-    const btn = document.getElementById('mute-btn');
+    const btn = document.getElementById('wc-mute-btn');
     if (btn) {
+        btn.classList.toggle('wc-btn-active', isMuted);
         btn.innerHTML = isMuted
-            ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="1" y1="1" x2="23" y2="23" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v3M8 23h8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-            : ICONS.mic.replace('rgba(255,255,255,0.5)','white');
-        btn.classList.toggle('active', isMuted);
+            ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="1" y1="1" x2="23" y2="23" stroke="${isMuted?'#111':'white'}" stroke-width="2" stroke-linecap="round"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v3M8 23h8" stroke="${isMuted?'#111':'white'}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+            : `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
     }
+    const lbl = document.querySelector('#wc-mute-wrap .wc-cbtn-lbl');
+    if (lbl) lbl.textContent = isMuted ? 'Без звука' : 'Микрофон';
     vibrate(10);
 }
 
 function toggleVideo() {
     isVideoOff = !isVideoOff;
     callLocalStream?.getVideoTracks().forEach(t => t.enabled = !isVideoOff);
-    const btn = document.getElementById('video-btn');
-    if (btn) { btn.classList.toggle('active', isVideoOff); }
+    const btn = document.getElementById('wc-video-btn');
+    if (btn) btn.classList.toggle('wc-btn-active', isVideoOff);
+    const lbl = document.querySelector('#wc-video-wrap .wc-cbtn-lbl');
+    if (lbl) lbl.textContent = isVideoOff ? 'Камера выкл' : 'Камера';
     vibrate(10);
 }
 
 function toggleSpeaker() {
-    const btn = document.getElementById('speaker-btn');
-    btn?.classList.toggle('active');
-    showToast('Громкая связь переключена', 'info', 1500); vibrate(10);
+    _speakerOn = !_speakerOn;
+    const btn = document.getElementById('wc-speaker-btn');
+    if (btn) btn.classList.toggle('wc-btn-active', !_speakerOn);
+    const lbl = document.querySelector('#wc-speaker-wrap .wc-cbtn-lbl');
+    if (lbl) lbl.textContent = _speakerOn ? 'Динамик' : 'Трубка';
+    showToast(_speakerOn ? 'Громкая связь' : 'Трубка', 'info', 1500);
+    vibrate(10);
+}
+
+// Push-уведомление о входящем звонке когда вкладка в фоне
+function _showIncomingCallPush(data) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+        const title = data.call_type === 'video'
+            ? `📹 Видеозвонок от ${data.from_name || 'Контакт'}`
+            : `📞 Звонок от ${data.from_name || 'Контакт'}`;
+        const options = {
+            body: 'Нажми чтобы ответить',
+            icon: data.from_avatar || '/static/img/icon-192.png',
+            badge: '/static/img/icon-96.png',
+            tag: 'incoming-call',
+            requireInteraction: true,   // не исчезает автоматически
+            silent: false,
+            vibrate: [500, 200, 500, 200, 500],
+            actions: [
+                { action: 'answer',  title: '✅ Ответить' },
+                { action: 'decline', title: '❌ Отклонить' },
+            ],
+            data: { type: 'incoming_call', from: data.from },
+        };
+        // Через SW для поддержки actions (Android Chrome)
+        if (navigator.serviceWorker?.controller) {
+            navigator.serviceWorker.ready.then(reg => {
+                reg.showNotification(title, options);
+            });
+        } else {
+            new Notification(title, options);
+        }
+    } catch(e) {
+        console.warn('Call push error:', e);
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -5795,6 +6033,16 @@ async function initPushNotifications() {
         navigator.serviceWorker.addEventListener('message', e => {
             if (e.data?.type === 'open_chat' && e.data.chat_id) {
                 _openChatByChatId(e.data.chat_id);
+            }
+            // Ответить на звонок нажав в уведомлении
+            if (e.data?.type === 'answer_call' && incomingCallData) {
+                answerIncomingCall();
+            }
+            // Отклонить звонок из уведомления
+            if (e.data?.type === 'decline_call') {
+                if (incomingCallData || currentPartnerId) {
+                    endCall(true);
+                }
             }
         });
 
