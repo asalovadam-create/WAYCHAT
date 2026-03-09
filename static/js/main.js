@@ -481,9 +481,7 @@ async function init() {
     setTimeout(initPushNotifications, 500);
 
     // Service Worker — кешируем статику (JS, CSS, аватарки) навсегда
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/static/sw.js').catch(() => {});
-    }
+    // SW регистрируется в initPushNotifications() по пути /sw.js (с push handler)
 
     // loadChats по setInterval убран — WebSocket обновляет в реальном времени
     // Только при потере фокуса и возврате (пользователь вернулся в приложение)
@@ -530,7 +528,8 @@ function getVerifyBadge(user, size=14) {
 
 function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
     if (!user) return `<div class="${sizeClass} bg-zinc-800 rounded-full"></div>`;
-    const avatar = user.avatar || '';
+    // null как строка "null" или объект null — оба заменяем пустой строкой
+    const avatar = (!user.avatar || user.avatar === 'null' || user.avatar === 'undefined') ? '' : user.avatar;
     const name   = user.name || user.username || '?';
     const cacheKey = `${user.id || name}_${avatar}_${sizeClass}`;
     if (!forceRefresh && avatarHtmlCache[cacheKey]) return avatarHtmlCache[cacheKey];
@@ -855,7 +854,7 @@ body {
 
 /* ПРОФИЛЬ ПАРТНЁРА */
 .partner-profile-overlay { position:fixed;inset:0;z-index:5500;background:#0f0f0f;display:flex;flex-direction:column;overflow-y:auto;animation:slideUp 0.28s cubic-bezier(.4,0,.2,1); }
-@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} }
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} } @keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}} .skeleton-shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.04) 0%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 100%);background-size:400px 100%;animation:shimmer 1.6s infinite linear}
 
 /* КОНТАКТЫ */
 .contact-item { display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;cursor:pointer;transition:background 0.15s; }
@@ -1239,6 +1238,7 @@ async function loadChats(force = false) {
         return;
     }
     _chatsLoading = true;
+    showChatSkeleton(); // Показываем skeleton пока грузятся чаты
     try {
         const res = await fetch('/get_my_chats', {
             credentials: 'include',
@@ -1253,7 +1253,7 @@ async function loadChats(force = false) {
         // Prefetch аватарки первых 5 чатов в фоне
         chats.slice(0, 5).forEach(c => {
             if (c.partner_avatar && !c.partner_avatar.includes('default') && !c.partner_avatar.startsWith('emoji:')) {
-                AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
+                if (c.partner_avatar) AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
                     .then(src => { chatPartnerAvatarSrc[c.partner_id] = src; });
             }
         });
@@ -1392,6 +1392,28 @@ function _confirmDeleteChat(chatId, name) {
     sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
 }
 async function _doDeleteChat(chatId){try{await apiFetch('/delete_chat/'+chatId,{method:'POST'});loadChats();showToast('Чат удалён','success');}catch(e){showToast('Ошибка','error');}}
+
+function _skeletonChatRow(wide = false) {
+    const w1 = wide ? '160px' : '120px';
+    const w2 = wide ? '90px' : '70px';
+    return '<div style="display:flex;align-items:center;gap:14px;padding:11px 4px">'
+        + '<div class="skeleton-shimmer" style="width:58px;height:58px;border-radius:50%;flex-shrink:0"></div>'
+        + '<div style="flex:1">'
+        + '<div style="display:flex;justify-content:space-between;margin-bottom:9px">'
+        + '<div class="skeleton-shimmer" style="height:14px;width:'+w1+';border-radius:7px"></div>'
+        + '<div class="skeleton-shimmer" style="height:11px;width:38px;border-radius:6px"></div>'
+        + '</div>'
+        + '<div class="skeleton-shimmer" style="height:11px;width:'+w2+';border-radius:6px"></div>'
+        + '</div></div>';
+}
+
+function showChatSkeleton() {
+    const container = document.getElementById('chat-list');
+    if (!container || container.querySelector('[data-chat-key]')) return;
+    container.innerHTML = '<div data-skeleton style="display:flex;flex-direction:column;gap:2px">'
+        + _skeletonChatRow(true) + _skeletonChatRow() + _skeletonChatRow(true)
+        + _skeletonChatRow() + _skeletonChatRow(true) + '</div>';
+}
 
 function renderChatList(chats) {
     const container = document.getElementById('chat-list');
@@ -2512,7 +2534,7 @@ function updateSendButton() {
     if (txt) {
         s.style.display = 'flex'; v.style.display = 'none';
         // Сбрасываем cam-mode если печатаем
-    
+
     } else {
         s.style.display = 'none'; v.style.display = 'flex';
     }
@@ -4134,8 +4156,9 @@ function _showMomentEditor(file) {
     // Аватар пользователя
     const avaDiv = document.createElement('div');
     avaDiv.style.cssText='width:42px;height:42px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,0.3);flex-shrink:0';
-    avaDiv.innerHTML = window.currentUser?.avatar && !window.currentUser.avatar.startsWith('emoji:')
-        ? '<img src="'+window.currentUser.avatar+'" style="width:100%;height:100%;object-fit:cover">'
+    const _ava = window.currentUser?.avatar;
+    avaDiv.innerHTML = _ava && _ava !== 'null' && !_ava.startsWith('emoji:')
+        ? '<img src="'+_ava+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
         : '<div style="width:100%;height:100%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#000">'+(window.currentUser?.name||'?')[0].toUpperCase()+'</div>';
 
     // Текст
@@ -4283,7 +4306,10 @@ let _momentUploadGeo = null;
 
 async function loadMoments() {
     const container = document.getElementById('full-moments-list');
-    if (!container) return;
+    if (!container) {
+        // Если таб ещё не открыт — повторим когда откроют
+        return;
+    }
 
     // Показываем скелетон только если список пустой
     if (!container.children.length || container.querySelector('[data-skeleton]')) {
@@ -4316,11 +4342,11 @@ async function loadMoments() {
 
 
 function _skeletonMomentRow() {
-    return '<div style="display:flex;align-items:center;gap:14px;padding:10px 2px">'
-        + '<div style="width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,0.07);flex-shrink:0;animation:pulse 1.4s ease-in-out infinite"></div>'
+    return '<div style="display:flex;align-items:center;gap:14px;padding:11px 2px">'
+        + '<div class="skeleton-shimmer" style="width:62px;height:62px;border-radius:50%;flex-shrink:0"></div>'
         + '<div style="flex:1">'
-        + '<div style="height:14px;width:120px;background:rgba(255,255,255,0.07);border-radius:7px;margin-bottom:8px;animation:pulse 1.4s ease-in-out infinite"></div>'
-        + '<div style="height:11px;width:70px;background:rgba(255,255,255,0.05);border-radius:6px;animation:pulse 1.4s ease-in-out infinite 0.2s"></div>'
+        + '<div class="skeleton-shimmer" style="height:14px;width:130px;border-radius:7px;margin-bottom:9px"></div>'
+        + '<div class="skeleton-shimmer" style="height:11px;width:75px;border-radius:6px"></div>'
         + '</div></div>';
 }
 
