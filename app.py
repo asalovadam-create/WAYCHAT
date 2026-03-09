@@ -359,7 +359,7 @@ def _send_web_push(subscription_info, payload_dict):
                      info=b'Content-Encoding: nonce\x00', backend=default_backend()).derive(prk)
 
         ciphertext  = AESGCM(cek).encrypt(nonce, payload_bytes + b'\x02', None)
-        record_size = len(ciphertext) + 16
+        record_size = 4096  # RFC 8291 стандартный размер записи
         body        = salt + struct.pack('>I', record_size) + struct.pack('B', len(eph_pub_bytes)) + eph_pub_bytes + ciphertext
 
         headers = {
@@ -392,7 +392,6 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
             'title':   title,
             'body':    body,
             'icon':    icon or '/static/img/icon-192.png',
-            'badge':   '/static/img/badge-96.png',
             'tag':     f'msg-{chat_id or user_id}',
             'chat_id': chat_id,
             'url':     f'/?open_chat={chat_id}' if chat_id else '/',
@@ -1884,21 +1883,35 @@ def get_moments():
 
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
+    now_utc = datetime.utcnow()
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
-    ).filter(Moment.timestamp >= cutoff).order_by(Moment.timestamp.desc()).all()
+    ).filter(
+        Moment.timestamp >= cutoff,
+        or_(Moment.expires_at == None, Moment.expires_at > now_utc)
+    ).order_by(Moment.timestamp.desc()).all()
+
+    # Батч-запрос для view_count — один SQL вместо N запросов
+    moment_ids = [m.Moment.id for m in moments]
+    view_counts = {}
+    if moment_ids:
+        vc_rows = db.session.execute(
+            text('SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id = ANY(:ids) GROUP BY moment_id'),
+            {'ids': moment_ids}
+        ).fetchall()
+        view_counts = {r.moment_id: r.cnt for r in vc_rows}
 
     data = [{
         'id':            m.Moment.id,
         'user_id':       m.Moment.user_id,
         'user_name':     m.User.name,
-        'user_avatar':   m.User.avatar,
-        'media_url':     m.Moment.media_url,
+        'user_avatar':   m.User.avatar or '',
+        'media_url':     m.Moment.media_url or '',
         'text':          m.Moment.text or '',
         'geo_name':      m.Moment.geo_name or '',
         'timestamp':     to_moscow_str(m.Moment.timestamp),
         'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    MomentView.query.filter_by(moment_id=m.Moment.id).count(),
+        'view_count':    view_counts.get(m.Moment.id, 0),
         'is_mine':       m.Moment.user_id == uid,
     } for m in moments]
 
