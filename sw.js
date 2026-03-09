@@ -1,210 +1,143 @@
-// WayChat Service Worker v4 — push notifications + caching
-const CACHE_NAME = 'waychat-v4';
+// WayChat Service Worker v4 — optimized for speed
+const CACHE_NAME   = 'waychat-v4';
 const STATIC_CACHE = 'waychat-static-v4';
 const MEDIA_CACHE  = 'waychat-media-v4';
 
-// Файлы которые кешируем при установке
-const PRECACHE = [
-  '/static/js/main.js',
-  '/static/css/main.css',
-];
+const PRECACHE = ['/static/js/main.js', '/static/css/main.css'];
 
 // ── Install ──
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(STATIC_CACHE).then(cache => {
-      return Promise.allSettled(PRECACHE.map(url => cache.add(url).catch(() => {})));
-    }).then(() => self.skipWaiting())
+    caches.open(STATIC_CACHE)
+      .then(c => Promise.allSettled(PRECACHE.map(u => c.add(u).catch(() => {}))))
+      .then(() => self.skipWaiting())
   );
 });
 
 // ── Activate ──
 self.addEventListener('activate', e => {
   e.waitUntil(
-    caches.keys().then(keys => Promise.all(
-      keys.filter(k => ![CACHE_NAME, STATIC_CACHE, MEDIA_CACHE].includes(k) && k.startsWith('waychat-'))
-          .map(k => caches.delete(k))
-    )).then(() => self.clients.claim())
+    caches.keys()
+      .then(keys => Promise.all(
+        keys.filter(k => k.startsWith('waychat-') && ![CACHE_NAME, STATIC_CACHE, MEDIA_CACHE].includes(k))
+            .map(k => caches.delete(k))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+// ── Push уведомления ──
+self.addEventListener('push', e => {
+  if (!e.data) return;
+  let data = {};
+  try { data = e.data.json(); } catch { data = { title: 'WayChat', body: e.data.text() }; }
+
+  const options = {
+    body:  data.body  || '',
+    icon:  data.icon  || '/static/img/icon-192.png',
+    tag:   data.tag   || 'waychat-msg',
+    data:  { url: data.url || '/', chat_id: data.chat_id },
+    requireInteraction: false,
+    silent: false,
+  };
+  e.waitUntil(self.registration.showNotification(data.title || 'WayChat', options));
+});
+
+// ── Клик по уведомлению ──
+self.addEventListener('notificationclick', e => {
+  e.notification.close();
+  const url = e.notification.data?.url || '/';
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      const wc = list.find(c => c.url.includes(self.location.origin));
+      if (wc) {
+        wc.focus();
+        wc.postMessage({ type: 'open_chat', chat_id: e.notification.data?.chat_id });
+      } else {
+        clients.openWindow(url);
+      }
+    })
+  );
+});
+
+// ── Обновление подписки ──
+self.addEventListener('pushsubscriptionchange', e => {
+  e.waitUntil(
+    self.registration.pushManager.subscribe(e.oldSubscription.options)
+      .then(sub => fetch('/push-subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: sub.endpoint,
+          p256dh:   btoa(String.fromCharCode(...new Uint8Array(sub.getKey('p256dh')))),
+          auth:     btoa(String.fromCharCode(...new Uint8Array(sub.getKey('auth')))),
+        })
+      }))
   );
 });
 
 // ── Fetch ──
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
+  if (e.request.method !== 'GET') return;
 
-  // 1. Cloudinary медиа — cache-first, храним долго
-  if (url.hostname.includes('cloudinary.com') || url.hostname.includes('res.cloudinary')) {
-    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 7 * 24 * 60 * 60));
+  // Cloudinary — cache-first 7 дней
+  if (url.hostname.includes('cloudinary.com')) {
+    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 7 * 86400));
     return;
   }
-
-  // 2. Статика (/static/) — cache-first
+  // Статика — cache-first 24ч
   if (url.pathname.startsWith('/static/')) {
-    e.respondWith(cacheFirst(e.request, STATIC_CACHE, 24 * 60 * 60));
+    e.respondWith(cacheFirst(e.request, STATIC_CACHE, 86400));
     return;
   }
-
-  // 3. API запросы — network-first, с быстрым fallback из кеша
-  if (url.pathname.startsWith('/get_my_chats') ||
-      url.pathname.startsWith('/get_moments') ||
-      url.pathname.startsWith('/get_user_profile')) {
-    e.respondWith(networkFirstWithCache(e.request, CACHE_NAME, 30));
+  // API чатов/моментов — network-first 30с timeout
+  if (['/get_my_chats', '/get_moments', '/get_user_profile'].some(p => url.pathname.startsWith(p))) {
+    e.respondWith(networkFirst(e.request, CACHE_NAME, 30));
     return;
   }
-
-  // 4. Аватарки и другие изображения — cache-first
-  if (url.pathname.match(/\.(jpg|jpeg|png|webp|gif|svg)(\?|$)/i)) {
-    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 24 * 60 * 60));
+  // Изображения — cache-first 24ч
+  if (/\.(jpg|jpeg|png|webp|gif|svg)(\?|$)/i.test(url.pathname)) {
+    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 86400));
     return;
   }
-
-  // 5. Остальное — обычный fetch
+  // Остальное
   e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
 });
 
-// Cache-first: сначала кеш, если нет — сеть
-async function cacheFirst(request, cacheName, maxAgeSeconds) {
-  const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
+async function cacheFirst(req, cacheName, maxAge) {
+  const cache  = await caches.open(cacheName);
+  const cached = await cache.match(req);
   if (cached) {
-    const date = cached.headers.get('sw-cached-at');
-    if (!date || (Date.now() - parseInt(date)) < maxAgeSeconds * 1000) {
-      return cached;
-    }
+    const ts = cached.headers.get('sw-ts');
+    if (!ts || Date.now() - +ts < maxAge * 1000) return cached;
   }
   try {
-    const resp = await fetch(request);
+    const resp = await fetch(req);
     if (resp.ok) {
-      const clone = resp.clone();
-      // Добавляем заголовок с временем кеширования
-      const headers = new Headers(clone.headers);
-      headers.set('sw-cached-at', Date.now().toString());
-      const cachedResp = new Response(await clone.blob(), { status: clone.status, headers });
-      cache.put(request, cachedResp);
+      const h = new Headers(resp.headers);
+      h.set('sw-ts', Date.now().toString());
+      cache.put(req, new Response(await resp.clone().blob(), { status: resp.status, headers: h }));
     }
     return resp;
-  } catch(e) {
-    return cached || new Response('', {status: 503});
-  }
+  } catch { return cached || new Response('', { status: 503 }); }
 }
 
-// Network-first: сначала сеть (быстро), fallback из кеша
-async function networkFirstWithCache(request, cacheName, maxAgeSeconds) {
+async function networkFirst(req, cacheName, timeoutSec) {
   const cache = await caches.open(cacheName);
   try {
     const resp = await Promise.race([
-      fetch(request),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))
+      fetch(req),
+      new Promise((_, r) => setTimeout(() => r(new Error('timeout')), timeoutSec * 1000))
     ]);
     if (resp.ok) {
-      const headers = new Headers(resp.headers);
-      headers.set('sw-cached-at', Date.now().toString());
-      const cachedResp = new Response(await resp.clone().blob(), { status: resp.status, headers });
-      cache.put(request, cachedResp);
+      const h = new Headers(resp.headers);
+      h.set('sw-ts', Date.now().toString());
+      cache.put(req, new Response(await resp.clone().blob(), { status: resp.status, headers: h }));
     }
     return resp;
-  } catch(e) {
-    const cached = await cache.match(request);
-    return cached || new Response(JSON.stringify([]), {
-      status: 200, headers: {'Content-Type': 'application/json'}
-    });
+  } catch {
+    return (await cache.match(req))
+      || new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 }
-
-// ══════════════════════════════════════════════════════════
-//  PUSH УВЕДОМЛЕНИЯ — iOS 16.4+ PWA + Android Chrome
-// ══════════════════════════════════════════════════════════
-self.addEventListener('push', e => {
-    let data = {};
-    try {
-        data = e.data ? e.data.json() : {};
-    } catch(err) {
-        data = { title: 'WayChat', body: e.data ? e.data.text() : 'Новое сообщение' };
-    }
-
-    const title   = data.title   || 'WayChat';
-    const body    = data.body    || 'Новое сообщение';
-    const icon    = data.icon    || '/static/img/icon-192.png';
-    const badge   = data.badge   || '/static/img/badge-96.png';
-    const tag     = data.tag     || 'waychat-msg';
-    const chatId  = data.chat_id || null;
-    const url     = data.url     || '/';
-
-    const options = {
-        body,
-        icon,
-        badge,
-        tag,
-        // renotify: true — новый звук даже если tag совпадает
-        renotify: true,
-        // requireInteraction: false — уведомление исчезает само
-        requireInteraction: false,
-        // vibrate — только Android, iOS игнорирует
-        vibrate: [200, 100, 200],
-        data: { url, chat_id: chatId },
-        // actions — только Android Chrome, iOS игнорирует но не ломает
-        actions: [
-            { action: 'open', title: 'Открыть' },
-            { action: 'dismiss', title: 'Закрыть' }
-        ]
-    };
-
-    // iOS требует showNotification из waitUntil — иначе не показывает
-    e.waitUntil(
-        self.registration.showNotification(title, options)
-    );
-});
-
-// ══════════════════════════════════════════════════════════
-//  КЛИК ПО УВЕДОМЛЕНИЮ
-// ══════════════════════════════════════════════════════════
-self.addEventListener('notificationclick', e => {
-    e.notification.close();
-
-    if (e.action === 'dismiss') return;
-
-    const chatId = e.notification.data?.chat_id;
-    const url    = e.notification.data?.url || '/';
-
-    e.waitUntil(
-        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clientList => {
-            // Ищем уже открытую вкладку WayChat
-            for (const client of clientList) {
-                const clientUrl = new URL(client.url);
-                if (clientUrl.pathname === '/' || clientUrl.pathname.startsWith('/chat')) {
-                    // Фокусируем и сообщаем открыть конкретный чат
-                    client.focus();
-                    if (chatId) client.postMessage({ type: 'open_chat', chat_id: chatId });
-                    return;
-                }
-            }
-            // Открываем новую вкладку
-            const targetUrl = chatId ? `/?open_chat=${chatId}` : url;
-            return clients.openWindow(targetUrl);
-        })
-    );
-});
-
-// ══════════════════════════════════════════════════════════
-//  ОБНОВЛЕНИЕ ПОДПИСКИ (iOS пересоздаёт ключи)
-// ══════════════════════════════════════════════════════════
-self.addEventListener('pushsubscriptionchange', e => {
-    e.waitUntil(
-        self.registration.pushManager.subscribe({
-            userVisibleOnly:      true,
-            applicationServerKey: e.oldSubscription?.options?.applicationServerKey
-        }).then(sub => {
-            const subJson = sub.toJSON();
-            return fetch('/push-subscribe', {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    endpoint: subJson.endpoint,
-                    p256dh:   subJson.keys?.p256dh || '',
-                    auth:     subJson.keys?.auth   || '',
-                })
-            });
-        }).catch(() => {})
-    );
-});
