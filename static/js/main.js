@@ -2018,6 +2018,30 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
+        const rawContent = msg.content || msg.text || '0';
+        const isMissed   = rawContent === 'missed';
+        const dur        = isMissed ? 0 : (parseInt(rawContent, 10) || 0);
+        const mins = Math.floor(dur / 60);
+        const secs = dur % 60;
+        const durStr = isMissed
+            ? 'Пропущенный'
+            : (dur === 0 ? 'Нет ответа' : (mins > 0 ? (mins + ' мин ' + secs + ' сек.') : (secs + ' сек.')));
+        const isVideo = type === 'call_video';
+        const label   = isVideo ? 'Видеозвонок' : 'Аудиозвонок';
+        const audioSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M6.6 10.79c1.4 2.8 3.8 5.11 6.6 6.6l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.58.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C10.29 21 3 13.71 3 4.5c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.46.57 3.58.11.35.03.74-.24 1.02L6.6 10.79z" fill="white"/></svg>';
+        const videoSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z" fill="white"/></svg>';
+        const missedSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.42 19.42 0 013.07 9.12 19.79 19.79 0 01.5.5h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L5.08 8.41M23 1L1 23" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        const icon   = isMissed ? missedSvg : (isVideo ? videoSvg : audioSvg);
+        const iconBg = isMissed ? 'rgba(239,68,68,0.15)' : (isMe ? 'rgba(255,255,255,0.2)' : 'rgba(16,185,129,0.25)');
+        const subStyle = isMissed ? 'color:#ef4444;font-size:12px;margin-top:3px' : 'font-size:12px;opacity:0.6;margin-top:3px';
+        contentHtml = '<div style="display:flex;align-items:center;gap:12px;padding:12px 16px 4px;min-width:190px">'
+            + '<div style="width:42px;height:42px;border-radius:50%;background:' + iconBg + ';display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+            + icon + '</div>'
+            + '<div>'
+            + '<div style="font-size:15px;font-weight:700;letter-spacing:-0.2px">' + label + '</div>'
+            + '<div style="' + subStyle + '">' + durStr + '</div>'
+            + '</div></div>';
+    } else if (type === 'image') {
         contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='📷 Фото'"></div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
@@ -5317,7 +5341,7 @@ async function startCall(type) {
         callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
         const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
         await peerConnection.setLocalDescription(offer);
-        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type });
+        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type, chat_id: currentChatId });
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
@@ -5625,7 +5649,12 @@ function endCall(notify = true) {
         });
     }
 
-    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId });
+    if (notify && currentPartnerId) socket.emit('end_call', {
+        to:        currentPartnerId,
+        chat_id:   currentChatId,
+        call_type: currentCallType || 'audio',
+        duration:  duration,
+    });
     if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
     if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
     // Очищаем remote audio
