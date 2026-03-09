@@ -5,20 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
     <title>WayChat</title>
 
-    <!-- ══ Иконки ══ -->
     <link rel="apple-touch-icon" sizes="180x180" href="/static/logo.png">
     <link rel="apple-touch-icon" sizes="192x192" href="/static/img/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon-512.png">
     <link rel="icon" type="image/png" sizes="192x192" href="/static/img/icon-192.png">
 
-    <!-- ══ PWA Manifest — Android Chrome убирает строку браузера ══ -->
+    <!-- ══ PWA Manifest — Android Chrome убирает адресную строку ══ -->
     <link rel="manifest" href="/static/manifest.json">
 
     <link rel="preconnect" href="https://cdn.tailwindcss.com">
     <link rel="preconnect" href="https://cdn.socket.io">
     <link rel="preconnect" href="https://unpkg.com">
 
-    <!-- ══ iOS Safari — убирает строку адреса ══ -->
+    <!-- ══ iOS Safari — убирает строку адреса при добавлении на экран ══ -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
@@ -37,6 +36,7 @@
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
     <style>
+        /* Базовые стили для плавности и OLED-черного */
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
 
         body, html, #root {
@@ -51,159 +51,36 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
 
-        #root { animation: appFadeIn 0.4s ease-out; }
+        /* Плавный вход в приложение */
+        #root {
+            animation: appFadeIn 0.4s ease-out;
+        }
 
         @keyframes appFadeIn {
             from { opacity: 0; transform: scale(0.98); }
-            to   { opacity: 1; transform: scale(1); }
+            to { opacity: 1; transform: scale(1); }
         }
 
+        /* Прячем скроллбары, но оставляем прокрутку */
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-        /* ══════════════════════════════════════════════════════
-           iOS 26 / Android — НОВЫЙ ЭКРАН ЗВОНКА
-        ══════════════════════════════════════════════════════ */
-
-        /* Размытый портрет на фоне */
-        .call-bg-portrait {
-            position: absolute;
-            inset: 0; z-index: 0;
-            background-size: cover;
-            background-position: center 15%;
-            filter: blur(48px) brightness(0.3) saturate(1.6);
-            transform: scale(1.12);
-        }
-
-        /* Градиент снизу */
-        .call-bg-gradient {
-            position: absolute;
-            inset: 0; z-index: 1;
-            background: linear-gradient(
-                to bottom,
-                rgba(0,0,0,0.0) 0%,
-                rgba(0,0,0,0.0) 35%,
-                rgba(0,0,0,0.65) 70%,
-                rgba(0,0,0,0.96) 100%
-            );
-        }
-
-        /* Пульсирующие кольца (только входящий) */
-        @keyframes wcRing {
-            0%   { transform: scale(1);    opacity: 0.65; }
-            80%  { transform: scale(1.55); opacity: 0; }
-            100% { transform: scale(1.55); opacity: 0; }
-        }
-        .wc-call-ring {
-            position: absolute;
-            width: 120px; height: 120px;
-            border-radius: 50%;
-            border: 2px solid rgba(255,255,255,0.45);
-            animation: wcRing 2.4s ease-out infinite;
-            pointer-events: none;
-        }
-        .wc-call-ring:nth-child(2) { animation-delay: 0.6s; }
-        .wc-call-ring:nth-child(3) { animation-delay: 1.2s; }
-
-        /* Аватар */
-        .wc-call-ava {
-            position: relative;
-            width: 116px; height: 116px;
-            border-radius: 50%;
-            overflow: hidden;
-            box-shadow:
-                0 0 0 3px rgba(255,255,255,0.2),
-                0 12px 48px rgba(0,0,0,0.7);
-            z-index: 2;
-            flex-shrink: 0;
-        }
-        .wc-call-ava img {
-            width: 100%; height: 100%;
-            object-fit: cover;
-            display: block;
-        }
-
-        /* Контейнер экрана звонка */
-        .call-screen {
-            position: fixed;
-            inset: 0; z-index: 9999;
-            display: flex;
-            flex-direction: column;
-        }
-        .call-screen.hidden { display: none !important; }
-
-        @keyframes wcCallIn {
-            from { opacity:0; transform: translateY(48px) scale(0.95); }
-            to   { opacity:1; transform: translateY(0) scale(1); }
-        }
-        @keyframes wcCallOut {
-            from { opacity:1; transform: translateY(0) scale(1); }
-            to   { opacity:0; transform: translateY(48px) scale(0.95); }
-        }
-        .call-screen.wc-entering { animation: wcCallIn  0.44s cubic-bezier(.32,.72,0,1) forwards; }
-        .call-screen.wc-leaving  { animation: wcCallOut 0.28s ease-in forwards; pointer-events:none; }
-
-        /* Кнопки iOS-стиль */
-        .wc-cbtn {
-            display: flex; flex-direction: column;
-            align-items: center; gap: 7px;
-            cursor: pointer; -webkit-tap-highlight-color: transparent;
-        }
-        .wc-cbtn-circle {
-            width: 68px; height: 68px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            border: none; cursor: pointer;
-            transition: transform 0.13s cubic-bezier(.34,1.56,.64,1), filter 0.13s;
-            -webkit-tap-highlight-color: transparent;
-        }
-        .wc-cbtn-circle:active { transform: scale(0.86); filter: brightness(0.85); }
-        .wc-cbtn-lbl {
-            font-size: 11.5px; color: rgba(255,255,255,0.7);
-            font-weight: 500; letter-spacing: 0.1px;
-            text-align: center; max-width: 72px;
-        }
-        .wc-cbtn-neutral { background: rgba(255,255,255,0.17); }
-        .wc-cbtn-active  { background: rgba(255,255,255,0.88) !important; }
-        .wc-cbtn-active svg *[stroke] { stroke: #000 !important; }
-        .wc-cbtn-active svg *[fill]:not([fill="none"]) { fill: #000 !important; }
-        .wc-cbtn-end     { background: #ff3b30; box-shadow: 0 4px 24px rgba(255,59,48,0.45); width:76px!important; height:76px!important; }
-        .wc-cbtn-accept  { background: #34c759; box-shadow: 0 4px 24px rgba(52,199,89,0.45); }
-
-        /* Таймер */
-        @keyframes timerIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
-        #call-timer-new { animation: timerIn 0.35s ease forwards; }
-
-        /* Локальное видео */
-        .wc-local-video {
-            position: absolute;
-            top: max(env(safe-area-inset-top), 54px);
-            right: 16px;
-            width: 92px; height: 128px;
-            border-radius: 14px;
-            overflow: hidden; z-index: 12;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.55);
-            border: 1.5px solid rgba(255,255,255,0.18);
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-        .wc-local-video:active { transform: scale(0.94); }
-        .wc-local-video video { width:100%;height:100%;object-fit:cover; }
-
-        /* Пропущенный/состоявшийся звонок в чате */
-        .msg-call { display:inline-flex; align-items:center; gap:6px; }
-        .msg-call-missed { color: #ff3b30; }
-        .msg-call-done   { color: var(--accent, #10b981); }
-
-        /* PWA install banner slide-up */
+        /* ── Android install banner ────────────────────────── */
         @keyframes slideUpBanner {
-            from { opacity:0; transform:translateY(20px); }
+            from { opacity:0; transform:translateY(24px); }
+            to   { opacity:1; transform:translateY(0); }
+        }
+
+        /* ── iOS install hint ──────────────────────────────── */
+        @keyframes slideUpSheet {
+            from { opacity:0; transform:translateY(100%); }
             to   { opacity:1; transform:translateY(0); }
         }
     </style>
 </head>
 <body class="bg-black">
 
+    {# FIX: используем getattr чтобы birthday не падал если поле ещё не смигрировано #}
     <div id="user-data-bridge"
          data-user='{{ {
              "id":            current_user.id,
@@ -225,13 +102,18 @@
                 var bridge = document.getElementById('user-data-bridge');
                 var rawData = bridge ? bridge.dataset.user : null;
                 if (!rawData) throw new Error('no bridge');
+
+                // Парсим данные от сервера
                 window.currentUser = JSON.parse(rawData);
+
+                // Сразу сохраняем в локальный кеш, чтобы аватарка не моргала при перезаходе
                 if (window.currentUser && window.currentUser.id) {
                     try { localStorage.setItem('varto_user_cache', JSON.stringify(window.currentUser)); } catch(e) {}
                 }
-                console.log('\u2705 \u041f\u0440\u043e\u0444\u0438\u043b\u044c \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d');
+
+                console.log('\u2705 \u0414\u0430\u043d\u043d\u044b\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f \u0441\u0438\u043d\u0445\u0440\u043e\u043d\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u043d\u044b');
             } catch (e) {
-                console.warn('\u26a0\ufe0f \u041e\u0448\u0438\u0431\u043a\u0430, \u0434\u043e\u0441\u0442\u0430\u0451\u043c \u043f\u0440\u043e\u0444\u0438\u043b\u044c \u0438\u0437 \u043a\u044d\u0448\u0430...', e);
+                console.warn('\u26a0\ufe0f \u041e\u0448\u0438\u0431\u043a\u0430 \u0441\u0435\u0440\u0432\u0435\u0440\u0430, \u0434\u043e\u0441\u0442\u0430\u0451\u043c \u043f\u0440\u043e\u0444\u0438\u043b\u044c \u0438\u0437 \u043a\u044d\u0448\u0430...', e);
                 try {
                     var cache = localStorage.getItem('varto_user_cache');
                     window.currentUser = cache ? JSON.parse(cache) : { id: 0, name: '\u0413\u043e\u0441\u0442\u044c', avatar: '/static/default_avatar.png' };
@@ -244,89 +126,264 @@
 
     <div id="root" class="h-full w-full"></div>
 
+    {# FIX: убран defer — main.js должен запускаться после того как window.currentUser уже задан #}
     <script src="/static/js/main.js"></script>
 
-    <!-- ══ Service Worker + PWA install ════════════════════════ -->
+    <!-- ══ Service Worker + PWA Install Prompts ════════════════ -->
     <script>
     // ── SW регистрация ──────────────────────────────────────────
+    // (SW также регистрируется внутри main.js через initPushNotifications,
+    //  но дублируем здесь для надёжности — дублированная регистрация безопасна)
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-            navigator.serviceWorker.register('/sw.js', { scope: '/' })
-                .then(reg => {
-                    console.log('✅ SW:', reg.scope);
-                    navigator.serviceWorker.addEventListener('message', e => {
-                        if (e.data?.type === 'open_chat' && e.data.chat_id) {
-                            if (typeof openChatById === 'function') openChatById(e.data.chat_id);
-                        }
-                    });
-                })
-                .catch(err => console.warn('SW err:', err));
+            navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
+                .then(reg => console.log('✅ SW зарегистрирован'))
+                .catch(err => console.warn('SW ошибка:', err));
         });
     }
 
-    // ── Android — баннер установки ──────────────────────────────
+    // ══════════════════════════════════════════════════════════
+    //  ANDROID — «Установить приложение»
+    //  beforeinstallprompt срабатывает когда Chrome решает что
+    //  сайт соответствует критериям PWA (manifest + SW + HTTPS)
+    // ══════════════════════════════════════════════════════════
     let _pwaPrompt = null;
+    let _pwaShown  = false;
+
     window.addEventListener('beforeinstallprompt', e => {
         e.preventDefault();
         _pwaPrompt = e;
-        if (!window.matchMedia('(display-mode: standalone)').matches) {
-            setTimeout(showPwaBanner, 4000);
+        // Показываем только если ещё не установлено
+        if (!window.matchMedia('(display-mode: standalone)').matches
+            && !localStorage.getItem('wc_pwa_installed')) {
+            // Небольшая задержка чтобы онбординг успел показаться первым
+            setTimeout(_showAndroidInstallSheet, 3500);
         }
     });
 
-    function showPwaBanner() {
-        if (!_pwaPrompt || document.getElementById('pwa-banner')) return;
-        const b = document.createElement('div');
-        b.id = 'pwa-banner';
-        b.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom)+76px);left:12px;right:12px;background:rgba(28,28,30,0.97);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-radius:18px;padding:13px 14px;z-index:8888;display:flex;align-items:center;gap:11px;box-shadow:0 8px 40px rgba(0,0,0,0.55),0 0 0 0.5px rgba(255,255,255,0.09);animation:slideUpBanner 0.4s cubic-bezier(.32,.72,0,1) forwards';
-        b.innerHTML = `
-            <img src="/static/img/icon-96.png" onerror="this.src='/static/logo.png'" style="width:42px;height:42px;border-radius:10px;flex-shrink:0">
-            <div style="flex:1;min-width:0">
-                <div style="font-size:14px;font-weight:700;color:#fff;line-height:1.3">Установить WayChat</div>
-                <div style="font-size:11.5px;color:rgba(255,255,255,0.45);margin-top:2px">Работает как нативное приложение</div>
+    window.addEventListener('appinstalled', () => {
+        localStorage.setItem('wc_pwa_installed', '1');
+        document.getElementById('wc-android-sheet')?.remove();
+        document.getElementById('wc-android-banner')?.remove();
+        console.log('✅ PWA установлено');
+    });
+
+    function _showAndroidInstallSheet() {
+        if (_pwaShown || !_pwaPrompt) return;
+        if (localStorage.getItem('wc_pwa_dismissed_at')) {
+            // Не показываем чаще раза в 3 дня
+            const ago = Date.now() - parseInt(localStorage.getItem('wc_pwa_dismissed_at'));
+            if (ago < 3 * 24 * 60 * 60 * 1000) { _showAndroidInstallBanner(); return; }
+        }
+        _pwaShown = true;
+
+        const sheet = document.createElement('div');
+        sheet.id = 'wc-android-sheet';
+        sheet.style.cssText = [
+            'position:fixed;inset:0;z-index:99990',
+            'background:rgba(0,0,0,0.7)',
+            'backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)',
+            'display:flex;flex-direction:column;align-items:center;justify-content:flex-end',
+        ].join(';');
+
+        sheet.innerHTML = `
+            <div style="
+                background:#161618;border-radius:28px 28px 0 0;
+                padding:8px 24px calc(env(safe-area-inset-bottom)+28px);
+                width:100%;max-width:480px;
+                box-shadow:0 -4px 40px rgba(0,0,0,0.6);
+                border-top:0.5px solid rgba(255,255,255,0.1);
+                animation:slideUpSheet 0.4s cubic-bezier(.32,.72,0,1) forwards;
+            ">
+                <div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 22px"></div>
+                <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+                    <img src="/static/img/icon-192.png" onerror="this.src='/static/logo.png'"
+                         style="width:60px;height:60px;border-radius:14px;flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
+                    <div>
+                        <div style="font-size:18px;font-weight:800;letter-spacing:-0.3px">WayChat</div>
+                        <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:3px">Установить как приложение</div>
+                    </div>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
+                    ${['📵 Работает без браузера и адресной строки',
+                       '🔔 Push‑уведомления и звонки в фоне',
+                       '⚡ Быстрее загружается, меньше батареи'].map(t =>
+                        `<div style="display:flex;align-items:center;gap:10px;font-size:14px;color:rgba(255,255,255,0.7)">
+                            <span>${t}</span>
+                         </div>`).join('')}
+                </div>
+                <button id="wc-pwa-install" style="
+                    width:100%;padding:16px;
+                    background:#10b981;border:none;border-radius:16px;
+                    color:#000;font-size:16px;font-weight:800;
+                    cursor:pointer;font-family:inherit;letter-spacing:-0.2px;
+                    margin-bottom:10px;
+                ">Установить приложение</button>
+                <button id="wc-pwa-later" style="
+                    width:100%;padding:12px;background:none;border:none;
+                    color:rgba(255,255,255,0.3);font-size:14px;
+                    cursor:pointer;font-family:inherit;
+                ">Не сейчас</button>
             </div>
-            <button onclick="installPwa()" style="background:var(--accent,#10b981);border:none;border-radius:11px;padding:8px 15px;color:#000;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;font-family:inherit">Добавить</button>
-            <button onclick="document.getElementById('pwa-banner').remove()" style="background:none;border:none;color:rgba(255,255,255,0.35);font-size:22px;cursor:pointer;padding:2px 4px;line-height:1">×</button>
         `;
-        document.body.appendChild(b);
+
+        document.body.appendChild(sheet);
+
+        sheet.querySelector('#wc-pwa-install').onclick = async () => {
+            sheet.remove();
+            if (!_pwaPrompt) return;
+            _pwaPrompt.prompt();
+            const { outcome } = await _pwaPrompt.userChoice;
+            if (outcome === 'accepted') {
+                localStorage.setItem('wc_pwa_installed', '1');
+                _pwaPrompt = null;
+            }
+        };
+
+        sheet.querySelector('#wc-pwa-later').onclick = () => {
+            sheet.remove();
+            localStorage.setItem('wc_pwa_dismissed_at', String(Date.now()));
+            // Показываем маленький баннер внизу через 5 сек
+            setTimeout(_showAndroidInstallBanner, 5000);
+        };
+
+        // Клик вне шита закрывает его
+        sheet.addEventListener('click', e => {
+            if (e.target === sheet) {
+                sheet.remove();
+                localStorage.setItem('wc_pwa_dismissed_at', String(Date.now()));
+                setTimeout(_showAndroidInstallBanner, 5000);
+            }
+        });
     }
 
-    async function installPwa() {
+    function _showAndroidInstallBanner() {
         if (!_pwaPrompt) return;
-        document.getElementById('pwa-banner')?.remove();
-        _pwaPrompt.prompt();
-        const { outcome } = await _pwaPrompt.userChoice;
-        if (outcome === 'accepted') _pwaPrompt = null;
+        if (document.getElementById('wc-android-banner')) return;
+
+        const b = document.createElement('div');
+        b.id = 'wc-android-banner';
+        b.style.cssText = [
+            'position:fixed;bottom:calc(env(safe-area-inset-bottom)+74px);left:12px;right:12px',
+            'z-index:9989',
+            'background:rgba(22,22,24,0.97)',
+            'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)',
+            'border-radius:18px;padding:12px 14px',
+            'display:flex;align-items:center;gap:11px',
+            'box-shadow:0 8px 40px rgba(0,0,0,0.5),0 0 0 0.5px rgba(255,255,255,0.08)',
+            'animation:slideUpBanner 0.35s cubic-bezier(.32,.72,0,1) forwards',
+        ].join(';');
+
+        b.innerHTML = `
+            <img src="/static/img/icon-96.png" onerror="this.src='/static/logo.png'"
+                 style="width:40px;height:40px;border-radius:10px;flex-shrink:0">
+            <div style="flex:1;min-width:0">
+                <div style="font-size:13.5px;font-weight:700;color:#fff;line-height:1.3">Добавить WayChat на экран</div>
+                <div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-top:1px">Работает как нативное приложение</div>
+            </div>
+            <button id="wc-banner-add" style="
+                background:#10b981;border:none;border-radius:11px;
+                padding:8px 14px;color:#000;font-size:13px;font-weight:700;
+                cursor:pointer;flex-shrink:0;font-family:inherit
+            ">Добавить</button>
+            <button id="wc-banner-x" style="
+                background:none;border:none;color:rgba(255,255,255,0.3);
+                font-size:20px;cursor:pointer;padding:2px 4px;line-height:1
+            ">×</button>
+        `;
+
+        document.body.appendChild(b);
+
+        b.querySelector('#wc-banner-add').onclick = async () => {
+            b.remove();
+            if (!_pwaPrompt) return;
+            _pwaPrompt.prompt();
+            const { outcome } = await _pwaPrompt.userChoice;
+            if (outcome === 'accepted') _pwaPrompt = null;
+        };
+        b.querySelector('#wc-banner-x').onclick = () => b.remove();
     }
 
-    // ── iOS — подсказка "Добавить на экран Домой" ───────────────
+    // ══════════════════════════════════════════════════════════
+    //  iOS — «Добавить на экран Домой»
+    //  На iOS нет beforeinstallprompt — показываем инструкцию вручную
+    // ══════════════════════════════════════════════════════════
     const _isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
     const _isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
 
-    if (_isIOS && !_isStandalone && !localStorage.getItem('ios_hint_v2')) {
+    if (_isIOS && !_isStandalone && !localStorage.getItem('wc_ios_hint_v3')) {
+        // Показываем через 5 сек — дать время приложению загрузиться
         setTimeout(() => {
-            localStorage.setItem('ios_hint_v2', '1');
-            const h = document.createElement('div');
-            h.id = 'ios-hint';
-            h.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:8888;background:rgba(22,22,24,0.98);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:18px 18px calc(18px + env(safe-area-inset-bottom));border-top:0.5px solid rgba(255,255,255,0.1);animation:slideUpBanner 0.4s cubic-bezier(.32,.72,0,1) forwards';
-            h.innerHTML = `
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-                    <div style="font-size:15px;font-weight:700;color:#fff">Установи как приложение</div>
-                    <button onclick="this.closest('#ios-hint').remove()" style="background:rgba(255,255,255,0.1);border:none;border-radius:50%;width:27px;height:27px;color:rgba(255,255,255,0.5);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button>
-                </div>
-                <div style="display:flex;gap:14px;align-items:flex-start">
-                    <div style="flex:1;font-size:13.5px;color:rgba(255,255,255,0.7);line-height:1.6">
-                        <div style="margin-bottom:6px">① Нажми <b style="color:#fff">«Поделиться»</b>
-                            <svg style="display:inline;vertical-align:-3px;margin-left:3px" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 12H5a2 2 0 00-2 2v5a2 2 0 002 2h14a2 2 0 002-2v-5a2 2 0 00-2-2h-3M12 3v12M9 6l3-3 3 3" stroke="rgba(255,255,255,0.65)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                            в Safari
+            localStorage.setItem('wc_ios_hint_v3', '1');
+
+            const hint = document.createElement('div');
+            hint.id = 'wc-ios-hint';
+            hint.style.cssText = [
+                'position:fixed;bottom:0;left:0;right:0;z-index:99989',
+                'background:rgba(18,18,20,0.98)',
+                'backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px)',
+                'padding:8px 20px calc(20px + env(safe-area-inset-bottom))',
+                'border-top:0.5px solid rgba(255,255,255,0.1)',
+                'animation:slideUpSheet 0.4s cubic-bezier(.32,.72,0,1) forwards',
+            ].join(';');
+
+            hint.innerHTML = `
+                <div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 18px"></div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <img src="/static/img/icon-192.png" onerror="this.src='/static/logo.png'"
+                             style="width:44px;height:44px;border-radius:11px;box-shadow:0 3px 12px rgba(0,0,0,0.4)">
+                        <div>
+                            <div style="font-size:15px;font-weight:800;color:#fff">Установить WayChat</div>
+                            <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:2px">Добавить на экран Домой</div>
                         </div>
-                        <div>② Выбери <b style="color:#fff">«На экран Домой»</b></div>
                     </div>
-                    <img src="/static/img/icon-192.png" onerror="this.src='/static/logo.png'" style="width:50px;height:50px;border-radius:12px;flex-shrink:0;box-shadow:0 4px 12px rgba(0,0,0,0.4)">
+                    <button id="wc-ios-close" style="
+                        background:rgba(255,255,255,0.1);border:none;border-radius:50%;
+                        width:28px;height:28px;color:rgba(255,255,255,0.5);
+                        font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center
+                    ">×</button>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:13px;margin-bottom:18px">
+                    <div style="display:flex;align-items:center;gap:13px">
+                        <div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.08);
+                             display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                                <path d="M8 12H5a2 2 0 00-2 2v5a2 2 0 002 2h14a2 2 0 002-2v-5a2 2 0 00-2-2h-3M12 3v12M9 6l3-3 3 3"
+                                      stroke="rgba(255,255,255,0.6)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </div>
+                        <div style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.4">
+                            Нажми <span style="font-weight:700;color:#fff">«Поделиться»</span>
+                            <svg style="display:inline;vertical-align:-3px;margin:0 2px" width="15" height="15" viewBox="0 0 24 24" fill="none">
+                                <path d="M8 12H5a2 2 0 00-2 2v5a2 2 0 002 2h14a2 2 0 002-2v-5a2 2 0 00-2-2h-3M12 3v12M9 6l3-3 3 3"
+                                      stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                            в нижней панели Safari
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:13px">
+                        <div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.08);
+                             display:flex;align-items:center;justify-content:center;flex-shrink:0;
+                             font-size:18px">＋</div>
+                        <div style="font-size:14px;color:rgba(255,255,255,0.8);line-height:1.4">
+                            Выбери <span style="font-weight:700;color:#fff">«На экран Домой»</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Стрелка вниз указывающая на кнопку Поделиться -->
+                <div style="display:flex;justify-content:center;margin-bottom:4px">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 5v14M5 12l7 7 7-7" stroke="rgba(255,255,255,0.25)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
                 </div>
             `;
-            document.body.appendChild(h);
-            setTimeout(() => h.remove(), 12000);
+
+            document.body.appendChild(hint);
+
+            hint.querySelector('#wc-ios-close').onclick = () => hint.remove();
+            // Автоскрытие через 15 сек
+            setTimeout(() => hint.remove(), 15000);
         }, 5000);
     }
     </script>
