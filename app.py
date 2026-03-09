@@ -376,22 +376,7 @@ def _send_web_push(subscription_info, payload_dict):
         return False
 
 
-def _resolve_push_icon(avatar):
-    """Возвращает абсолютный URL аватарки для иконки push-уведомления"""
-    base = 'https://waychat-3.onrender.com'
-    if not avatar or avatar.startswith('emoji:') or avatar.startswith('data:'):
-        return f'{base}/static/img/icon-192.png'
-    if avatar.startswith('http'):
-        # Cloudinary — добавляем трансформацию: круг 192px
-        if 'cloudinary.com' in avatar and '/upload/' in avatar:
-            return avatar.replace('/upload/', '/upload/w_192,h_192,c_fill,r_max,f_auto/')
-        return avatar
-    if avatar.startswith('/'):
-        return f'{base}{avatar}'
-    return f'{base}/static/img/icon-192.png'
-
-
-def send_push_to_user(user_id, title, body, chat_id=None, icon=None, sender_avatar=None):
+def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
     # eventlet.spawn запускает без Flask context — оборачиваем обязательно
     with app.app_context():
         if not PUSH_AVAILABLE:
@@ -403,12 +388,11 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None, sender_avat
 
         app.logger.info(f'Push → user_id={user_id}: {title} | {body[:40]}')
 
-        push_icon = _resolve_push_icon(sender_avatar)
-
         payload = {
             'title':   title,
             'body':    body,
-            'icon':    push_icon,
+            'icon':    icon or '/static/img/icon-192.png',
+            'badge':   '/static/img/badge-96.png',
             'tag':     f'msg-{chat_id or user_id}',
             'chat_id': chat_id,
             'url':     f'/?open_chat={chat_id}' if chat_id else '/',
@@ -1221,6 +1205,46 @@ def get_my_chats():
         )
     ).all()
 
+    # ── Батч-запрос: последнее сообщение для всех чатов за 1 SQL ──
+    priv_chat_ids = [c.id for c in raw_chats if not c.room_key.startswith('group_')]
+    _last_msgs = {}
+    _unread_counts = {}
+    if priv_chat_ids:
+        rows = db.session.execute(text('''
+            SELECT DISTINCT ON (chat_id) chat_id, id, type, content, file_url, timestamp, sender_id
+            FROM message
+            WHERE chat_id = ANY(:ids) AND is_deleted = FALSE
+            ORDER BY chat_id, id DESC
+        '''), {'ids': priv_chat_ids}).fetchall()
+        for r in rows:
+            _last_msgs[r.chat_id] = r
+        unread_rows = db.session.execute(text('''
+            SELECT chat_id, COUNT(*) as cnt
+            FROM message
+            WHERE chat_id = ANY(:ids) AND is_read = FALSE AND sender_id != :uid AND is_deleted = FALSE
+            GROUP BY chat_id
+        '''), {'ids': priv_chat_ids, 'uid': uid}).fetchall()
+        for r in unread_rows:
+            _unread_counts[r.chat_id] = r.cnt
+
+    # ── Батч-запрос: моменты партнёров ──
+    _moment_counts = {}
+    partner_ids = []
+    for c in raw_chats:
+        if c.room_key.startswith('group_'): continue
+        parts = c.room_key.replace('chat_', '').split('_')
+        ids   = [int(p) for p in parts if p.isdigit()]
+        p_id  = next((i for i in ids if i != uid), None)
+        if p_id: partner_ids.append(p_id)
+    if partner_ids:
+        mc_rows = db.session.execute(text('''
+            SELECT user_id, COUNT(*) as cnt FROM moment
+            WHERE user_id = ANY(:ids) AND expires_at > NOW()
+            GROUP BY user_id
+        '''), {'ids': partner_ids}).fetchall()
+        for r in mc_rows:
+            _moment_counts[r.user_id] = r.cnt
+
     for c in raw_chats:
         if c.room_key.startswith('group_'):
             continue
@@ -1230,21 +1254,15 @@ def get_my_chats():
             p_id  = next((i for i in ids if i != uid), None)
             if not p_id:
                 continue
-            # ИСПРАВЛЕНИЕ: используем словарь, не ORM-объект
             partner_dict = get_cached_user_dict(p_id)
             if not partner_dict:
                 continue
 
-            last_msg = Message.query.filter_by(
-                chat_id=c.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
+            last_msg = _last_msgs.get(c.id)
+            unread   = _unread_counts.get(c.id, 0)
 
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': c.id, 'uid': uid}
-            ).scalar() or 0
-
-            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
+            type_map = {'image': '📷 Фото', 'audio': '🎙 Голос', 'video': '📹 Видео',
+                        'call_audio': '📞 Аудиозвонок', 'call_video': '📹 Видеозвонок'}
             preview  = '💬 Начните переписку'
             sort_ts  = c.created_at or datetime(2000, 1, 1)
 
@@ -1252,7 +1270,6 @@ def get_my_chats():
                 preview = type_map.get(last_msg.type, last_msg.content or '...')
                 sort_ts = last_msg.timestamp
 
-            # online из кэша
             p_online = _online_cache.get(p_id)
             if p_online is None:
                 last_seen_str = partner_dict.get('last_seen')
@@ -1265,7 +1282,8 @@ def get_my_chats():
                 else:
                     p_online = partner_dict.get('is_online', False)
 
-            _mc = Moment.query.filter(Moment.user_id == p_id, Moment.expires_at > datetime.utcnow()).count()
+            _mc = _moment_counts.get(p_id, 0)
+            ts_iso = last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else ''
             result.append({
                 'chat_id':          c.id,
                 'partner_id':       p_id,
@@ -1275,7 +1293,7 @@ def get_my_chats():
                 'online':           p_online,
                 'last_message':     preview,
                 'timestamp':        to_moscow_str(last_msg.timestamp if last_msg else None),
-                'raw_timestamp':    last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
+                'raw_timestamp':    ts_iso,
                 'unread_count':     unread,
                 'is_group':         False,
                 'has_moment':       _mc > 0,
@@ -2091,9 +2109,8 @@ def handle_msg(data):
         return
 
     try:
-        uid     = current_user.id
-        uname   = current_user.name
-        uavatar = getattr(current_user, 'avatar', '') or ''
+        uid   = current_user.id
+        uname = current_user.name
     except Exception:
         return
 
@@ -2114,16 +2131,20 @@ def handle_msg(data):
     chat = db.session.get(Chat, chat_id)
 
     if chat:
-        push_preview = {
-            'text':         msg.content or '...',
-            'image':        '📷 Фото',
-            'audio':        '🎙 Голосовое сообщение',
-            'video':        '📹 Видео',
-            'video_circle': '⭕ Видео-кружок',
-            'sticker':      '🎭 Стикер',
-            'file':         '📎 Файл',
-        }.get(msg_type, msg.content or '...')
-        push_preview = push_preview[:100] if push_preview else '...'
+        # Звонки — не отправляем push, это не сообщение
+        if msg_type in ('call_audio', 'call_video'):
+            push_preview = None
+        else:
+            push_preview = {
+                'text':   msg.content or '...',
+                'image':  '📷 Фото',
+                'audio':  '🎙 Голосовое сообщение',
+                'video':  '📹 Видео',
+                'sticker':'🎭 Стикер',
+                'file':   '📎 Файл',
+            }.get(msg_type, msg.content or '...')
+        if push_preview:
+            push_preview = push_preview[:100]
 
         if chat.room_key.startswith('group_'):
             group = Group.query.filter_by(chat_id=chat_id).first()
@@ -2138,8 +2159,7 @@ def handle_msg(data):
                         is_online = _online_cache.get(m.user_id)
                         if not is_online:
                             eventlet.spawn(send_push_to_user, m.user_id,
-                                f'{uname} → {group.name}', push_preview, chat_id,
-                                None, uavatar)
+                                f'{uname} → {group.name}', push_preview, chat_id)
         else:
             payload['is_group_msg'] = False
             parts = chat.room_key.replace('chat_', '').split('_')
@@ -2151,8 +2171,8 @@ def handle_msg(data):
                     if uid_int != uid:
                         is_online = _online_cache.get(uid_int)
                         if not is_online:
-                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id,
-                                None, uavatar)
+                            if push_preview and msg_type not in ('call_audio','call_video'):
+                                eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
 
 
 @socketio.on('mark_read')
@@ -2366,9 +2386,30 @@ def handle_end_call(data):
     if not to:
         return
     try:
-        uid = current_user.id
+        uid   = current_user.id
+        uname = current_user.name
     except Exception:
         return
+    # Если duration=0 — звонящий сбросил до ответа → сохраняем пропущенный
+    duration  = int(data.get('duration', 0))
+    chat_id   = data.get('chat_id')
+    call_type = data.get('call_type', 'audio')
+    if duration == 0 and chat_id:
+        try:
+            msg_type = 'call_video' if call_type == 'video' else 'call_audio'
+            missed = Message(
+                chat_id=chat_id, sender_id=uid, sender_name=uname,
+                type=msg_type, content='missed',
+            )
+            db.session.add(missed)
+            db.session.commit()
+            payload = missed.to_dict()
+            payload['chat_id'] = chat_id
+            emit('new_message', payload, room=f'user_{to}')
+            emit('new_message', payload, room=f'user_{uid}')
+        except Exception as e:
+            app.logger.error(f'missed call msg error: {e}')
+            db.session.rollback()
     emit('call_ended', {'from': uid}, room=f'user_{to}')
 
 # ══════════════════════════════════════════════════════════
