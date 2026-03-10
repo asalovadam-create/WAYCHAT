@@ -306,13 +306,14 @@ const THEMES = {
 function initSocket() {
     socket = io({
         path: '/socket.io',
-        transports: ['websocket', 'polling'],
+        transports: ['websocket'],      // только WS — убираем polling, он медленнее
+        upgrade: false,
         reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 10000,
-        randomizationFactor: 0.5,      // разброс ±50% — нет шторма при 5k реконнектов
+        reconnectionDelay: 500,         // было 1000
+        reconnectionDelayMax: 4000,     // было 10000
+        randomizationFactor: 0.3,
         reconnectionAttempts: Infinity,
-        timeout: 20000,
+        timeout: 8000,                  // было 20000
         forceNew: false,
         withCredentials: true
     });
@@ -479,8 +480,6 @@ async function init() {
     setTimeout(syncProfileData, 300);
     setTimeout(_updatePermsSummary, 600);
     setTimeout(initPushNotifications, 500);
-    // Онбординг — запрос разрешений при первом открытии
-    showOnboarding();
 
     // Service Worker — кешируем статику (JS, CSS, аватарки) навсегда
     // SW регистрируется в initPushNotifications() по пути /sw.js (с push handler)
@@ -1233,18 +1232,16 @@ let _chatsLoading = false;
 
 async function loadChats(force = false) {
     const now = Date.now();
-    // Не перезагружаем чаще чем раз в 8 секунд (если не форс)
     if (!force && _chatsLoading) return;
-    if (!force && recentChats.length && (now - _lastChatsLoad) < 8000) {
-        renderChatList(recentChats);
-        return;
-    }
+    // Сразу рисуем из памяти — нулевая задержка для пользователя
+    if (recentChats.length) renderChatList(recentChats);
+    // Не ходим на сервер чаще чем раз в 3 сек (было 8 сек)
+    if (!force && recentChats.length && (now - _lastChatsLoad) < 3000) return;
     _chatsLoading = true;
-    showChatSkeleton(); // Показываем skeleton пока грузятся чаты
     try {
         const res = await fetch('/get_my_chats', {
             credentials: 'include',
-            headers: {'Accept-Encoding': 'gzip, deflate'}
+            headers: { 'Accept-Encoding': 'gzip, deflate' }
         });
         if (!res || !res.ok) return;
         const chats = await res.json();
@@ -1252,10 +1249,9 @@ async function loadChats(force = false) {
         _lastChatsLoad = Date.now();
         renderChatList(chats);
         updatePageTitle();
-        // Prefetch аватарки первых 5 чатов в фоне
-        chats.slice(0, 5).forEach(c => {
+        chats.slice(0, 8).forEach(c => {
             if (c.partner_avatar && !c.partner_avatar.includes('default') && !c.partner_avatar.startsWith('emoji:')) {
-                if (c.partner_avatar) AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
+                AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
                     .then(src => { chatPartnerAvatarSrc[c.partner_id] = src; });
             }
         });
@@ -1615,7 +1611,7 @@ function updatePartnerOnlineStatus(userId, isOnline) {
 async function apiFetch(url, options = {}, _retry = 0) {
     const headers = { ...(options.headers || {}) };
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 15000); // 15s таймаут
+    const tid = setTimeout(() => controller.abort(), 6000); // было 15000
     try {
         const res = await fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal });
         clearTimeout(tid);
@@ -1623,9 +1619,8 @@ async function apiFetch(url, options = {}, _retry = 0) {
             location.href = '/login';
             return null;
         }
-        // Авто-retry при 503 (сервер перегружен) — 1 раз
         if (res.status === 503 && _retry === 0 && options.method !== 'POST') {
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 600)); // было 1500
             return apiFetch(url, options, 1);
         }
         return res;
@@ -2020,7 +2015,47 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
-        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='📷 Фото'"></div>`;
+        const isMissed  = !msg.content || msg.content === 'missed' || msg.content === '0' || msg.content === 'null';
+        const isVideo   = type === 'call_video';
+        const isMine    = +msg.sender_id === currentUser.id;
+        const dur       = (!isMissed && !isNaN(+msg.content)) ? +msg.content : 0;
+        const durStr    = dur > 0 ? ' · ' + fmtSec(dur) : '';
+
+        // Цвет и иконка
+        const color = isMissed ? '#ff453a' : 'var(--accent,#10b981)';
+        const phoneIcon = isMissed
+            ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c1.12.4 2.33.61 3.53.61.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C9.24 21 3 14.76 3 7c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.6 3.54a2 2 0 01-.45 2.11L7.2 12.3" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
+                 <line x1="1" y1="1" x2="23" y2="23" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
+               </svg>`
+            : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                 <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45c1.1.4 2.3.6 3.54.6.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C9.24 21 3 14.76 3 7c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.6 3.54a2 2 0 01-.45 2.11L7.2 12.3" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+               </svg>`;
+
+        const label = isMissed
+            ? (isMine ? 'Нет ответа' : 'Пропущенный звонок')
+            : (isVideo ? `Видеозвонок${durStr}` : `Звонок${durStr}`);
+
+        // Кнопка «Перезвонить» — только если пропущенный и звонили мне (я не отправитель)
+        const callbackBtn = (isMissed && !isMine)
+            ? `<button onclick="startCall('${isVideo?'video':'audio'}')"
+                style="margin-top:7px;display:inline-flex;align-items:center;gap:5px;
+                       padding:5px 13px;background:rgba(255,255,255,0.09);border-radius:20px;
+                       border:none;color:var(--accent,#10b981);font-size:12px;font-weight:600;
+                       cursor:pointer;font-family:inherit">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+                  <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45c1.1.4 2.3.6 3.54.6.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C9.24 21 3 14.76 3 7c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.6 3.54a2 2 0 01-.45 2.11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>Перезвонить
+              </button>`
+            : '';
+
+        contentHtml = `<div style="display:flex;flex-direction:column;gap:0">
+            <div style="display:inline-flex;align-items:center;gap:7px">
+                ${phoneIcon}
+                <span style="font-size:14px;font-weight:600;color:${color}">${label}</span>
+            </div>
+            ${callbackBtn}
+        </div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
@@ -5506,23 +5541,14 @@ function createPeerConnection() {
         const stream = e.streams[0];
 
         if (e.track.kind === 'video') {
-            const rv  = document.getElementById('remote-video');
-            const vbg = document.getElementById('wc-video-bg');
+            const rv = document.getElementById('remote-video');
             if (rv) {
-                // Показываем контейнер видео
-                if (vbg) vbg.style.display = 'block';
+                document.getElementById('call-video-container').style.display = 'block';
                 rv.srcObject = stream;
                 rv.style.display = 'block';
                 rv.play().catch(() => document.addEventListener('touchstart', () => rv.play(), { once: true }));
-                // Прячем аватар/имя — видео занимает экран
-                const callInfo = document.querySelector('#call-screen > div[style*="flex:1"]');
-                if (callInfo) callInfo.style.opacity = '0';
-                // Скрываем размытый фон — видео его закроет
-                const bgBlur = document.getElementById('wc-call-bg-blur');
-                if (bgBlur) bgBlur.style.opacity = '0';
-                // Убираем колечки
-                const ringsWrap = document.getElementById('wc-rings-wrap');
-                if (ringsWrap) ringsWrap.style.display = 'none';
+                const ci = document.getElementById('call-info');
+                if (ci) ci.style.opacity = '0.2';
             }
         } else if (e.track.kind === 'audio') {
             // Отдельный audio элемент для надёжного воспроизведения
@@ -5811,219 +5837,62 @@ async function initPushNotifications() {
     }
 }
 
-// ══════════════════════════════════════════════════════════
-//  ОНБОРДИНГ — запрос разрешений при первом открытии
-// ══════════════════════════════════════════════════════════
+function _showPushBanner() {
+    if (_pushBannerShown || localStorage.getItem('wc_push_dismissed')) return;
+    _pushBannerShown = true;
 
-function _shouldShowOnboarding() {
-    // Показываем только один раз (при первом запуске)
-    return !localStorage.getItem('wc_onboarding_done');
-}
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
-async function showOnboarding() {
-    if (!_shouldShowOnboarding()) return;
-    // Небольшая задержка чтобы приложение успело отрисоваться
-    await new Promise(r => setTimeout(r, 1200));
+    setTimeout(() => {
+        const b = document.createElement('div');
+        b.id = 'push-banner';
+        b.style.cssText = 'position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+70px),82px);left:12px;right:12px;z-index:9998;background:var(--surface);border:1px solid rgba(16,185,129,0.25);border-radius:18px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,0.55)';
 
-    const isIOS     = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const isAndroid = /android/i.test(navigator.userAgent);
-    const isPWA     = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-
-    return new Promise(resolve => {
-        const ov = document.createElement('div');
-        ov.id = 'wc-onboarding';
-        ov.style.cssText = [
-            'position:fixed;inset:0;z-index:99999',
-            'background:rgba(0,0,0,0.85)',
-            'backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)',
-            'display:flex;flex-direction:column;align-items:center;justify-content:flex-end',
-            'animation:obIn 0.4s cubic-bezier(.32,.72,0,1) forwards',
-        ].join(';');
-
-        const sheet = document.createElement('div');
-        sheet.style.cssText = [
-            'background:var(--surface,#111)',
-            'border-radius:28px 28px 0 0',
-            'padding:8px 24px calc(env(safe-area-inset-bottom)+32px)',
-            'width:100%;max-width:480px',
-            'box-shadow:0 -4px 40px rgba(0,0,0,0.6)',
-            'border-top:0.5px solid rgba(255,255,255,0.1)',
-        ].join(';');
-
-        const steps = [
-            {
-                icon: '🔔',
-                title: 'Уведомления',
-                desc: 'Получай сообщения и звонки даже когда приложение закрыто',
-                action: 'Разрешить уведомления',
-                skip: 'Пропустить',
-                key: 'notifications',
-            },
-            {
-                icon: 'MIC',
-                title: 'Микрофон',
-                desc: 'Нужен для голосовых сообщений и звонков',
-                action: 'Разрешить микрофон',
-                skip: 'Пропустить',
-                key: 'microphone',
-            },
-        ];
-
-        let stepIdx = 0;
-
-        function renderStep() {
-            const s = steps[stepIdx];
-            const total = steps.length;
-            const iconHtml = s.icon === 'MIC'
-                ? `<div style="width:64px;height:64px;border-radius:20px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 18px">
-                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" stroke="var(--accent,#10b981)" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/></svg>
-                   </div>`
-                : `<div style="width:64px;height:64px;border-radius:20px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 18px;font-size:30px">${s.icon}</div>`;
-
-            // Прогресс-точки
-            const dots = steps.map((_, i) =>
-                `<div style="width:${i===stepIdx?'20':'7'}px;height:7px;border-radius:4px;background:${i===stepIdx?'var(--accent,#10b981)':'rgba(255,255,255,0.2)'};transition:width 0.3s,background 0.3s"></div>`
-            ).join('');
-
-            sheet.innerHTML = `
-                <div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 24px"></div>
-                ${iconHtml}
-                <div style="font-size:22px;font-weight:800;text-align:center;margin-bottom:10px;letter-spacing:-0.3px">${s.title}</div>
-                <div style="font-size:15px;color:rgba(255,255,255,0.6);text-align:center;line-height:1.55;margin-bottom:28px">${s.desc}</div>
-                <button id="ob-action" style="width:100%;padding:16px;background:var(--accent,#10b981);border:none;border-radius:16px;color:#000;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;margin-bottom:12px">${s.action}</button>
-                <button id="ob-skip" style="width:100%;padding:12px;background:none;border:none;color:rgba(255,255,255,0.35);font-size:14px;cursor:pointer;font-family:inherit;margin-bottom:12px">${s.skip}</button>
-                <div style="display:flex;justify-content:center;gap:6px;margin-top:4px">${dots}</div>
-            `;
-
-            sheet.querySelector('#ob-action').onclick = async () => {
-                await handlePermission(s.key);
-            };
-            sheet.querySelector('#ob-skip').onclick = () => {
-                nextStep();
-            };
+        if (isIOS && !isPWA) {
+            // iOS Safari без PWA — только инструкция
+            b.innerHTML = '<div style="font-size:22px;flex-shrink:0">🔔</div>'
+                +'<div style="flex:1;min-width:0">'
+                +'<div style="font-size:13px;font-weight:700;margin-bottom:3px">Уведомления на iPhone</div>'
+                +'<div style="font-size:11px;color:var(--text-2);line-height:1.5">Нажмите <b style="color:var(--text)">«Поделиться ⬆»</b> → <b style="color:var(--text)">«На экран Домой»</b> и откройте WayChat оттуда</div>'
+                +'</div>'
+                +'<button id="push-no" style="background:none;border:none;color:var(--text-2);font-size:18px;cursor:pointer;flex-shrink:0;padding:4px">✕</button>';
+        } else {
+            b.innerHTML = '<div style="font-size:26px;flex-shrink:0">🔔</div>'
+                +'<div style="flex:1;min-width:0">'
+                +'<div style="font-size:14px;font-weight:700;margin-bottom:2px">Уведомления о сообщениях</div>'
+                +'<div style="font-size:12px;color:var(--text-2);line-height:1.4">Получайте сообщения даже когда приложение закрыто</div>'
+                +'</div>'
+                +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">'
+                +'<button id="push-yes" style="padding:8px 16px;background:var(--accent);border:none;border-radius:10px;color:#000;font:700 13px/1 -apple-system,sans-serif;cursor:pointer">Включить</button>'
+                +'<button id="push-no" style="padding:6px 10px;background:none;border:none;color:var(--text-2);font:500 12px/1 -apple-system,sans-serif;cursor:pointer">Не сейчас</button>'
+                +'</div>';
         }
 
-        async function handlePermission(key) {
-            if (key === 'notifications') {
+        document.body.appendChild(b);
+
+        const yesBtn = b.querySelector('#push-yes');
+        if (yesBtn) {
+            yesBtn.onclick = async () => {
+                b.remove();
                 try {
                     const perm = await Notification.requestPermission();
+                    notifPermission = perm === 'granted';
                     if (perm === 'granted') {
-                        notifPermission = true;
-                        if ('PushManager' in window && _swReg) await _subscribeToPush();
+                        if ('PushManager' in window) await _subscribeToPush();
                         _updateNotifToggle(true);
+                        showToast('Уведомления включены 🔔', 'success');
+                    } else {
+                        showToast('Уведомления заблокированы — разрешите в настройках', 'warning', 4000);
                     }
-                } catch(e) {}
-            } else if (key === 'microphone') {
-                try {
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(t => t.stop());
-                    _sessionPerms.microphone = 'granted';
-                } catch(e) {}
-            }
-            nextStep();
-        }
-
-        function nextStep() {
-            stepIdx++;
-            if (stepIdx >= steps.length) {
-                finish();
-            } else {
-                // Анимация смены шага
-                sheet.style.transition = 'transform 0.2s,opacity 0.2s';
-                sheet.style.opacity = '0';
-                sheet.style.transform = 'translateY(20px)';
-                setTimeout(() => {
-                    sheet.style.transition = '';
-                    sheet.style.opacity = '';
-                    sheet.style.transform = '';
-                    renderStep();
-                }, 200);
-            }
-        }
-
-        function finish() {
-            localStorage.setItem('wc_onboarding_done', '1');
-            ov.style.animation = 'obOut 0.3s ease forwards';
-            setTimeout(() => { ov.remove(); resolve(); }, 300);
-        }
-
-        ov.appendChild(sheet);
-        document.body.appendChild(ov);
-
-        // Стили анимации
-        if (!document.getElementById('ob-styles')) {
-            const style = document.createElement('style');
-            style.id = 'ob-styles';
-            style.textContent = `
-                @keyframes obIn  { from{opacity:0} to{opacity:1} }
-                @keyframes obOut { from{opacity:1} to{opacity:0} }
-            `;
-            document.head.appendChild(style);
-        }
-
-        renderStep();
-    });
-}
-
-function _showPushBanner() {
-    // Теперь разрешения запрашиваются через showOnboarding() при первом запуске
-    // Этот баннер показывается только если онбординг уже был пройден и разрешение ещё не дано
-    if (localStorage.getItem('wc_onboarding_done') && !localStorage.getItem('wc_push_dismissed')) {
-        if (_pushBannerShown) return;
-        _pushBannerShown = true;
-
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-        const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-
-        setTimeout(() => {
-            const b = document.createElement('div');
-            b.id = 'push-banner';
-            b.style.cssText = 'position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+70px),82px);left:12px;right:12px;z-index:9998;background:var(--surface);border:1px solid rgba(16,185,129,0.25);border-radius:18px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,0.55)';
-
-            if (isIOS && !isPWA) {
-                b.innerHTML = '<div style="font-size:22px;flex-shrink:0">🔔</div>'
-                    +'<div style="flex:1;min-width:0">'
-                    +'<div style="font-size:13px;font-weight:700;margin-bottom:3px">Уведомления на iPhone</div>'
-                    +'<div style="font-size:11px;color:var(--text-2);line-height:1.5">Нажмите <b style="color:var(--text)">«Поделиться ⬆»</b> → <b style="color:var(--text)">«На экран Домой»</b></div>'
-                    +'</div>'
-                    +'<button id="push-no" style="background:none;border:none;color:var(--text-2);font-size:18px;cursor:pointer;flex-shrink:0;padding:4px">✕</button>';
-            } else {
-                b.innerHTML = '<div style="font-size:26px;flex-shrink:0">🔔</div>'
-                    +'<div style="flex:1;min-width:0">'
-                    +'<div style="font-size:14px;font-weight:700;margin-bottom:2px">Уведомления о сообщениях</div>'
-                    +'<div style="font-size:12px;color:var(--text-2);line-height:1.4">Получайте сообщения даже когда приложение закрыто</div>'
-                    +'</div>'
-                    +'<div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">'
-                    +'<button id="push-yes" style="padding:8px 16px;background:var(--accent);border:none;border-radius:10px;color:#000;font:700 13px/1 -apple-system,sans-serif;cursor:pointer">Включить</button>'
-                    +'<button id="push-no" style="padding:6px 10px;background:none;border:none;color:var(--text-2);font:500 12px/1 -apple-system,sans-serif;cursor:pointer">Не сейчас</button>'
-                    +'</div>';
-            }
-
-            document.body.appendChild(b);
-
-            const yesBtn = b.querySelector('#push-yes');
-            if (yesBtn) {
-                yesBtn.onclick = async () => {
-                    b.remove();
-                    try {
-                        const perm = await Notification.requestPermission();
-                        notifPermission = perm === 'granted';
-                        if (perm === 'granted') {
-                            if ('PushManager' in window) await _subscribeToPush();
-                            _updateNotifToggle(true);
-                            showToast('Уведомления включены 🔔', 'success');
-                        } else {
-                            showToast('Уведомления заблокированы — разрешите в настройках', 'warning', 4000);
-                        }
-                    } catch(e){}
-                };
-            }
-            b.querySelector('#push-no').onclick = () => {
-                b.remove();
-                localStorage.setItem('wc_push_dismissed', '1');
+                } catch(e){}
             };
-        }, 2500);
-    }
+        }
+        b.querySelector('#push-no').onclick = () => {
+            b.remove();
+            localStorage.setItem('wc_push_dismissed', '1');
+        };
+    }, 2500);
 }
 
 async function _subscribeToPush() {
