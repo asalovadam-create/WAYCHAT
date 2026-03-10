@@ -182,7 +182,7 @@ app.config.update(
         'connect_args':   {'connect_timeout': 10},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
-    MAX_CONTENT_LENGTH       = 50 * 1024 * 1024,   # 50MB — нужно для видео-моментов
+    MAX_CONTENT_LENGTH       = 20 * 1024 * 1024,   # 20MB защита от перегрузки
     SESSION_COOKIE_SAMESITE  = 'Lax',
     SESSION_COOKIE_SECURE    = True,    # HTTPS Render
     SESSION_COOKIE_HTTPONLY  = True,
@@ -239,35 +239,10 @@ def upload_to_cloudinary(file_obj, folder='waychat'):
         if hasattr(file_obj, 'seek'):
             file_obj.seek(0)
 
-        is_video = hasattr(file_obj, 'content_type') and (
-            file_obj.content_type or ''
-        ).startswith('video')
-        # Для обычных File-like объектов пробуем угадать по имени
-        if not is_video and hasattr(file_obj, 'filename'):
-            is_video = any(file_obj.filename.lower().endswith(ext)
-                           for ext in ('.mp4','.mov','.avi','.webm','.mkv','.m4v'))
-
-        upload_opts = {
-            'folder':        folder,
-            'resource_type': 'auto',
-        }
-        if is_video:
-            # Ограничиваем качество: 720p, H.264, аудио 128kbps — Cloudinary сам перекодирует
-            upload_opts['eager'] = [
-                {'quality': 'auto:low', 'width': 720, 'crop': 'limit',
-                 'video_codec': 'h264', 'audio_codec': 'aac', 'audio_frequency': 44100}
-            ]
-            upload_opts['eager_async']    = True
-            upload_opts['quality']        = 'auto:low'
-            upload_opts['fetch_format']   = 'mp4'
-            upload_opts['transformation'] = [
-                {'width': 720, 'crop': 'limit'},
-                {'quality': 'auto:low'},
-            ]
-
         result = cloudinary.uploader.upload(
             file_obj,
-            **upload_opts,
+            folder        = folder,
+            resource_type = 'auto',
         )
         url = result.get('secure_url')
         print(f'Cloudinary OK: {url}')
@@ -523,6 +498,7 @@ class Message(db.Model):
     file_url    = db.Column(db.String(300))
     is_read     = db.Column(db.Boolean,     default=False, index=True)
     is_deleted  = db.Column(db.Boolean,     default=False, index=True)
+    hidden_for  = db.Column(db.Text,        default='')    # JSON-список user_id — скрыто только у них
     timestamp   = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
 
     __table_args__ = (
@@ -531,6 +507,7 @@ class Message(db.Model):
     )
 
     def to_dict(self):
+        # Реакции — батч загружаем когда нужно (не здесь — слишком медленно при >100 сообщений)
         return {
             'id':            self.id,
             'chat_id':       self.chat_id,
@@ -541,6 +518,7 @@ class Message(db.Model):
             'content':       self.content,
             'file_url':      self.file_url,
             'is_read':       self.is_read,
+            'hidden_for':    self.hidden_for or '',
             'timestamp':     to_moscow_str(self.timestamp),
             'raw_timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else '',
         }
@@ -1455,7 +1433,45 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in reversed(msgs)])
+
+    if not msgs:
+        return jsonify([])
+
+    # Батч-запрос реакций для всех сообщений за 1 SQL
+    msg_ids = [m.id for m in msgs]
+    reactions_rows = db.session.execute(text('''
+        SELECT msg_id, emoji, user_id FROM message_reaction
+        WHERE msg_id = ANY(:ids)
+        ORDER BY msg_id, id
+    '''), {'ids': msg_ids}).fetchall()
+
+    # Группируем: {msg_id: {emoji: {count, mine}}}
+    react_map = {}
+    for r in reactions_rows:
+        if r.msg_id not in react_map:
+            react_map[r.msg_id] = {}
+        em = r.emoji
+        if em not in react_map[r.msg_id]:
+            react_map[r.msg_id][em] = {'count': 0, 'mine': False}
+        react_map[r.msg_id][em]['count'] += 1
+        if r.user_id == uid:
+            react_map[r.msg_id][em]['mine'] = True
+
+    result = []
+    for m in reversed(msgs):
+        d = m.to_dict()
+        # Скрытые — фильтруем на сервере
+        hf = d.get('hidden_for') or ''
+        try:
+            hidden_ids = json.loads(hf) if hf else []
+        except Exception:
+            hidden_ids = []
+        if uid in hidden_ids:
+            continue
+        d['reactions'] = react_map.get(m.id, {})
+        result.append(d)
+
+    return jsonify(result)
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -2275,13 +2291,13 @@ def handle_reaction(data):
 
 @socketio.on('delete_message')
 def handle_delete_message(data):
+    """Удалить у всех (только отправитель)"""
     if not current_user.is_authenticated:
         return
     msg_id  = data.get('msg_id')
     chat_id = data.get('chat_id')
     if not msg_id or not chat_id:
         return
-
     try:
         uid = current_user.id
     except Exception:
@@ -2289,14 +2305,14 @@ def handle_delete_message(data):
 
     msg = db.session.get(Message, msg_id)
     if not msg or msg.sender_id != uid:
-        return
+        return  # только автор может удалить у всех
 
     msg.is_deleted = True
     msg.content    = None
     db.session.commit()
     _chat_cache.invalidate_prefix(str(chat_id))
 
-    del_payload = {'msg_id': msg_id, 'chat_id': chat_id}
+    del_payload = {'msg_id': msg_id, 'chat_id': chat_id, 'mode': 'all'}
     chat = db.session.get(Chat, chat_id)
     if chat:
         if chat.room_key.startswith('group_'):
@@ -2306,6 +2322,39 @@ def handle_delete_message(data):
             for uid_str in parts:
                 if uid_str.isdigit():
                     emit('message_deleted', del_payload, room=f'user_{uid_str}')
+
+
+@socketio.on('delete_message_for_me')
+def handle_delete_for_me(data):
+    """Удалить только у себя — скрываем через hidden_for"""
+    if not current_user.is_authenticated:
+        return
+    msg_id  = data.get('msg_id')
+    chat_id = data.get('chat_id')
+    if not msg_id or not chat_id:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+
+    msg = db.session.get(Message, msg_id)
+    if not msg or msg.chat_id != chat_id:
+        return
+
+    # Добавляем uid в список hidden_for
+    try:
+        hidden = json.loads(msg.hidden_for or '[]')
+    except Exception:
+        hidden = []
+    if uid not in hidden:
+        hidden.append(uid)
+    msg.hidden_for = json.dumps(hidden)
+    db.session.commit()
+    _chat_cache.delete(uid)
+
+    # Уведомляем только этого пользователя
+    emit('message_deleted', {'msg_id': msg_id, 'chat_id': chat_id, 'mode': 'me'}, room=f'user_{uid}')
 
 
 def _get_partner_id_sio(chat_id):
@@ -2428,23 +2477,19 @@ def handle_end_call(data):
         uname = current_user.name
     except Exception:
         return
-
-    duration  = int(data.get('duration') or 0)
+    # Если duration=0 — звонящий сбросил до ответа → сохраняем пропущенный
+    duration  = int(data.get('duration', 0))
     chat_id   = data.get('chat_id')
     call_type = data.get('call_type', 'audio')
-    msg_type  = 'call_video' if call_type == 'video' else 'call_audio'
-
-    # duration == 0 → пропущенный звонок (никто не взял трубку)
     if duration == 0 and chat_id:
         try:
+            msg_type = 'call_video' if call_type == 'video' else 'call_audio'
             missed = Message(
                 chat_id=chat_id, sender_id=uid, sender_name=uname,
                 type=msg_type, content='missed',
             )
             db.session.add(missed)
             db.session.commit()
-            _chat_cache.delete(uid)
-            _chat_cache.delete(int(to))
             payload = missed.to_dict()
             payload['chat_id'] = chat_id
             emit('new_message', payload, room=f'user_{to}')
@@ -2452,7 +2497,6 @@ def handle_end_call(data):
         except Exception as e:
             app.logger.error(f'missed call msg error: {e}')
             db.session.rollback()
-
     emit('call_ended', {'from': uid}, room=f'user_{to}')
 
 # ══════════════════════════════════════════════════════════
