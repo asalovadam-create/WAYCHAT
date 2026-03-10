@@ -306,14 +306,13 @@ const THEMES = {
 function initSocket() {
     socket = io({
         path: '/socket.io',
-        transports: ['websocket'],      // только WS — убираем polling, он медленнее
-        upgrade: false,
+        transports: ['websocket', 'polling'],
         reconnection: true,
-        reconnectionDelay: 500,         // было 1000
-        reconnectionDelayMax: 4000,     // было 10000
-        randomizationFactor: 0.3,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 10000,
+        randomizationFactor: 0.5,      // разброс ±50% — нет шторма при 5k реконнектов
         reconnectionAttempts: Infinity,
-        timeout: 8000,                  // было 20000
+        timeout: 20000,
         forceNew: false,
         withCredentials: true
     });
@@ -1232,16 +1231,18 @@ let _chatsLoading = false;
 
 async function loadChats(force = false) {
     const now = Date.now();
+    // Не перезагружаем чаще чем раз в 8 секунд (если не форс)
     if (!force && _chatsLoading) return;
-    // Сразу рисуем из памяти — нулевая задержка для пользователя
-    if (recentChats.length) renderChatList(recentChats);
-    // Не ходим на сервер чаще чем раз в 3 сек (было 8 сек)
-    if (!force && recentChats.length && (now - _lastChatsLoad) < 3000) return;
+    if (!force && recentChats.length && (now - _lastChatsLoad) < 8000) {
+        renderChatList(recentChats);
+        return;
+    }
     _chatsLoading = true;
+    showChatSkeleton(); // Показываем skeleton пока грузятся чаты
     try {
         const res = await fetch('/get_my_chats', {
             credentials: 'include',
-            headers: { 'Accept-Encoding': 'gzip, deflate' }
+            headers: {'Accept-Encoding': 'gzip, deflate'}
         });
         if (!res || !res.ok) return;
         const chats = await res.json();
@@ -1249,9 +1250,10 @@ async function loadChats(force = false) {
         _lastChatsLoad = Date.now();
         renderChatList(chats);
         updatePageTitle();
-        chats.slice(0, 8).forEach(c => {
+        // Prefetch аватарки первых 5 чатов в фоне
+        chats.slice(0, 5).forEach(c => {
             if (c.partner_avatar && !c.partner_avatar.includes('default') && !c.partner_avatar.startsWith('emoji:')) {
-                AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
+                if (c.partner_avatar) AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
                     .then(src => { chatPartnerAvatarSrc[c.partner_id] = src; });
             }
         });
@@ -1611,7 +1613,7 @@ function updatePartnerOnlineStatus(userId, isOnline) {
 async function apiFetch(url, options = {}, _retry = 0) {
     const headers = { ...(options.headers || {}) };
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 6000); // было 15000
+    const tid = setTimeout(() => controller.abort(), 15000); // 15s таймаут
     try {
         const res = await fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal });
         clearTimeout(tid);
@@ -1619,8 +1621,9 @@ async function apiFetch(url, options = {}, _retry = 0) {
             location.href = '/login';
             return null;
         }
+        // Авто-retry при 503 (сервер перегружен) — 1 раз
         if (res.status === 503 && _retry === 0 && options.method !== 'POST') {
-            await new Promise(r => setTimeout(r, 600)); // было 1500
+            await new Promise(r => setTimeout(r, 1500));
             return apiFetch(url, options, 1);
         }
         return res;
@@ -2015,44 +2018,31 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
-        const isMissed  = !msg.content || msg.content === 'missed' || msg.content === '0' || msg.content === 'null';
-        const isVideo   = type === 'call_video';
-        const isMine    = +msg.sender_id === currentUser.id;
-        const dur       = (!isMissed && !isNaN(+msg.content)) ? +msg.content : 0;
-        const durStr    = dur > 0 ? ' · ' + fmtSec(dur) : '';
-
-        // Цвет и иконка
-        const color = isMissed ? '#ff453a' : 'var(--accent,#10b981)';
-        const phoneIcon = isMissed
-            ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45c1.12.4 2.33.61 3.53.61.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C9.24 21 3 14.76 3 7c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.6 3.54a2 2 0 01-.45 2.11L7.2 12.3" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
-                 <line x1="1" y1="1" x2="23" y2="23" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
-               </svg>`
-            : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                 <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45c1.1.4 2.3.6 3.54.6.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C9.24 21 3 14.76 3 7c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.6 3.54a2 2 0 01-.45 2.11L7.2 12.3" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-               </svg>`;
-
-        const label = isMissed
-            ? (isMine ? 'Нет ответа' : 'Пропущенный звонок')
-            : (isVideo ? `Видеозвонок${durStr}` : `Звонок${durStr}`);
-
-        // Кнопка «Перезвонить» — только если пропущенный и звонили мне (я не отправитель)
+        const isMissed = !msg.content || msg.content === 'missed' || msg.content === '0' || msg.content === 'null';
+        const isVideo  = type === 'call_video';
+        const isMine   = +msg.sender_id === +currentUser.id;
+        const dur      = (!isMissed && !isNaN(+msg.content) && +msg.content > 0) ? +msg.content : 0;
+        const durStr   = dur > 0 ? fmtSec(dur) : '';
+        const label    = isMissed ? (isMine ? 'Нет ответа' : 'Пропущенный') : (isVideo ? 'Видеозвонок' : 'Звонок');
+        const aColor   = isMissed ? '#ff453a' : (isMe ? 'rgba(255,255,255,0.9)' : 'var(--accent,#10b981)');
+        const bgClr    = isMissed ? 'rgba(255,69,58,0.12)' : 'rgba(16,185,129,0.1)';
+        const bdClr    = isMissed ? 'rgba(255,69,58,0.22)' : 'rgba(16,185,129,0.2)';
+        const icoBg    = isMissed ? 'rgba(255,69,58,0.15)' : 'rgba(16,185,129,0.15)';
+        const phoneIco = isMissed
+            ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6.83.83 0 01.83.83v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11L7.5 12.87" stroke="${aColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="2" y1="2" x2="22" y2="22" stroke="${aColor}" stroke-width="2" stroke-linecap="round"/></svg>`
+            : isVideo
+            ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 10l4.55-2.27A1 1 0 0121 8.68v6.64a1 1 0 01-1.45.9L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" stroke="${aColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+            : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45 12 12 0 003.54.6.83.83 0 01.83.83V20a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17A.83.83 0 013.83 5.33h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.54 2 2 0 01-.45 2.11" stroke="${aColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
         const callbackBtn = (isMissed && !isMine)
-            ? `<button onclick="startCall('${isVideo?'video':'audio'}')"
-                style="margin-top:7px;display:inline-flex;align-items:center;gap:5px;
-                       padding:5px 13px;background:rgba(255,255,255,0.09);border-radius:20px;
-                       border:none;color:var(--accent,#10b981);font-size:12px;font-weight:600;
-                       cursor:pointer;font-family:inherit">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-                  <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45c1.1.4 2.3.6 3.54.6.55 0 1 .45 1 1V20c0 .55-.45 1-1 1C9.24 21 3 14.76 3 7c0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.6 3.54a2 2 0 01-.45 2.11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-                </svg>Перезвонить
-              </button>`
+            ? `<button onclick="startCall('${isVideo?'video':'audio'}')" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(16,185,129,0.13);border:1px solid rgba(16,185,129,0.28);border-radius:20px;color:var(--accent,#10b981);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45 12 12 0 003.54.6.83.83 0 01.83.83V20a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17A.83.83 0 013.83 5.33h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.54 2 2 0 01-.45 2.11" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>Перезвонить</button>`
             : '';
-
-        contentHtml = `<div style="display:flex;flex-direction:column;gap:0">
-            <div style="display:inline-flex;align-items:center;gap:7px">
-                ${phoneIcon}
-                <span style="font-size:14px;font-weight:600;color:${color}">${label}</span>
+        contentHtml = `<div style="display:inline-flex;flex-direction:column;background:${bgClr};border:1px solid ${bdClr};border-radius:16px;padding:10px 14px;min-width:160px;max-width:230px">
+            <div style="display:flex;align-items:center;gap:9px">
+                <div style="width:34px;height:34px;border-radius:50%;flex-shrink:0;background:${icoBg};display:flex;align-items:center;justify-content:center">${phoneIco}</div>
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:14px;font-weight:700;color:${aColor};line-height:1.2">${label}</div>
+                    ${durStr ? `<div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-top:2px;display:flex;align-items:center;gap:3px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.35)" stroke-width="2"/><path d="M12 6v6l4 2" stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-linecap="round"/></svg>${durStr}</div>` : ''}
+                </div>
             </div>
             ${callbackBtn}
         </div>`;
@@ -4287,42 +4277,147 @@ async function _requestMeGeo(btn, geoTag) {
     }
 }
 
+// ── Сжатие видео перед загрузкой: рисуем кадры в canvas, собираем в MediaRecorder ──
+async function _compressVideo(file, maxMB = 15) {
+    if (file.size <= maxMB * 1024 * 1024) return file; // уже маленький — не сжимаем
+    return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.src = URL.createObjectURL(file);
+
+        video.onloadedmetadata = () => {
+            // Масштабируем до 720p максимум
+            const MAX_W = 720, MAX_H = 1280;
+            let w = video.videoWidth, h = video.videoHeight;
+            if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
+            if (h > MAX_H) { w = Math.round(w * MAX_H / h); h = MAX_H; }
+
+            const canvas  = document.createElement('canvas');
+            canvas.width  = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+
+            // Подбираем bitrate чтобы уложиться в ~15MB на 60 сек
+            const duration  = video.duration || 30;
+            const targetBps = Math.min(1_200_000, Math.floor((maxMB * 8_000_000) / duration));
+
+            const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+                ? 'video/webm;codecs=vp9,opus'
+                : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+                ? 'video/webm;codecs=vp8,opus'
+                : 'video/webm';
+
+            const chunks = [];
+            let stream, recorder;
+            try {
+                stream   = canvas.captureStream(24); // 24fps
+                recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: targetBps });
+            } catch(e) {
+                console.warn('MediaRecorder not supported, uploading original');
+                URL.revokeObjectURL(video.src);
+                resolve(file);
+                return;
+            }
+
+            recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+            recorder.onstop = () => {
+                URL.revokeObjectURL(video.src);
+                const blob = new Blob(chunks, { type: mimeType });
+                const ext  = mimeType.includes('mp4') ? 'mp4' : 'webm';
+                const compressed = new File([blob], `moment.${ext}`, { type: mimeType });
+                console.log(`Video compressed: ${(file.size/1e6).toFixed(1)}MB → ${(compressed.size/1e6).toFixed(1)}MB`);
+                resolve(compressed);
+            };
+
+            recorder.start(100); // порции по 100мс
+            video.currentTime = 0;
+            video.play();
+            video.ontimeupdate = () => {
+                ctx.drawImage(video, 0, 0, w, h);
+            };
+            video.onended = () => {
+                recorder.stop();
+                stream.getTracks().forEach(t => t.stop());
+            };
+            // Страховка — стоп через (длительность + 5 сек)
+            setTimeout(() => {
+                if (recorder.state !== 'inactive') {
+                    recorder.stop();
+                    stream.getTracks().forEach(t => t.stop());
+                }
+            }, (duration + 5) * 1000);
+        };
+
+        video.onerror = () => { resolve(file); }; // ошибка — грузим оригинал
+    });
+}
+
 async function _publishMomentEditor(ov, file, url) {
     const sBtn = document.getElementById('me-share');
-    if(sBtn){
-        sBtn.disabled=true;
-        sBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> Публикую...';
-    }
-    const caption = (document.getElementById('me-cap')?.value||'').trim();
-    showToast('Загрузка медиа...','info',120000);
+    const _setLoading = (txt) => {
+        if (!sBtn) return;
+        sBtn.disabled = true;
+        sBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite;flex-shrink:0"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> ${txt}`;
+    };
+    const caption = (document.getElementById('me-cap')?.value || '').trim();
+    const isVid   = file.type.startsWith('video');
+
     try {
+        let uploadFile = file;
+
+        if (isVid) {
+            const sizeMB = file.size / 1024 / 1024;
+            if (sizeMB > 15) {
+                _setLoading(`Сжимаю видео...`);
+                showToast(`Видео ${sizeMB.toFixed(0)}МБ — сжимаю...`, 'info', 30000);
+                uploadFile = await _compressVideo(file, 15);
+                // Если всё ещё слишком большое — пробуем ещё раз агрессивнее
+                if (uploadFile.size > 18 * 1024 * 1024) {
+                    uploadFile = await _compressVideo(uploadFile, 10);
+                }
+            }
+        }
+
+        _setLoading('Публикую...');
+        showToast('Загрузка...', 'info', 120000);
+
         const fd = new FormData();
-        fd.append('file', file);
-        if(caption) fd.append('text', caption);
-        if(_meGeo){ fd.append('geo_name',_meGeo.name); fd.append('geo_lat',_meGeo.lat); fd.append('geo_lng',_meGeo.lng); }
-        // Используем прямой fetch БЕЗ таймаута — видео может грузиться долго
+        fd.append('file', uploadFile);
+        if (caption) fd.append('text', caption);
+        if (_meGeo) {
+            fd.append('geo_name', _meGeo.name);
+            fd.append('geo_lat',  _meGeo.lat);
+            fd.append('geo_lng',  _meGeo.lng);
+        }
+
         const r = await fetch('/create_moment', {
             method: 'POST',
             body: fd,
             credentials: 'include'
         });
-        if(!r || !r.ok) {
+
+        if (!r || !r.ok) {
             const errText = r ? await r.text() : 'no response';
             console.error('create_moment error:', r?.status, errText);
-            throw new Error('server error ' + r?.status);
+            throw new Error('Ошибка сервера ' + (r?.status || ''));
         }
         const data = await r.json();
-        if(!data.success) throw new Error(data.error || 'failed');
-        ov.remove(); URL.revokeObjectURL(url);
-        _meFile=null; _meGeo=null;
-        momentsCache=null; loadMoments();
-        showToast('Момент опубликован! 🎉','success');
-    } catch(e){
+        if (!data.success) throw new Error(data.error || 'Ошибка публикации');
+
+        ov.remove();
+        URL.revokeObjectURL(url);
+        _meFile = null; _meGeo = null;
+        momentsCache = null;
+        loadMoments();
+        showToast('Момент опубликован! 🎉', 'success');
+
+    } catch(e) {
         console.error('publish moment error:', e);
-        showToast('Ошибка загрузки: ' + (e.message||''),'error', 5000);
-        if(sBtn){
-            sBtn.disabled=false;
-            sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        showToast('Ошибка: ' + (e.message || 'попробуй ещё раз'), 'error', 5000);
+        if (sBtn) {
+            sBtn.disabled = false;
+            sBtn.innerHTML = 'Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         }
     }
 }
@@ -5652,17 +5747,29 @@ function endCall(notify = true) {
 
     // Отправляем сообщение о звонке в чат
     const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
-    if (currentChatId && currentPartnerId && duration > 0) {
-        const callMsgType = currentCallType === 'video' ? 'call_video' : 'call_audio';
-        socket.emit('send_message', {
-            chat_id:   currentChatId,
-            type_msg:  callMsgType,
-            content:   String(duration),
-            sender_id: currentUser.id,
-        });
+    const _callType = currentCallType === 'video' ? 'call_video' : 'call_audio';
+
+    if (currentChatId && currentPartnerId) {
+        if (duration > 0) {
+            // Состоявшийся звонок — отправляем с длительностью
+            socket.emit('send_message', {
+                chat_id:   currentChatId,
+                type_msg:  _callType,
+                content:   String(duration),
+                sender_id: currentUser.id,
+            });
+        }
+        // Пропущенный (duration=0) — сервер сам создаст missed сообщение в end_call
     }
 
-    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId });
+    if (notify && currentPartnerId) {
+        socket.emit('end_call', {
+            to:        currentPartnerId,
+            duration:  duration,
+            chat_id:   currentChatId,
+            call_type: currentCallType || 'audio',
+        });
+    }
     if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
     if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
     // Очищаем remote audio
