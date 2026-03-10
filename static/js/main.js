@@ -368,16 +368,14 @@ function initSocket() {
 
     socket.on('message_deleted', (d) => {
         const row = document.querySelector(`[data-msg-id="${d.msg_id}"]`);
-        if (row) {
-            row.style.transition = 'opacity 0.3s, transform 0.3s';
-            row.style.opacity = '0';
-            row.style.transform = 'scale(0.95)';
-            setTimeout(() => row.remove(), 300);
-        }
-        // Удаляем из кэша
-        if (messagesByChatCache[d.chat_id]) {
-            messagesByChatCache[d.chat_id].messages = messagesByChatCache[d.chat_id].messages.filter(m => m.id !== d.msg_id);
-        }
+        _animDeleteRow(row);
+        // Удаляем из всех кешей
+        const keys = Object.keys(messagesByChatCache);
+        keys.forEach(k => {
+            if (messagesByChatCache[k]?.messages) {
+                messagesByChatCache[k].messages = messagesByChatCache[k].messages.filter(m => m.id !== d.msg_id);
+            }
+        });
     });
 
     // Группы
@@ -2018,34 +2016,7 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
-        const isMissed = !msg.content || msg.content === 'missed' || msg.content === '0' || msg.content === 'null';
-        const isVideo  = type === 'call_video';
-        const isMine   = +msg.sender_id === +currentUser.id;
-        const dur      = (!isMissed && !isNaN(+msg.content) && +msg.content > 0) ? +msg.content : 0;
-        const durStr   = dur > 0 ? fmtSec(dur) : '';
-        const label    = isMissed ? (isMine ? 'Нет ответа' : 'Пропущенный') : (isVideo ? 'Видеозвонок' : 'Звонок');
-        const aColor   = isMissed ? '#ff453a' : (isMe ? 'rgba(255,255,255,0.9)' : 'var(--accent,#10b981)');
-        const bgClr    = isMissed ? 'rgba(255,69,58,0.12)' : 'rgba(16,185,129,0.1)';
-        const bdClr    = isMissed ? 'rgba(255,69,58,0.22)' : 'rgba(16,185,129,0.2)';
-        const icoBg    = isMissed ? 'rgba(255,69,58,0.15)' : 'rgba(16,185,129,0.15)';
-        const phoneIco = isMissed
-            ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6.83.83 0 01.83.83v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11L7.5 12.87" stroke="${aColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="2" y1="2" x2="22" y2="22" stroke="${aColor}" stroke-width="2" stroke-linecap="round"/></svg>`
-            : isVideo
-            ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 10l4.55-2.27A1 1 0 0121 8.68v6.64a1 1 0 01-1.45.9L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" stroke="${aColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-            : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45 12 12 0 003.54.6.83.83 0 01.83.83V20a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17A.83.83 0 013.83 5.33h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.54 2 2 0 01-.45 2.11" stroke="${aColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-        const callbackBtn = (isMissed && !isMine)
-            ? `<button onclick="startCall('${isVideo?'video':'audio'}')" style="margin-top:8px;display:inline-flex;align-items:center;gap:6px;padding:6px 14px;background:rgba(16,185,129,0.13);border:1px solid rgba(16,185,129,0.28);border-radius:20px;color:var(--accent,#10b981);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2a2 2 0 012.11-.45 12 12 0 003.54.6.83.83 0 01.83.83V20a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17A.83.83 0 013.83 5.33h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.54 2 2 0 01-.45 2.11" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>Перезвонить</button>`
-            : '';
-        contentHtml = `<div style="display:inline-flex;flex-direction:column;background:${bgClr};border:1px solid ${bdClr};border-radius:16px;padding:10px 14px;min-width:160px;max-width:230px">
-            <div style="display:flex;align-items:center;gap:9px">
-                <div style="width:34px;height:34px;border-radius:50%;flex-shrink:0;background:${icoBg};display:flex;align-items:center;justify-content:center">${phoneIco}</div>
-                <div style="flex:1;min-width:0">
-                    <div style="font-size:14px;font-weight:700;color:${aColor};line-height:1.2">${label}</div>
-                    ${durStr ? `<div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-top:2px;display:flex;align-items:center;gap:3px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.35)" stroke-width="2"/><path d="M12 6v6l4 2" stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-linecap="round"/></svg>${durStr}</div>` : ''}
-                </div>
-            </div>
-            ${callbackBtn}
-        </div>`;
+        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='📷 Фото'"></div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
@@ -2104,6 +2075,25 @@ function buildMessageRow(msg, animate = true) {
             </div>
             <div class="reactions-bar" id="reactions-${msg.id}"></div>
         </div>`;
+
+    // Рендерим реакции из данных сервера (если есть)
+    if (msg.reactions && Object.keys(msg.reactions).length > 0) {
+        // Рендерим после добавления в DOM через микро-задержку
+        setTimeout(() => {
+            const bar = document.getElementById(`reactions-${msg.id}`);
+            if (!bar) return;
+            Object.entries(msg.reactions).forEach(([emoji, info]) => {
+                const chip = document.createElement('div');
+                chip.className = `reaction-chip${info.mine ? ' mine' : ''}`;
+                chip.dataset.emoji = emoji;
+                const span = document.createElement('span'); span.textContent = emoji;
+                const cnt  = document.createElement('span'); cnt.className='rcnt'; cnt.textContent = info.count > 1 ? String(info.count) : '1';
+                chip.appendChild(span); chip.appendChild(cnt);
+                chip.addEventListener('click', () => { activeReactionMsgId = msg.id; sendReaction(emoji); });
+                bar.appendChild(chip);
+            });
+        }, 0);
+    }
 
     return row;
 }
@@ -2166,69 +2156,134 @@ function renderNewMessage(msg, animate = true) {
 //  КОНТЕКСТНОЕ МЕНЮ СООБЩЕНИЯ
 // ══════════════════════════════════════════════════════════
 function showMsgContextMenu(row, msg) {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    // Закрываем предыдущее
+    document.getElementById('msg-ctx-overlay')?.remove();
 
-    const isMe = msg.sender_id === currentUser.id;
-    const text  = msg.content || msg.text || '';
+    const overlay = document.createElement('div');
+    overlay.id = 'msg-ctx-overlay';
+    overlay.className = 'modal-overlay';
+    overlay.style.cssText += ';backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)';
+    overlay.onclick = e => { if (e.target === overlay) _closeCtxMenu(overlay); };
+
+    const isMe   = +msg.sender_id === +currentUser.id;
+    const text   = msg.content || msg.text || '';
     const EMOJIS = ['❤️','😂','😮','😢','👍','🔥','💯','🎉','🥰','😱','👎','🤣'];
 
     const sheet = document.createElement('div');
     sheet.className = 'modal-sheet';
+    sheet.style.cssText += ';transform:translateY(100%);transition:transform 0.32s cubic-bezier(.32,.72,0,1)';
 
+    // ── Ручка ──
     const handle = document.createElement('div');
     handle.className = 'modal-handle';
     sheet.appendChild(handle);
 
-    // Заголовок реакций
+    // ── Превью сообщения ──
+    if (text) {
+        const preview = document.createElement('div');
+        preview.style.cssText = 'margin:0 0 14px;padding:10px 14px;background:var(--surface2);border-radius:14px;font-size:14px;color:var(--text-2);line-height:1.4;max-height:60px;overflow:hidden;position:relative';
+        const previewText = text.length > 80 ? text.slice(0, 80) + '…' : text;
+        preview.textContent = previewText;
+        // Fade снизу если обрезали
+        if (text.length > 80) {
+            const fade = document.createElement('div');
+            fade.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:24px;background:linear-gradient(transparent,var(--surface2))';
+            preview.appendChild(fade);
+        }
+        sheet.appendChild(preview);
+    }
+
+    // ── Реакции ──
     const reactTitle = document.createElement('div');
-    reactTitle.style.cssText = 'font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px';
+    reactTitle.style.cssText = 'font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px';
     reactTitle.textContent = 'Реакция';
     sheet.appendChild(reactTitle);
 
-    // Реакции — grid внутри экрана
     const reactRow = document.createElement('div');
     reactRow.style.cssText = 'display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px';
-    EMOJIS.forEach(e => {
+    EMOJIS.forEach(em => {
         const btn = document.createElement('button');
-        btn.style.cssText = 'font-size:26px;aspect-ratio:1;background:var(--surface2);border:1.5px solid var(--border);border-radius:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .1s';
-        btn.textContent = e;
-        btn.addEventListener('pointerdown', () => { btn.style.transform='scale(1.25)'; });
-        btn.addEventListener('pointerup',   () => { btn.style.transform='scale(1)'; });
+        btn.style.cssText = 'font-size:26px;aspect-ratio:1;background:var(--surface2);border:1.5px solid var(--border);border-radius:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .15s,background .15s';
+        btn.textContent = em;
+        btn.addEventListener('pointerdown', () => { btn.style.transform='scale(1.3)'; btn.style.background='var(--accent-10)'; });
+        btn.addEventListener('pointerup',   () => { btn.style.transform='scale(1)'; btn.style.background=''; });
         btn.addEventListener('click', () => {
             activeReactionMsgId = msg.id;
-            sendReaction(e);
-            overlay.remove();
+            sendReaction(em);
+            _closeCtxMenu(overlay);
         });
         reactRow.appendChild(btn);
     });
     sheet.appendChild(reactRow);
 
-    const sep = document.createElement('div');
-    sep.style.cssText = 'height:1px;background:var(--border);margin:0 0 10px';
-    sheet.appendChild(sep);
+    const sep = () => { const d = document.createElement('div'); d.style.cssText='height:1px;background:var(--border);margin:4px 0 8px'; return d; };
+    sheet.appendChild(sep());
 
+    // ── Копировать ──
     if (text) {
         const copyRow = document.createElement('div');
         copyRow.className = 'settings-row';
         copyRow.style.cssText = 'border-radius:14px;margin-bottom:4px';
-        copyRow.innerHTML = `<div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.copy}</div><span style="font-size:15px;font-weight:500">Копировать</span>`;
-        copyRow.addEventListener('click', () => { copyMessage(text); overlay.remove(); });
+        copyRow.innerHTML = `<div class="settings-icon" style="background:rgba(59,130,246,0.18);color:#60a5fa">${ICONS.copy}</div><span style="font-size:15px;font-weight:500">Копировать</span>`;
+        copyRow.addEventListener('click', () => { copyMessage(text); _closeCtxMenu(overlay); });
         sheet.appendChild(copyRow);
     }
 
+    // ── Удалить у меня ──
+    const delMeRow = document.createElement('div');
+    delMeRow.className = 'settings-row';
+    delMeRow.style.cssText = 'border-radius:14px;margin-bottom:4px';
+    delMeRow.innerHTML = `
+        <div class="settings-icon" style="background:rgba(251,191,36,0.18);color:#fbbf24">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <div style="flex:1">
+            <div style="font-size:15px;font-weight:500;color:#fbbf24">Удалить у меня</div>
+            <div style="font-size:12px;color:var(--text-2);margin-top:1px">Пропадёт только у тебя</div>
+        </div>`;
+    delMeRow.addEventListener('click', () => {
+        _closeCtxMenu(overlay);
+        deleteMessageForMe(msg.id);
+    });
+    sheet.appendChild(delMeRow);
+
+    // ── Удалить у всех (только автор) ──
     if (isMe) {
-        const delRow = document.createElement('div');
-        delRow.className = 'settings-row';
-        delRow.style.cssText = 'border-radius:14px';
-        delRow.innerHTML = `<div class="settings-icon" style="background:rgba(239,68,68,0.2);color:#f87171">${ICONS.trash}</div><span style="font-size:15px;font-weight:500;color:#ef4444">Удалить</span>`;
-        delRow.addEventListener('click', () => { confirmDeleteMessage(msg.id); overlay.remove(); });
-        sheet.appendChild(delRow);
+        sheet.appendChild(sep());
+        const delAllRow = document.createElement('div');
+        delAllRow.className = 'settings-row';
+        delAllRow.style.cssText = 'border-radius:14px';
+        delAllRow.innerHTML = `
+            <div class="settings-icon" style="background:rgba(239,68,68,0.18);color:#f87171">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="flex:1">
+                <div style="font-size:15px;font-weight:500;color:#ef4444">Удалить у всех</div>
+                <div style="font-size:12px;color:var(--text-2);margin-top:1px">Исчезнет у тебя и собеседника</div>
+            </div>`;
+        delAllRow.addEventListener('click', () => {
+            _closeCtxMenu(overlay);
+            _confirmDeleteForAll(msg.id);
+        });
+        sheet.appendChild(delAllRow);
     }
 
     overlay.appendChild(sheet);
     document.body.appendChild(overlay);
+    // Анимация открытия
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => { sheet.style.transform = 'translateY(0)'; });
+    });
+}
+
+function _closeCtxMenu(overlay) {
+    const sheet = overlay?.querySelector('.modal-sheet');
+    if (sheet) {
+        sheet.style.transform = 'translateY(100%)';
+        setTimeout(() => overlay.remove(), 320);
+    } else {
+        overlay?.remove();
+    }
 }
 
 function copyMessage(text) {
@@ -2239,16 +2294,79 @@ function copyMessage(text) {
     showToast('Скопировано', 'success'); vibrate(15);
 }
 
-function confirmDeleteMessage(msgId) {
-    if (!confirm('Удалить это сообщение?')) return;
-    socket.emit('delete_message', { msg_id: msgId, chat_id: currentChatId });
+function _animDeleteRow(row, cb) {
+    if (!row) { cb?.(); return; }
+    row.style.transition = 'opacity 0.25s ease, transform 0.25s ease, max-height 0.3s ease 0.1s, margin 0.3s ease 0.1s, padding 0.3s ease 0.1s';
+    row.style.opacity    = '0';
+    row.style.transform  = 'scale(0.9) translateX(10px)';
+    // После исчезновения — схлопываем высоту
+    setTimeout(() => {
+        row.style.maxHeight = row.offsetHeight + 'px';
+        requestAnimationFrame(() => {
+            row.style.maxHeight  = '0';
+            row.style.marginTop  = '0';
+            row.style.marginBottom = '0';
+            row.style.paddingTop = '0';
+            row.style.paddingBottom = '0';
+            row.style.overflow   = 'hidden';
+        });
+        setTimeout(() => { row.remove(); cb?.(); }, 320);
+    }, 220);
+}
+
+function deleteMessageForMe(msgId) {
     const row = document.querySelector(`[data-msg-id="${msgId}"]`);
-    if (row) {
-        row.style.transition = 'opacity 0.3s, transform 0.3s';
-        row.style.opacity = '0';
-        row.style.transform = 'scale(0.95)';
-        setTimeout(() => row.remove(), 300);
+    _animDeleteRow(row);
+    socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
+    // Удаляем из кеша
+    if (messagesByChatCache[currentChatId]) {
+        messagesByChatCache[currentChatId].messages =
+            messagesByChatCache[currentChatId].messages.filter(m => m.id !== msgId);
     }
+}
+
+function _confirmDeleteForAll(msgId) {
+    // Красивый confirm вместо браузерного alert
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.5);display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)';
+
+    const sheet = document.createElement('div');
+    sheet.style.cssText = 'background:var(--surface,#111);border-radius:28px 28px 0 0;padding:8px 20px calc(env(safe-area-inset-bottom)+28px);width:100%;max-width:480px;border-top:0.5px solid rgba(255,255,255,0.1);transform:translateY(100%);transition:transform 0.3s cubic-bezier(.32,.72,0,1)';
+
+    sheet.innerHTML = `
+        <div style="width:40px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:10px auto 20px"></div>
+        <div style="text-align:center;margin-bottom:20px">
+            <div style="width:52px;height:52px;border-radius:50%;background:rgba(239,68,68,0.15);display:flex;align-items:center;justify-content:center;margin:0 auto 12px">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="font-size:18px;font-weight:800;margin-bottom:6px">Удалить у всех?</div>
+            <div style="font-size:14px;color:rgba(255,255,255,0.5);line-height:1.5">Сообщение исчезнет у тебя<br>и у собеседника навсегда</div>
+        </div>
+        <button id="del-confirm" style="width:100%;padding:16px;background:#ef4444;border:none;border-radius:16px;color:#fff;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px">Удалить у всех</button>
+        <button id="del-cancel" style="width:100%;padding:14px;background:rgba(255,255,255,0.06);border:none;border-radius:16px;color:rgba(255,255,255,0.7);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">Отмена</button>
+    `;
+
+    ov.appendChild(sheet);
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sheet.style.transform = 'translateY(0)'; }));
+
+    const close = () => {
+        sheet.style.transform = 'translateY(100%)';
+        setTimeout(() => ov.remove(), 300);
+    };
+
+    sheet.querySelector('#del-confirm').onclick = () => {
+        close();
+        const row = document.querySelector(`[data-msg-id="${msgId}"]`);
+        _animDeleteRow(row);
+        socket.emit('delete_message', { msg_id: msgId, chat_id: currentChatId });
+        if (messagesByChatCache[currentChatId]) {
+            messagesByChatCache[currentChatId].messages =
+                messagesByChatCache[currentChatId].messages.filter(m => m.id !== msgId);
+        }
+    };
+    sheet.querySelector('#del-cancel').onclick = close;
+    ov.onclick = e => { if (e.target === ov) close(); };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -4277,147 +4395,42 @@ async function _requestMeGeo(btn, geoTag) {
     }
 }
 
-// ── Сжатие видео перед загрузкой: рисуем кадры в canvas, собираем в MediaRecorder ──
-async function _compressVideo(file, maxMB = 15) {
-    if (file.size <= maxMB * 1024 * 1024) return file; // уже маленький — не сжимаем
-    return new Promise((resolve) => {
-        const video = document.createElement('video');
-        video.muted = true;
-        video.playsInline = true;
-        video.src = URL.createObjectURL(file);
-
-        video.onloadedmetadata = () => {
-            // Масштабируем до 720p максимум
-            const MAX_W = 720, MAX_H = 1280;
-            let w = video.videoWidth, h = video.videoHeight;
-            if (w > MAX_W) { h = Math.round(h * MAX_W / w); w = MAX_W; }
-            if (h > MAX_H) { w = Math.round(w * MAX_H / h); h = MAX_H; }
-
-            const canvas  = document.createElement('canvas');
-            canvas.width  = w;
-            canvas.height = h;
-            const ctx = canvas.getContext('2d');
-
-            // Подбираем bitrate чтобы уложиться в ~15MB на 60 сек
-            const duration  = video.duration || 30;
-            const targetBps = Math.min(1_200_000, Math.floor((maxMB * 8_000_000) / duration));
-
-            const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-                ? 'video/webm;codecs=vp9,opus'
-                : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-                ? 'video/webm;codecs=vp8,opus'
-                : 'video/webm';
-
-            const chunks = [];
-            let stream, recorder;
-            try {
-                stream   = canvas.captureStream(24); // 24fps
-                recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: targetBps });
-            } catch(e) {
-                console.warn('MediaRecorder not supported, uploading original');
-                URL.revokeObjectURL(video.src);
-                resolve(file);
-                return;
-            }
-
-            recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-            recorder.onstop = () => {
-                URL.revokeObjectURL(video.src);
-                const blob = new Blob(chunks, { type: mimeType });
-                const ext  = mimeType.includes('mp4') ? 'mp4' : 'webm';
-                const compressed = new File([blob], `moment.${ext}`, { type: mimeType });
-                console.log(`Video compressed: ${(file.size/1e6).toFixed(1)}MB → ${(compressed.size/1e6).toFixed(1)}MB`);
-                resolve(compressed);
-            };
-
-            recorder.start(100); // порции по 100мс
-            video.currentTime = 0;
-            video.play();
-            video.ontimeupdate = () => {
-                ctx.drawImage(video, 0, 0, w, h);
-            };
-            video.onended = () => {
-                recorder.stop();
-                stream.getTracks().forEach(t => t.stop());
-            };
-            // Страховка — стоп через (длительность + 5 сек)
-            setTimeout(() => {
-                if (recorder.state !== 'inactive') {
-                    recorder.stop();
-                    stream.getTracks().forEach(t => t.stop());
-                }
-            }, (duration + 5) * 1000);
-        };
-
-        video.onerror = () => { resolve(file); }; // ошибка — грузим оригинал
-    });
-}
-
 async function _publishMomentEditor(ov, file, url) {
     const sBtn = document.getElementById('me-share');
-    const _setLoading = (txt) => {
-        if (!sBtn) return;
-        sBtn.disabled = true;
-        sBtn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite;flex-shrink:0"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> ${txt}`;
-    };
-    const caption = (document.getElementById('me-cap')?.value || '').trim();
-    const isVid   = file.type.startsWith('video');
-
+    if(sBtn){
+        sBtn.disabled=true;
+        sBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> Публикую...';
+    }
+    const caption = (document.getElementById('me-cap')?.value||'').trim();
+    showToast('Загрузка медиа...','info',120000);
     try {
-        let uploadFile = file;
-
-        if (isVid) {
-            const sizeMB = file.size / 1024 / 1024;
-            if (sizeMB > 15) {
-                _setLoading(`Сжимаю видео...`);
-                showToast(`Видео ${sizeMB.toFixed(0)}МБ — сжимаю...`, 'info', 30000);
-                uploadFile = await _compressVideo(file, 15);
-                // Если всё ещё слишком большое — пробуем ещё раз агрессивнее
-                if (uploadFile.size > 18 * 1024 * 1024) {
-                    uploadFile = await _compressVideo(uploadFile, 10);
-                }
-            }
-        }
-
-        _setLoading('Публикую...');
-        showToast('Загрузка...', 'info', 120000);
-
         const fd = new FormData();
-        fd.append('file', uploadFile);
-        if (caption) fd.append('text', caption);
-        if (_meGeo) {
-            fd.append('geo_name', _meGeo.name);
-            fd.append('geo_lat',  _meGeo.lat);
-            fd.append('geo_lng',  _meGeo.lng);
-        }
-
+        fd.append('file', file);
+        if(caption) fd.append('text', caption);
+        if(_meGeo){ fd.append('geo_name',_meGeo.name); fd.append('geo_lat',_meGeo.lat); fd.append('geo_lng',_meGeo.lng); }
+        // Используем прямой fetch БЕЗ таймаута — видео может грузиться долго
         const r = await fetch('/create_moment', {
             method: 'POST',
             body: fd,
             credentials: 'include'
         });
-
-        if (!r || !r.ok) {
+        if(!r || !r.ok) {
             const errText = r ? await r.text() : 'no response';
             console.error('create_moment error:', r?.status, errText);
-            throw new Error('Ошибка сервера ' + (r?.status || ''));
+            throw new Error('server error ' + r?.status);
         }
         const data = await r.json();
-        if (!data.success) throw new Error(data.error || 'Ошибка публикации');
-
-        ov.remove();
-        URL.revokeObjectURL(url);
-        _meFile = null; _meGeo = null;
-        momentsCache = null;
-        loadMoments();
-        showToast('Момент опубликован! 🎉', 'success');
-
-    } catch(e) {
+        if(!data.success) throw new Error(data.error || 'failed');
+        ov.remove(); URL.revokeObjectURL(url);
+        _meFile=null; _meGeo=null;
+        momentsCache=null; loadMoments();
+        showToast('Момент опубликован! 🎉','success');
+    } catch(e){
         console.error('publish moment error:', e);
-        showToast('Ошибка: ' + (e.message || 'попробуй ещё раз'), 'error', 5000);
-        if (sBtn) {
-            sBtn.disabled = false;
-            sBtn.innerHTML = 'Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        showToast('Ошибка загрузки: ' + (e.message||''),'error', 5000);
+        if(sBtn){
+            sBtn.disabled=false;
+            sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         }
     }
 }
@@ -5747,29 +5760,17 @@ function endCall(notify = true) {
 
     // Отправляем сообщение о звонке в чат
     const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
-    const _callType = currentCallType === 'video' ? 'call_video' : 'call_audio';
-
-    if (currentChatId && currentPartnerId) {
-        if (duration > 0) {
-            // Состоявшийся звонок — отправляем с длительностью
-            socket.emit('send_message', {
-                chat_id:   currentChatId,
-                type_msg:  _callType,
-                content:   String(duration),
-                sender_id: currentUser.id,
-            });
-        }
-        // Пропущенный (duration=0) — сервер сам создаст missed сообщение в end_call
-    }
-
-    if (notify && currentPartnerId) {
-        socket.emit('end_call', {
-            to:        currentPartnerId,
-            duration:  duration,
+    if (currentChatId && currentPartnerId && duration > 0) {
+        const callMsgType = currentCallType === 'video' ? 'call_video' : 'call_audio';
+        socket.emit('send_message', {
             chat_id:   currentChatId,
-            call_type: currentCallType || 'audio',
+            type_msg:  callMsgType,
+            content:   String(duration),
+            sender_id: currentUser.id,
         });
     }
+
+    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId });
     if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
     if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
     // Очищаем remote audio
