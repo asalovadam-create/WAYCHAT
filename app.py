@@ -120,11 +120,11 @@ class TTLCache:
 
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
-_user_dict_cache  = TTLCache(maxsize=3000, ttl=120.0)  # 3k юзеров × 2min
-_chat_cache       = TTLCache(maxsize=8000, ttl=15.0)   # больше чатов
-_online_cache     = TTLCache(maxsize=8000, ttl=8.0)
+_user_dict_cache  = TTLCache(maxsize=3000, ttl=120.0)
+_chat_cache       = TTLCache(maxsize=8000, ttl=5.0)    # было 15 — чаще обновляем список чатов
+_online_cache     = TTLCache(maxsize=8000, ttl=4.0)    # было 8
 _partner_cache    = TTLCache(maxsize=3000, ttl=60.0)
-_moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
+_moments_cache    = TTLCache(maxsize=1,    ttl=20.0)
 
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _ip_rate_limits  = defaultdict(lambda: defaultdict(list))
@@ -175,11 +175,17 @@ app.config.update(
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
         'pool_pre_ping':  True,
-        'pool_recycle':   300,
-        'pool_size':      10,    # 5k+ юзеров
-        'max_overflow':   20,    # пик нагрузки
-        'pool_timeout':   30,
-        'connect_args':   {'connect_timeout': 10},
+        'pool_recycle':   180,          # было 300 — быстрее ротация мёртвых соединений
+        'pool_size':      15,           # было 10
+        'max_overflow':   25,           # было 20
+        'pool_timeout':   8,            # было 30 — быстро падаем если нет свободных
+        'connect_args':   {
+            'connect_timeout':    5,    # было 10
+            'keepalives':         1,
+            'keepalives_idle':    30,
+            'keepalives_interval':10,
+            'keepalives_count':   3,
+        },
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 20 * 1024 * 1024,   # 20MB защита от перегрузки
@@ -199,18 +205,27 @@ db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
+@app.after_request
+def _cache_headers(resp):
+    p = request.path
+    if p.startswith('/static/') and any(p.endswith(x) for x in ('.png','.jpg','.webp','.gif','.ico','.woff','.woff2')):
+        resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    elif p.startswith('/static/') and any(p.endswith(x) for x in ('.js','.css')):
+        resp.headers['Cache-Control'] = 'public, max-age=3600'
+    return resp
+
 socketio = SocketIO(
     app,
     async_mode            = 'eventlet',
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 30,               # мобильные сети — дольше ждём
-    ping_interval         = 25,               # реже пингуем — меньше трафика
-    max_http_buffer_size  = 5 * 1024 * 1024,  # 5MB буфер (было 10)
+    ping_timeout          = 20,               # было 30
+    ping_interval         = 10,               # было 25 — быстрее обнаруживаем живые соединения
+    max_http_buffer_size  = 2 * 1024 * 1024,  # 2MB (было 5MB)
     logger                = False,
     engineio_logger       = False,
-    compression_threshold = 1024,             # gzip пакеты >1KB
+    compression_threshold = 512,              # сжимаем всё от 512 байт (было 1024)
 )
 
 # ══════════════════════════════════════════════════════════
@@ -366,9 +381,10 @@ def _send_web_push(subscription_info, payload_dict):
             'Authorization':    f'vapid t={token},k={pub_b64}',
             'Content-Type':     'application/octet-stream',
             'Content-Encoding': 'aes128gcm',
-            'TTL':              '86400',
+            'TTL':              '60',       # 1 минута — уведомление либо доходит сразу, либо не нужно
+            'Urgency':          'high',     # КЛЮЧЕВОЕ: заставляет FCM/APNs будить устройство немедленно
         }
-        resp = req_lib.post(endpoint, data=body, headers=headers, timeout=10)
+        resp = req_lib.post(endpoint, data=body, headers=headers, timeout=4)  # было 10
         return resp.status_code in (200, 201, 202)
 
     except Exception as e:
@@ -376,7 +392,7 @@ def _send_web_push(subscription_info, payload_dict):
         return False
 
 
-def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra=None):
+def send_push_to_user(user_id, title, body, chat_id=None, icon=None):
     # eventlet.spawn запускает без Flask context — оборачиваем обязательно
     with app.app_context():
         if not PUSH_AVAILABLE:
@@ -392,15 +408,10 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra=None)
             'title':   title,
             'body':    body,
             'icon':    icon or '/static/img/icon-192.png',
-            'badge':   '/static/img/icon-96.png',
-            'tag':     f'call-{user_id}' if (extra and extra.get('type') == 'incoming_call') else f'msg-{chat_id or user_id}',
+            'tag':     f'msg-{chat_id or user_id}',
             'chat_id': chat_id,
             'url':     f'/?open_chat={chat_id}' if chat_id else '/',
-            'requireInteraction': bool(extra and extra.get('type') == 'incoming_call'),
-            'vibrate': [500, 200, 500, 200, 500] if (extra and extra.get('type') == 'incoming_call') else [200],
         }
-        if extra:
-            payload.update(extra)
 
         dead = []
         for sub in subs:
@@ -1308,53 +1319,75 @@ def get_my_chats():
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
     memberships = GroupMember.query.filter_by(user_id=uid).all()
-    for m in memberships:
-        try:
-            group = db.session.get(Group, m.group_id)
-            if not group:
-                continue
-            chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
-            if not chat:
-                continue
+    if memberships:
+        gids = [m.group_id for m in memberships]
 
-            last_msg = Message.query.filter_by(
-                chat_id=chat.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
+        # Батч: все группы + чаты за 1 запрос
+        groups_map = {g.id: g for g in Group.query.filter(Group.id.in_(gids)).all()}
+        chat_ids_g = [g.chat_id for g in groups_map.values() if g.chat_id]
 
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': chat.id, 'uid': uid}
-            ).scalar() or 0
+        # Батч: последние сообщения всех групповых чатов
+        _glast = {}
+        _gunread = {}
+        if chat_ids_g:
+            for r in db.session.execute(text('''
+                SELECT DISTINCT ON (chat_id) chat_id, type, content, timestamp, sender_id, sender_name
+                FROM message WHERE chat_id = ANY(:ids) AND is_deleted=FALSE
+                ORDER BY chat_id, id DESC
+            '''), {'ids': chat_ids_g}).fetchall():
+                _glast[r.chat_id] = r
+            for r in db.session.execute(text('''
+                SELECT chat_id, COUNT(*) as cnt FROM message
+                WHERE chat_id=ANY(:ids) AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE
+                GROUP BY chat_id
+            '''), {'ids': chat_ids_g, 'uid': uid}).fetchall():
+                _gunread[r.chat_id] = r.cnt
 
-            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
-            preview  = '👥 Группа создана'
-            sort_ts  = group.created_at or datetime(2000, 1, 1)
+        # Батч: кол-во участников
+        mcounts = dict(db.session.execute(text(
+            'SELECT group_id, COUNT(*) as cnt FROM group_member WHERE group_id=ANY(:ids) GROUP BY group_id'
+        ), {'ids': gids}).fetchall())
 
-            if last_msg:
-                sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
-                sort_ts = last_msg.timestamp
+        chats_map_g = {}
+        if chat_ids_g:
+            chats_map_g = {c.id: c for c in db.session.execute(
+                text('SELECT id FROM chat WHERE id=ANY(:ids)'), {'ids': chat_ids_g}
+            ).fetchall()}
 
-            member_count = GroupMember.query.filter_by(group_id=group.id).count()
-            result.append({
-                'chat_id':       chat.id,
-                'group_id':      group.id,
-                'partner_id':    group.id,
-                'group_name':    group.name,
-                'partner_name':  group.name,
-                'group_avatar':  group.avatar,
-                'partner_avatar':group.avatar,
-                'member_count':  member_count,
-                'online':        False,
-                'last_message':  preview,
-                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
-                'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count':  unread,
-                'is_group':      True,
-                '_sort':         sort_ts,
-            })
-        except Exception as e:
-            app.logger.error(f'Group chat parse error {m.group_id}: {e}')
+        type_map_g = {'image':'🖼 Фото','audio':'🎙 Голос','video':'📹 Видео',
+                      'call_audio':'📞 Звонок','call_video':'📹 Видеозвонок'}
+
+        for m in memberships:
+            try:
+                group = groups_map.get(m.group_id)
+                if not group or not group.chat_id: continue
+                last  = _glast.get(group.chat_id)
+                unread = _gunread.get(group.chat_id, 0)
+                preview = '👥 Группа создана'
+                sort_ts = group.created_at or datetime(2000, 1, 1)
+                if last:
+                    prefix  = f'{last.sender_name}: ' if last.sender_name else ''
+                    preview = prefix + type_map_g.get(last.type, last.content or '...')
+                    sort_ts = last.timestamp
+                result.append({
+                    'chat_id':       group.chat_id,
+                    'group_id':      group.id,
+                    'partner_id':    group.id,
+                    'group_name':    group.name,
+                    'partner_name':  group.name,
+                    'group_avatar':  group.avatar,
+                    'partner_avatar':group.avatar,
+                    'member_count':  mcounts.get(group.id, 0),
+                    'online':        False,
+                    'last_message':  preview,
+                    'timestamp':     to_moscow_str(last.timestamp if last else None),
+                    'raw_timestamp': last.timestamp.isoformat()+'Z' if last and last.timestamp else '',
+                    'unread_count':  unread,
+                    'is_group':      True,
+                    '_sort':         sort_ts,
+                })
+            except Exception as e:
+                app.logger.error(f'Group chat error {m.group_id}: {e}')
 
     def sort_key(x):
         s = x.get('_sort')
@@ -2366,13 +2399,6 @@ def handle_call(data):
         'call_type':   data.get('call_type', 'audio'),
         'type':        data.get('type', 'audio'),
     }, room=f'user_{to}')
-    # Push-уведомление если получатель офлайн или вкладка закрыта
-    call_type = data.get('call_type', 'audio')
-    push_title = f'📹 Видеозвонок от {uname}' if call_type == 'video' else f'📞 Звонок от {uname}'
-    push_body  = 'Нажми чтобы ответить'
-    eventlet.spawn(send_push_to_user, to, push_title, push_body,
-                   chat_id=data.get('chat_id'), icon=uavat or '/static/img/icon-192.png',
-                   extra={'type': 'incoming_call', 'call_type': call_type, 'from_id': uid, 'from_name': uname})
 
 
 @socketio.on('answer_call')
