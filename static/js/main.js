@@ -1316,6 +1316,10 @@ async function loadChats(force = false) {
         });
         if (!res || !res.ok) return;
         const chats = await res.json();
+        // Не даём вернуть удалённые чаты
+        if (typeof _deletedChatIds !== 'undefined') {
+            chats = chats.filter(ch => !_deletedChatIds.has(ch.chat_id));
+        }
         recentChats = chats;
         _lastChatsLoad = Date.now();
         renderChatList(chats);
@@ -1470,26 +1474,40 @@ function _confirmDeleteChat(chatId, name) {
     btns.appendChild(ca); btns.appendChild(ok);
     sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
 }
+// Чаты, помеченные удалёнными — не возвращаем через loadChats
+const _deletedChatIds = new Set();
+
 async function _doDeleteChat(chatId) {
-    // Оптимистичное удаление — мгновенно убираем из DOM и кеша
+    _deletedChatIds.add(chatId);  // сразу помечаем — loadChats их игнорирует
+
     const container = document.getElementById('chat-list');
-    const el = container?.querySelector(`[data-chat-key]`);
-    // Найдём элемент по chat_id в recentChats
     const chat = recentChats.find(ch => ch.chat_id === chatId);
     if (chat) {
         const key = chat.is_group ? `g_${chat.group_id}` : `p_${chat.partner_id}`;
         const el  = container?.querySelector(`[data-chat-key="${key}"]`);
         if (el) {
-            el.style.transition = 'opacity 0.2s, transform 0.2s, max-height 0.3s';
-            el.style.opacity = '0'; el.style.transform = 'translateX(-30px)';
-            el.style.overflow = 'hidden';
+            // iOS-анимация: fade + slide + collapse
+            el.style.transition = 'opacity 0.22s ease, transform 0.22s ease';
+            el.style.opacity    = '0';
+            el.style.transform  = 'translateX(-32px)';
             const h = el.offsetHeight;
-            el.style.maxHeight = h + 'px';
-            requestAnimationFrame(() => { el.style.maxHeight = '0'; el.style.margin = '0'; el.style.padding = '0'; });
-            setTimeout(() => el.remove(), 300);
+            el.style.overflow   = 'hidden';
+            el.style.maxHeight  = h + 'px';
+            setTimeout(() => {
+                el.style.transition += ', max-height 0.28s ease, margin 0.28s ease';
+                el.style.maxHeight  = '0';
+                el.style.marginTop  = '0';
+                el.style.marginBottom = '0';
+            }, 140);
+            setTimeout(() => el.remove(), 420);
         }
         recentChats = recentChats.filter(ch => ch.chat_id !== chatId);
-        // Закрываем чат если он открыт
+        // Удаляем из localStorage-кеша немедленно
+        try {
+            const cached = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
+            localStorage.setItem('waychat_chats_cache',
+                JSON.stringify(cached.filter(ch => ch.chat_id !== chatId)));
+        } catch(e) {}
         if (currentChatId === chatId) {
             document.getElementById('chat-window')?.classList.remove('active');
             currentChatId = null; currentPartnerId = null;
@@ -1498,8 +1516,12 @@ async function _doDeleteChat(chatId) {
     try {
         await apiFetch('/delete_chat/' + chatId, { method: 'POST' });
         showToast('Чат удалён', 'success');
-        setTimeout(() => loadChats(true), 500); // обновляем с сервера
-    } catch(e) { showToast('Ошибка удаления', 'error'); loadChats(true); }
+        // НЕ вызываем loadChats — иначе чат вернётся до ответа сервера
+    } catch(e) {
+        _deletedChatIds.delete(chatId);
+        showToast('Ошибка удаления', 'error');
+        loadChats(true);
+    }
 }
 
 function _skeletonChatRow(wide = false) {
@@ -1527,6 +1549,11 @@ function showChatSkeleton() {
 function renderChatList(chats) {
     const container = document.getElementById('chat-list');
     if (!container) return;
+
+    // Не рендерим удалённые чаты (защита от возврата при loadChats)
+    if (typeof _deletedChatIds !== 'undefined') {
+        chats = chats.filter(ch => !_deletedChatIds.has(ch.chat_id));
+    }
 
     let totalUnread = 0;
 
@@ -2127,7 +2154,73 @@ function buildMessageRow(msg, animate = true) {
 
     let contentHtml = '';
     if (type === 'call_audio' || type === 'call_video') {
-        contentHtml = `<div class="img-bubble" onclick="openFullImage('${msg.file_url}')"><img src="${msg.file_url}" loading="lazy" onerror="this.parentElement.innerHTML='📷 Фото'"></div>`;
+        const _isMissed = !msg.content || msg.content === 'missed' || msg.content === '0' || +msg.content === 0;
+        const _isVideo  = type === 'call_video';
+        const _isMine   = +msg.sender_id === +currentUser.id;
+        const _dur      = (!_isMissed && msg.content && !isNaN(+msg.content)) ? +msg.content : 0;
+        const _durStr   = _dur > 0 ? fmtSec(_dur) : '';
+
+        // цвет по типу
+        const _clr  = _isMissed ? '#ff453a' : '#30d158';
+        const _bg   = _isMissed ? 'rgba(255,69,58,0.10)' : 'rgba(48,209,88,0.08)';
+        const _brd  = _isMissed ? 'rgba(255,69,58,0.20)' : 'rgba(48,209,88,0.18)';
+        const _ibg  = _isMissed ? 'rgba(255,69,58,0.14)' : 'rgba(48,209,88,0.14)';
+
+        const _label = _isMissed
+            ? (_isMine ? 'Нет ответа' : 'Пропущенный')
+            : (_isVideo ? 'Видеозвонок' : 'Звонок');
+
+        const _ico = _isMissed
+            ? `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6A.83.83 0 0121.83 18v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11z" stroke="${_clr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                 <line x1="2" y1="2" x2="22" y2="22" stroke="${_clr}" stroke-width="2.2" stroke-linecap="round"/>
+               </svg>`
+            : _isVideo
+            ? `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                 <path d="M15 10l4.55-2.27A1 1 0 0121 8.68v6.64a1 1 0 01-1.45.9L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke="${_clr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+               </svg>`
+            : `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+                 <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12 12 0 00.67 2.68 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12 12 0 002.68.67A2 2 0 0122 16.92z" stroke="${_clr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+               </svg>`;
+
+        const _callbackBtn = (_isMissed && !_isMine)
+            ? `<button onclick="startCall('${_isVideo ? 'video' : 'audio'}')" style="
+                margin-top:10px;width:100%;padding:9px 0;
+                background:rgba(48,209,88,0.12);
+                border:1px solid rgba(48,209,88,0.25);
+                border-radius:14px;
+                color:#30d158;font-size:13px;font-weight:700;
+                cursor:pointer;font-family:inherit;
+                display:flex;align-items:center;justify-content:center;gap:6px;
+                -webkit-tap-highlight-color:transparent">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
+                  <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12 12 0 00.67 2.68 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12 12 0 002.68.67A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>Перезвонить
+              </button>`
+            : '';
+
+        contentHtml = `<div style="
+            display:inline-flex;flex-direction:column;
+            background:${_bg};
+            border:1px solid ${_brd};
+            border-radius:18px;
+            padding:12px 14px;
+            min-width:180px;max-width:230px">
+          <div style="display:flex;align-items:center;gap:11px">
+            <div style="width:38px;height:38px;border-radius:50%;background:${_ibg};flex-shrink:0;display:flex;align-items:center;justify-content:center">${_ico}</div>
+            <div style="flex:1;min-width:0">
+              <div style="font-size:14px;font-weight:700;color:${_clr};line-height:1.2">${_label}</div>
+              ${_durStr
+                ? `<div style="margin-top:3px;font-size:12px;color:rgba(255,255,255,0.38);display:flex;align-items:center;gap:4px">
+                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="2"/><path d="M12 7v5l3 2" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round"/></svg>
+                     ${_durStr}
+                   </div>`
+                : `<div style="margin-top:3px;font-size:12px;color:rgba(255,255,255,0.35)">${_isMissed ? 'Не отвечено' : ''}</div>`
+              }
+            </div>
+          </div>
+          ${_callbackBtn}
+        </div>`;
     } else if (type === 'video') {
         contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
     } else if (type === 'audio') {
@@ -2247,91 +2340,269 @@ function renderNewMessage(msg, animate = true) {
 // ══════════════════════════════════════════════════════════
 //  КОНТЕКСТНОЕ МЕНЮ СООБЩЕНИЯ
 // ══════════════════════════════════════════════════════════
+// ── iOS 26: контекстное меню сообщения ──────────────────
 function showMsgContextMenu(row, msg) {
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+    // Убираем предыдущее меню если открыто
+    document.getElementById('_wc_ctx')?.remove();
 
-    const isMe = msg.sender_id === currentUser.id;
-    const text  = msg.content || msg.text || '';
-    const EMOJIS = ['❤️','😂','😮','😢','👍','🔥','💯','🎉','🥰','😱','👎','🤣'];
+    const isMe  = +msg.sender_id === +currentUser.id;
+    const isText = !msg.type || msg.type === 'text';
+    const text   = isText ? (msg.content || msg.text || '') : '';
+    const EMOJIS = ['❤️','😂','😮','😢','👍','🔥','💯','🎉','🥰','😱','👎','🫡'];
 
-    const sheet = document.createElement('div');
-    sheet.className = 'modal-sheet';
+    // ── Overlay (затемнение + blur) ──
+    const ov = document.createElement('div');
+    ov.id = '_wc_ctx';
+    ov.style.cssText = [
+        'position:fixed;inset:0;z-index:9100',
+        'background:rgba(0,0,0,0.52)',
+        'backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)',
+        'display:flex;align-items:flex-end;justify-content:center',
+    ].join(';');
 
-    const handle = document.createElement('div');
-    handle.className = 'modal-handle';
-    sheet.appendChild(handle);
+    // ── Sheet ──
+    const sh = document.createElement('div');
+    sh.style.cssText = [
+        'width:100%;max-width:500px',
+        'background:rgba(22,22,28,0.98)',
+        'border-radius:26px 26px 0 0',
+        'border-top:0.5px solid rgba(255,255,255,0.09)',
+        'overflow:hidden',
+        'padding-bottom:max(env(safe-area-inset-bottom),18px)',
+        'transform:translateY(100%)',
+        'transition:transform 0.3s cubic-bezier(.32,.72,0,1)',
+    ].join(';');
 
-    // Заголовок реакций
-    const reactTitle = document.createElement('div');
-    reactTitle.style.cssText = 'font-size:12px;font-weight:600;color:var(--text-2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px';
-    reactTitle.textContent = 'Реакция';
-    sheet.appendChild(reactTitle);
+    const close = () => {
+        sh.style.transform = 'translateY(100%)';
+        ov.style.opacity   = '0';
+        ov.style.transition = 'opacity 0.26s';
+        setTimeout(() => ov.remove(), 280);
+    };
+    ov.addEventListener('pointerdown', e => { if (e.target === ov) close(); });
 
-    // Реакции — grid внутри экрана
-    const reactRow = document.createElement('div');
-    reactRow.style.cssText = 'display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px';
-    EMOJIS.forEach(e => {
-        const btn = document.createElement('button');
-        btn.style.cssText = 'font-size:26px;aspect-ratio:1;background:var(--surface2);border:1.5px solid var(--border);border-radius:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:transform .1s';
-        btn.textContent = e;
-        btn.addEventListener('pointerdown', () => { btn.style.transform='scale(1.25)'; });
-        btn.addEventListener('pointerup',   () => { btn.style.transform='scale(1)'; });
-        btn.addEventListener('click', () => {
-            activeReactionMsgId = msg.id;
-            sendReaction(e);
-            overlay.remove();
-        });
-        reactRow.appendChild(btn);
-    });
-    sheet.appendChild(reactRow);
+    // ── Ручка ──
+    sh.innerHTML = `<div style="padding:10px 0 2px;display:flex;justify-content:center">
+        <div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.13)"></div>
+    </div>`;
 
-    const sep = document.createElement('div');
-    sep.style.cssText = 'height:1px;background:var(--border);margin:0 0 10px';
-    sheet.appendChild(sep);
-
+    // ── Превью текста ──
     if (text) {
-        const copyRow = document.createElement('div');
-        copyRow.className = 'settings-row';
-        copyRow.style.cssText = 'border-radius:14px;margin-bottom:4px';
-        copyRow.innerHTML = `<div class="settings-icon" style="background:rgba(59,130,246,0.2);color:#60a5fa">${ICONS.copy}</div><span style="font-size:15px;font-weight:500">Копировать</span>`;
-        copyRow.addEventListener('click', () => { copyMessage(text); overlay.remove(); });
-        sheet.appendChild(copyRow);
+        const prev = document.createElement('div');
+        prev.style.cssText = [
+            'margin:6px 14px 10px',
+            'padding:10px 13px',
+            'background:rgba(255,255,255,0.04)',
+            'border:0.5px solid rgba(255,255,255,0.07)',
+            'border-radius:14px',
+            'font-size:13.5px;line-height:1.45',
+            'color:rgba(255,255,255,0.45)',
+            'max-height:52px;overflow:hidden',
+        ].join(';');
+        prev.textContent = text.length > 85 ? text.slice(0,85)+'…' : text;
+        sh.appendChild(prev);
     }
 
+    // ── Реакции — горизонтальная полоса ──
+    const rWrap = document.createElement('div');
+    rWrap.style.cssText = 'display:flex;justify-content:space-around;align-items:center;padding:4px 8px 10px;border-bottom:0.5px solid rgba(255,255,255,0.06)';
+    EMOJIS.slice(0, 8).forEach(em => {
+        const b = document.createElement('button');
+        b.style.cssText = 'font-size:29px;padding:5px 3px;background:none;border:none;cursor:pointer;transition:transform 0.14s;-webkit-tap-highlight-color:transparent';
+        b.textContent = em;
+        b.addEventListener('pointerdown', () => { b.style.transform='scale(1.38) translateY(-5px)'; });
+        b.addEventListener('pointerup',   () => { b.style.transform=''; });
+        b.addEventListener('click', () => {
+            activeReactionMsgId = msg.id;
+            sendReaction(em);
+            close();
+        });
+        rWrap.appendChild(b);
+    });
+    sh.appendChild(rWrap);
+
+    // ── Вспомогательная функция строки действия ──
+    const mkRow = (iconSvg, iconBg, label, labelColor, sublabel, onClick) => {
+        const r = document.createElement('div');
+        r.style.cssText = [
+            'display:flex;align-items:center;gap:13px',
+            'padding:13px 16px',
+            'cursor:pointer',
+            '-webkit-tap-highlight-color:transparent',
+            'transition:background 0.1s',
+        ].join(';');
+        r.innerHTML = `
+            <div style="width:38px;height:38px;border-radius:12px;background:${iconBg};display:flex;align-items:center;justify-content:center;flex-shrink:0">${iconSvg}</div>
+            <div style="flex:1;min-width:0">
+                <div style="font-size:15px;font-weight:600;color:${labelColor};letter-spacing:-0.1px">${label}</div>
+                ${sublabel ? `<div style="font-size:12px;margin-top:2px;color:rgba(255,255,255,0.3)">${sublabel}</div>` : ''}
+            </div>`;
+        r.addEventListener('pointerdown', () => r.style.background='rgba(255,255,255,0.05)');
+        r.addEventListener('pointerup',   () => r.style.background='');
+        r.addEventListener('click', () => { close(); setTimeout(onClick, 55); });
+        return r;
+    };
+
+    const actWrap = document.createElement('div');
+    actWrap.style.cssText = 'padding:6px 0 0';
+
+    // Копировать (только текст)
+    if (text) {
+        actWrap.appendChild(mkRow(
+            `<svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="9" width="13" height="13" rx="2" stroke="#5e9cf5" stroke-width="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="#5e9cf5" stroke-width="2" stroke-linecap="round"/>
+            </svg>`,
+            'rgba(94,156,245,0.14)', 'Копировать', '#5e9cf5', null,
+            () => copyMessage(text)
+        ));
+        // тонкий разделитель
+        const d = document.createElement('div');
+        d.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.06);margin:2px 16px';
+        actWrap.appendChild(d);
+    }
+
+    // Удалить у меня — ВСЕГДА (и своё и чужое)
+    actWrap.appendChild(mkRow(
+        `<svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+          <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#f5a623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10 11v6M14 11v6" stroke="#f5a623" stroke-width="2" stroke-linecap="round"/>
+        </svg>`,
+        'rgba(245,166,35,0.14)', 'Удалить у меня', '#f5a623',
+        'Только ты не увидишь это сообщение',
+        () => _deleteMsgForMe(msg.id)
+    ));
+
+    // Удалить у всех — только автор сообщения
     if (isMe) {
-        const delRow = document.createElement('div');
-        delRow.className = 'settings-row';
-        delRow.style.cssText = 'border-radius:14px';
-        delRow.innerHTML = `<div class="settings-icon" style="background:rgba(239,68,68,0.2);color:#f87171">${ICONS.trash}</div><span style="font-size:15px;font-weight:500;color:#ef4444">Удалить</span>`;
-        delRow.addEventListener('click', () => { confirmDeleteMessage(msg.id); overlay.remove(); });
-        sheet.appendChild(delRow);
+        const d2 = document.createElement('div');
+        d2.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.06);margin:2px 16px';
+        actWrap.appendChild(d2);
+
+        actWrap.appendChild(mkRow(
+            `<svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#ff453a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M10 11v6M14 11v6" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
+            </svg>`,
+            'rgba(255,69,58,0.14)', 'Удалить у всех', '#ff453a',
+            'Исчезнет у всех прямо сейчас',
+            () => _confirmDeleteForAll(msg.id)
+        ));
     }
 
-    overlay.appendChild(sheet);
-    document.body.appendChild(overlay);
+    sh.appendChild(actWrap);
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
 function copyMessage(text) {
     navigator.clipboard?.writeText(text).catch(() => {
-        const el = document.createElement('textarea');
-        el.value = text; document.body.appendChild(el); el.select(); document.execCommand('copy'); el.remove();
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); ta.remove();
     });
     showToast('Скопировано', 'success'); vibrate(15);
 }
 
-function confirmDeleteMessage(msgId) {
-    if (!confirm('Удалить это сообщение?')) return;
-    socket.emit('delete_message', { msg_id: msgId, chat_id: currentChatId });
-    const row = document.querySelector(`[data-msg-id="${msgId}"]`);
-    if (row) {
-        row.style.transition = 'opacity 0.3s, transform 0.3s';
-        row.style.opacity = '0';
-        row.style.transform = 'scale(0.95)';
-        setTimeout(() => row.remove(), 300);
-    }
+// ── Анимация схлопывания строки сообщения ──
+function _animDeleteMsgRow(msgId) {
+    const el = document.querySelector(`[data-msg-id="${msgId}"]`);
+    if (!el) return;
+    el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+    el.style.opacity    = '0';
+    el.style.transform  = 'scale(0.88)';
+    el.style.overflow   = 'hidden';
+    const h = el.offsetHeight;
+    el.style.maxHeight  = h + 'px';
+    setTimeout(() => {
+        el.style.transition += ', max-height 0.28s ease, margin 0.28s ease, padding 0.28s ease';
+        el.style.maxHeight   = '0';
+        el.style.marginTop   = '0'; el.style.marginBottom = '0';
+        el.style.paddingTop  = '0'; el.style.paddingBottom = '0';
+    }, 160);
+    setTimeout(() => el.remove(), 430);
 }
+
+// ── Удалить у меня ──
+function _deleteMsgForMe(msgId) {
+    _animDeleteMsgRow(msgId);
+    socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
+}
+
+// ── Удалить у всех — confirm sheet ──
+function _confirmDeleteForAll(msgId) {
+    const ov = document.createElement('div');
+    ov.style.cssText = [
+        'position:fixed;inset:0;z-index:9200',
+        'background:rgba(0,0,0,0.6)',
+        'backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)',
+        'display:flex;align-items:flex-end;justify-content:center',
+    ].join(';');
+
+    const sh = document.createElement('div');
+    sh.style.cssText = [
+        'width:100%;max-width:500px',
+        'background:rgba(22,22,28,0.98)',
+        'border-radius:26px 26px 0 0',
+        'padding:0 16px max(calc(env(safe-area-inset-bottom)+20px),28px)',
+        'border-top:0.5px solid rgba(255,255,255,0.09)',
+        'transform:translateY(100%)',
+        'transition:transform 0.3s cubic-bezier(.32,.72,0,1)',
+    ].join(';');
+
+    const closeConf = () => {
+        sh.style.transform = 'translateY(100%)';
+        ov.style.opacity   = '0'; ov.style.transition='opacity 0.24s';
+        setTimeout(() => ov.remove(), 260);
+    };
+    ov.addEventListener('pointerdown', e => { if (e.target === ov) closeConf(); });
+
+    sh.innerHTML = `
+        <div style="padding:10px 0 4px;display:flex;justify-content:center">
+            <div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,0.13)"></div>
+        </div>
+        <div style="text-align:center;padding:16px 0 22px">
+            <div style="width:58px;height:58px;border-radius:50%;background:rgba(255,69,58,0.14);display:flex;align-items:center;justify-content:center;margin:0 auto 14px">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
+                  <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#ff453a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M10 11v6M14 11v6" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <div style="font-size:20px;font-weight:800;letter-spacing:-0.3px;margin-bottom:8px">Удалить у всех?</div>
+            <div style="font-size:14px;color:rgba(255,255,255,0.4);line-height:1.55">Сообщение исчезнет у тебя<br>и у собеседника мгновенно</div>
+        </div>
+        <button id="_dfa_ok" style="
+            width:100%;padding:15px;
+            background:#ff453a;border:none;border-radius:16px;
+            color:#fff;font-size:16px;font-weight:800;
+            cursor:pointer;font-family:inherit;margin-bottom:10px;
+            -webkit-tap-highlight-color:transparent">
+            Удалить у всех
+        </button>
+        <button id="_dfa_no" style="
+            width:100%;padding:14px;
+            background:rgba(255,255,255,0.07);border:none;border-radius:16px;
+            color:rgba(255,255,255,0.6);font-size:15px;font-weight:600;
+            cursor:pointer;font-family:inherit;
+            -webkit-tap-highlight-color:transparent">
+            Отмена
+        </button>`;
+
+    sh.querySelector('#_dfa_ok').addEventListener('click', () => {
+        closeConf();
+        _animDeleteMsgRow(msgId);
+        socket.emit('delete_message', { msg_id: msgId, chat_id: currentChatId });
+    });
+    sh.querySelector('#_dfa_no').addEventListener('click', closeConf);
+
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
+}
+
+// Совместимость со старым кодом
+function confirmDeleteMessage(msgId) { _confirmDeleteForAll(msgId); }
 
 // ══════════════════════════════════════════════════════════
 //  АУДИО ПЛЕЕР — с волновой формой
