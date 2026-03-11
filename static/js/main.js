@@ -321,7 +321,8 @@ function initSocket() {
         wsConnected = true;
         updateConnStatus(true);
         socket.emit('join', { user_id: currentUser.id });
-        loadChats();
+        // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
+        if (Date.now() - _lastChatsLoad > 5000) loadChats();
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
         wsReconnected = true;
     });
@@ -505,11 +506,14 @@ async function init() {
 
     // ── 3. Socket + реальные данные в фоне ──
     initSocket();
-    // Загружаем свежие чаты с небольшой задержкой — UI уже показан
-    setTimeout(() => loadChats(true), 80);
-    setTimeout(syncProfileData, 400);
-    setTimeout(_updatePermsSummary, 800);
-    setTimeout(initPushNotifications, 600);
+    // Fallback: если socket не подключится за 2.5с — грузим чаты напрямую
+    // (socket.on('connect') сам вызовет loadChats при успешном подключении)
+    setTimeout(() => {
+        if (!wsConnected && Date.now() - _lastChatsLoad > 2000) loadChats(true);
+    }, 2500);
+    setTimeout(syncProfileData, 500);
+    setTimeout(_updatePermsSummary, 1000);
+    setTimeout(initPushNotifications, 800);
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
@@ -1546,16 +1550,18 @@ function showChatSkeleton() {
         + _skeletonChatRow() + _skeletonChatRow(true) + '</div>';
 }
 
+// Флаг — идёт ли рендер (защита от concurrent вызовов)
+let _renderingChats = false;
+
 function renderChatList(chats) {
+    if (_renderingChats) return; // не рендерим параллельно
     const container = document.getElementById('chat-list');
     if (!container) return;
 
-    // Не рендерим удалённые чаты (защита от возврата при loadChats)
+    // Фильтруем удалённые чаты
     if (typeof _deletedChatIds !== 'undefined') {
         chats = chats.filter(ch => !_deletedChatIds.has(ch.chat_id));
     }
-
-    let totalUnread = 0;
 
     if (!chats.length) {
         container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2">
@@ -1567,97 +1573,81 @@ function renderChatList(chats) {
         return;
     }
 
-    // ── Уникальный ключ: "g_ID" для групп, "p_ID" для личных ──
-    // Это предотвращает коллизию если group_id === partner_id
+    _renderingChats = true;
+
     const makeKey = (chat) => chat.is_group ? `g_${chat.group_id}` : `p_${chat.partner_id}`;
 
+    // Собираем карту уже существующих элементов
     const existingMap = new Map();
     container.querySelectorAll('[data-chat-key]').forEach(el => existingMap.set(el.dataset.chatKey, el));
 
+    // Удаляем исчезнувшие чаты
     const newKeys = new Set(chats.map(makeKey));
-    existingMap.forEach((el, key) => { if (!newKeys.has(key)) { try { container.removeChild(el); } catch(e){} } });
-    container.querySelectorAll('.chat-item-divider').forEach(el => el.remove());
+    existingMap.forEach((el, key) => { if (!newKeys.has(key)) el.remove(); });
+
+    // Строим весь список в DocumentFragment — один reflow
+    const frag = document.createDocumentFragment();
+    let totalUnread = 0;
 
     chats.forEach((chat, index) => {
         totalUnread += chat.unread_count || 0;
-        const isUnread    = (chat.unread_count || 0) > 0;
-        const isGroup     = !!chat.is_group;
-        // ── Используем правильное имя: для группы — group_name, для личного — partner_name ──
-        const partnerId   = isGroup ? chat.group_id   : chat.partner_id;
-        const partnerName = isGroup ? (chat.group_name || 'Группа') : chat.partner_name;
-        const partnerAvatar = isGroup ? (chat.group_avatar || '') : (chat.partner_avatar || '');
-        const displayName = isGroup ? partnerName : getContactDisplayName(partnerId, partnerName);
-        const preview     = chat.last_message || 'Начните переписку';
-        const time        = getMoscowTime(chat.raw_timestamp || chat.timestamp) || chat.timestamp || '';
-        const chatKey     = makeKey(chat);
+        const isUnread     = (chat.unread_count || 0) > 0;
+        const isGroup      = !!chat.is_group;
+        const partnerId    = isGroup ? chat.group_id   : chat.partner_id;
+        const partnerName  = isGroup ? (chat.group_name || 'Группа') : chat.partner_name;
+        const partnerAvatar= isGroup ? (chat.group_avatar || '') : (chat.partner_avatar || '');
+        const displayName  = isGroup ? partnerName : getContactDisplayName(partnerId, partnerName);
+        const preview      = chat.last_message || 'Начните переписку';
+        const time         = getMoscowTime(chat.raw_timestamp || chat.timestamp) || chat.timestamp || '';
+        const chatKey      = makeKey(chat);
 
         let div = existingMap.get(chatKey);
-        if (!div) {
+        const isNew = !div;
+
+        if (isNew) {
             div = document.createElement('div');
             div.className = 'chat-item';
             div.dataset.chatKey   = chatKey;
-            div.dataset.partnerId = partnerId;  // для совместимости
+            div.dataset.partnerId = String(partnerId);
             if (isGroup) div.dataset.isGroup = '1';
 
-            // ── Замыкание через IIFE чтобы onclick не терял значения ──
-            div.onclick = ((_isGroup, _pid, _pname, _pava) => () => {
-                vibrate(8);
-                if (_isGroup) openGroupChat(_pid, _pname, _pava);
-                else          openChat(_pid, _pname, _pava);
-            })(isGroup, partnerId, partnerName, partnerAvatar);
-
-            // ── Long-press: меню чата ──
-            {
-                let _lpt=null, _longFired=false;
-                div.addEventListener('pointerdown', () => {
-                    _longFired=false;
-                    _lpt=setTimeout(()=>{ _longFired=true; vibrate(40); _showChatListMenu(div,isGroup,partnerId,partnerName,chat.chat_id,partnerAvatar); },550);
-                });
-                const _lpc=()=>clearTimeout(_lpt);
-                div.addEventListener('pointerup',    _lpc);
-                div.addEventListener('pointermove',  _lpc);
-                div.addEventListener('pointercancel',_lpc);
-                div.addEventListener('click', e=>{ if(_longFired){ e.stopImmediatePropagation(); _longFired=false; } }, true);
-            }
-
+            // Аватар
             const avaWrap = document.createElement('div');
-            avaWrap.className = 'ava-wrap';
             avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:58px;height:58px';
 
-            // Аватар внутри
             const _ai = document.createElement('div');
             _ai.style.cssText = 'position:absolute;inset:'+(chat.has_moment&&!isGroup?'4px':'0')+';border-radius:50%;overflow:hidden';
             _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
             avaWrap.appendChild(_ai);
 
-            // SVG кольцо если есть моменты
+            // SVG-кольцо моментов
             if (!isGroup && chat.has_moment) {
                 const mc=Math.min(chat.moment_count||1,8);
                 const _ns='http://www.w3.org/2000/svg';
-                const _sv=document.createElementNS(_ns,'svg');
-                _sv.setAttribute('width','58');_sv.setAttribute('height','58');_sv.setAttribute('viewBox','0 0 58 58');
-                _sv.style.cssText='position:absolute;inset:0;pointer-events:none';
+                const sv=document.createElementNS(_ns,'svg');
+                sv.setAttribute('width','58');sv.setAttribute('height','58');sv.setAttribute('viewBox','0 0 58 58');
+                sv.style.cssText='position:absolute;inset:0;pointer-events:none';
                 const _cx=29,_cy=29,_r=27,_gap=mc>1?5:0,_seg=(360-_gap*mc)/mc;
                 for(let i=0;i<mc;i++){
                     const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
                     const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
                     const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
-                    const _p=document.createElementNS(_ns,'path');
-                    _p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-                    _p.setAttribute('stroke','var(--accent)');_p.setAttribute('stroke-width','3.5');
-                    _p.setAttribute('fill','none');_p.setAttribute('stroke-linecap','round');
-                    _sv.appendChild(_p);
+                    const p=document.createElementNS(_ns,'path');
+                    p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+                    p.setAttribute('stroke','var(--accent)');p.setAttribute('stroke-width','3.5');
+                    p.setAttribute('fill','none');p.setAttribute('stroke-linecap','round');
+                    sv.appendChild(p);
                 }
-                avaWrap.appendChild(_sv);
+                avaWrap.appendChild(sv);
             }
 
             if (!isGroup) {
-                const onlineDot = document.createElement('div');
-                onlineDot.className = 'online-dot';
-                onlineDot.style.display = chat.online ? 'block' : 'none';
-                avaWrap.appendChild(onlineDot);
+                const dot = document.createElement('div');
+                dot.className = 'online-dot';
+                dot.dataset.onlineDot = '1';
+                dot.style.display = chat.online ? 'block' : 'none';
+                avaWrap.appendChild(dot);
             } else {
-                // Для группы — маленький бейдж с иконкой группы
                 const badge = document.createElement('div');
                 badge.style.cssText = 'position:absolute;bottom:-1px;right:-1px;width:18px;height:18px;background:#3b82f6;border-radius:50%;border:2px solid #000;display:flex;align-items:center;justify-content:center';
                 badge.innerHTML = `<svg width="9" height="9" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="white" stroke-width="2.5" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="white" stroke-width="2.5"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>`;
@@ -1670,50 +1660,47 @@ function renderChatList(chats) {
 
             div.appendChild(avaWrap);
             div.appendChild(info);
-            container.appendChild(div);
+
+            // Клик
+            div.onclick = ((_g,_pid,_pn,_pa) => () => { vibrate(8); _g ? openGroupChat(_pid,_pn,_pa) : openChat(_pid,_pn,_pa); })(isGroup,partnerId,partnerName,partnerAvatar);
+
+            // Long-press
+            let _lpt=null,_lf=false;
+            div.addEventListener('pointerdown',()=>{_lf=false;_lpt=setTimeout(()=>{_lf=true;vibrate(40);_showChatListMenu(div,isGroup,partnerId,partnerName,chat.chat_id,partnerAvatar);},550);});
+            const _lpc=()=>clearTimeout(_lpt);
+            div.addEventListener('pointerup',_lpc);div.addEventListener('pointermove',_lpc);div.addEventListener('pointercancel',_lpc);
+            div.addEventListener('click',e=>{if(_lf){e.stopImmediatePropagation();_lf=false;}},true);
         } else {
-            // Обновляем onclick при каждом рендере (имя/аватар могли измениться)
-            div.onclick = ((_isGroup, _pid, _pname, _pava) => () => {
-                vibrate(8);
-                if (_isGroup) openGroupChat(_pid, _pname, _pava);
-                else          openChat(_pid, _pname, _pava);
-            })(isGroup, partnerId, partnerName, partnerAvatar);
+            // Обновляем onclick (аватар/имя могли измениться)
+            div.onclick = ((_g,_pid,_pn,_pa) => () => { vibrate(8); _g ? openGroupChat(_pid,_pn,_pa) : openChat(_pid,_pn,_pa); })(isGroup,partnerId,partnerName,partnerAvatar);
+            // Онлайн-точка
+            const dot = div.querySelector('[data-online-dot]');
+            if (dot && !isGroup) dot.style.display = chat.online ? 'block' : 'none';
         }
 
-        if (!isGroup) {
-            const dot = div.querySelector('.online-dot');
-            if (dot) dot.style.display = chat.online ? 'block' : 'none';
-        }
-
+        // Обновляем текстовый контент (info)
         const info = div.querySelector('.chat-info');
         if (info) {
             info.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
-                    <span style="font-weight:${isUnread?'700':'600'};font-size:16px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${displayName}</span>
+                    <span style="font-weight:${isUnread?'700':'600'};font-size:16px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${escHtml(displayName)}</span>
                     <span style="font-size:11px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px">${time}</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                    <p style="font-size:14px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${preview}</p>
+                    <p style="font-size:14px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
                     ${isUnread?`<span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:20px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0">${chat.unread_count}</span>`:''}
                 </div>`;
         }
 
-        // Вставляем на правильную позицию
-        if (container.children[index] !== div) {
-            container.insertBefore(div, container.children[index] || null);
-        }
+        frag.appendChild(div);
     });
 
-    // Разделители
-    container.querySelectorAll('.chat-item').forEach((item, i, all) => {
-        if (i < all.length - 1) {
-            const divider = document.createElement('div');
-            divider.className = 'chat-item-divider';
-            item.parentNode.insertBefore(divider, item.nextSibling);
-        }
-    });
+    // Один DOM-update — заменяем содержимое контейнера целиком
+    container.innerHTML = '';
+    container.appendChild(frag);
 
     updateUnreadBadge(totalUnread);
+    _renderingChats = false;
 }
 
 function getContactDisplayName(userId, defaultName) {
