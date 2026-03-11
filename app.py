@@ -121,7 +121,7 @@ class TTLCache:
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
 _user_dict_cache  = TTLCache(maxsize=3000, ttl=120.0)  # 3k юзеров × 2min
-_chat_cache       = TTLCache(maxsize=8000, ttl=15.0)   # больше чатов
+_chat_cache       = TTLCache(maxsize=8000, ttl=30.0)   # 30с — достаточно, WS обновляет
 _online_cache     = TTLCache(maxsize=8000, ttl=8.0)
 _partner_cache    = TTLCache(maxsize=3000, ttl=60.0)
 _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
@@ -1303,53 +1303,82 @@ def get_my_chats():
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
     memberships = GroupMember.query.filter_by(user_id=uid).all()
-    for m in memberships:
-        try:
-            group = db.session.get(Group, m.group_id)
-            if not group:
-                continue
-            chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
-            if not chat:
-                continue
+    if memberships:
+        group_ids   = [m.group_id for m in memberships]
+        groups      = {g.id: g for g in db.session.query(Group).filter(Group.id.in_(group_ids)).all()}
+        chat_ids_g  = [g.chat_id for g in groups.values() if g.chat_id]
+        chats_g     = {c.id: c for c in db.session.query(Chat).filter(Chat.id.in_(chat_ids_g)).all()}
 
-            last_msg = Message.query.filter_by(
-                chat_id=chat.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
+        # Батч: последнее сообщение для каждого группового чата
+        g_last_msgs = {}
+        if chat_ids_g:
+            rows = db.session.execute(text('''
+                SELECT DISTINCT ON (chat_id) chat_id, id, type, content, sender_name, timestamp
+                FROM message WHERE chat_id = ANY(:ids) AND is_deleted = FALSE
+                ORDER BY chat_id, id DESC
+            '''), {'ids': chat_ids_g}).fetchall()
+            for r in rows:
+                g_last_msgs[r.chat_id] = r
 
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': chat.id, 'uid': uid}
-            ).scalar() or 0
+        # Батч: непрочитанные для группових чатов
+        g_unread = {}
+        if chat_ids_g:
+            rows2 = db.session.execute(text('''
+                SELECT chat_id, COUNT(*) as cnt FROM message
+                WHERE chat_id = ANY(:ids) AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE
+                GROUP BY chat_id
+            '''), {'ids': chat_ids_g, 'uid': uid}).fetchall()
+            for r in rows2:
+                g_unread[r.chat_id] = r.cnt
 
-            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
-            preview  = '👥 Группа создана'
-            sort_ts  = group.created_at or datetime(2000, 1, 1)
+        # Батч: количество участников
+        g_member_counts = {}
+        if group_ids:
+            rows3 = db.session.execute(text(
+                'SELECT group_id, COUNT(*) as cnt FROM group_member WHERE group_id = ANY(:ids) GROUP BY group_id'
+            ), {'ids': group_ids}).fetchall()
+            for r in rows3:
+                g_member_counts[r.group_id] = r.cnt
 
-            if last_msg:
-                sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
-                sort_ts = last_msg.timestamp
+        type_map_g = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
 
-            member_count = GroupMember.query.filter_by(group_id=group.id).count()
-            result.append({
-                'chat_id':       chat.id,
-                'group_id':      group.id,
-                'partner_id':    group.id,
-                'group_name':    group.name,
-                'partner_name':  group.name,
-                'group_avatar':  group.avatar,
-                'partner_avatar':group.avatar,
-                'member_count':  member_count,
-                'online':        False,
-                'last_message':  preview,
-                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
-                'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count':  unread,
-                'is_group':      True,
-                '_sort':         sort_ts,
-            })
-        except Exception as e:
-            app.logger.error(f'Group chat parse error {m.group_id}: {e}')
+        for m in memberships:
+            try:
+                group = groups.get(m.group_id)
+                if not group: continue
+                chat = chats_g.get(group.chat_id) if group.chat_id else None
+                if not chat: continue
+
+                last_msg     = g_last_msgs.get(chat.id)
+                unread       = g_unread.get(chat.id, 0)
+                member_count = g_member_counts.get(group.id, 0)
+                sort_ts      = group.created_at or datetime(2000, 1, 1)
+                preview      = '👥 Группа создана'
+
+                if last_msg:
+                    sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
+                    preview = sender_prefix + type_map_g.get(last_msg.type, last_msg.content or '...')
+                    sort_ts = last_msg.timestamp
+
+                result.append({
+                    'chat_id':       chat.id,
+                    'group_id':      group.id,
+                    'partner_id':    group.id,
+                    'group_name':    group.name,
+                    'partner_name':  group.name,
+                    'group_avatar':  group.avatar,
+                    'partner_avatar':group.avatar,
+                    'member_count':  member_count,
+                    'online':        False,
+                    'last_message':  preview,
+                    'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
+                    'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
+                    'unread_count':  unread,
+                    'is_group':      True,
+                    '_sort':         sort_ts,
+                })
+            except Exception as e:
+                app.logger.error(f'Group chat parse error {m.group_id}: {e}')
 
     def sort_key(x):
         s = x.get('_sort')
@@ -1367,7 +1396,9 @@ def get_my_chats():
         r.pop('_sort', None)
 
     _chat_cache.set(uid, result)
-    return jsonify(result)
+    resp = make_response(jsonify(result))
+    resp.headers['Cache-Control'] = 'private, max-age=10'
+    return resp
 
 
 @app.route('/get_chat_id/<int:partner_id>')
