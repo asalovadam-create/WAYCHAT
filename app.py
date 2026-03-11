@@ -498,7 +498,6 @@ class Message(db.Model):
     file_url    = db.Column(db.String(300))
     is_read     = db.Column(db.Boolean,     default=False, index=True)
     is_deleted  = db.Column(db.Boolean,     default=False, index=True)
-    hidden_for  = db.Column(db.Text,        default='')    # JSON-список user_id — скрыто только у них
     timestamp   = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
 
     __table_args__ = (
@@ -507,7 +506,6 @@ class Message(db.Model):
     )
 
     def to_dict(self):
-        # Реакции — батч загружаем когда нужно (не здесь — слишком медленно при >100 сообщений)
         return {
             'id':            self.id,
             'chat_id':       self.chat_id,
@@ -518,7 +516,6 @@ class Message(db.Model):
             'content':       self.content,
             'file_url':      self.file_url,
             'is_read':       self.is_read,
-            'hidden_for':    self.hidden_for or '',
             'timestamp':     to_moscow_str(self.timestamp),
             'raw_timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else '',
         }
@@ -1433,45 +1430,7 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-
-    if not msgs:
-        return jsonify([])
-
-    # Батч-запрос реакций для всех сообщений за 1 SQL
-    msg_ids = [m.id for m in msgs]
-    reactions_rows = db.session.execute(text('''
-        SELECT msg_id, emoji, user_id FROM message_reaction
-        WHERE msg_id = ANY(:ids)
-        ORDER BY msg_id, id
-    '''), {'ids': msg_ids}).fetchall()
-
-    # Группируем: {msg_id: {emoji: {count, mine}}}
-    react_map = {}
-    for r in reactions_rows:
-        if r.msg_id not in react_map:
-            react_map[r.msg_id] = {}
-        em = r.emoji
-        if em not in react_map[r.msg_id]:
-            react_map[r.msg_id][em] = {'count': 0, 'mine': False}
-        react_map[r.msg_id][em]['count'] += 1
-        if r.user_id == uid:
-            react_map[r.msg_id][em]['mine'] = True
-
-    result = []
-    for m in reversed(msgs):
-        d = m.to_dict()
-        # Скрытые — фильтруем на сервере
-        hf = d.get('hidden_for') or ''
-        try:
-            hidden_ids = json.loads(hf) if hf else []
-        except Exception:
-            hidden_ids = []
-        if uid in hidden_ids:
-            continue
-        d['reactions'] = react_map.get(m.id, {})
-        result.append(d)
-
-    return jsonify(result)
+    return jsonify([m.to_dict() for m in reversed(msgs)])
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -2289,15 +2248,125 @@ def handle_reaction(data):
                     emit('message_reaction', reaction_payload, room=f'user_{uid_str}')
 
 
+# ══════════════════════════════════════════════════════════
+#  ГРУППОВЫЕ ЗВОНКИ (WebRTC Mesh, max 5 участников)
+# ══════════════════════════════════════════════════════════
+
+@socketio.on('join_group_call')
+def handle_gc_join(data):
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid   = current_user.id
+        uname = current_user.name
+        uava  = getattr(current_user, 'avatar', '')
+    except Exception:
+        return
+    room      = data.get('room')
+    call_type = data.get('call_type', 'audio')
+    if not room:
+        return
+    join_room(f'gc_{room}')
+    # Уведомляем остальных в комнате
+    emit('gc_user_joined', {
+        'user_id':    uid,
+        'user_name':  uname,
+        'user_avatar': uava,
+        'call_type':  call_type,
+    }, room=f'gc_{room}', include_self=False)
+
+
+@socketio.on('leave_group_call')
+def handle_gc_leave(data):
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid   = current_user.id
+        uname = current_user.name
+    except Exception:
+        return
+    room = data.get('room')
+    if not room:
+        return
+    leave_room(f'gc_{room}')
+    emit('gc_user_left', {
+        'user_id':   uid,
+        'user_name': uname,
+    }, room=f'gc_{room}', include_self=False)
+
+
+@socketio.on('gc_offer')
+def handle_gc_offer(data):
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    to = data.get('to')
+    if not to:
+        return
+    emit('gc_offer', {'from': uid, 'offer': data.get('offer'), 'room': data.get('room')},
+         room=f'user_{to}')
+
+
+@socketio.on('gc_answer')
+def handle_gc_answer(data):
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    to = data.get('to')
+    if not to:
+        return
+    emit('gc_answer', {'from': uid, 'answer': data.get('answer')}, room=f'user_{to}')
+
+
+@socketio.on('gc_ice')
+def handle_gc_ice(data):
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    to = data.get('to')
+    if not to:
+        return
+    emit('gc_ice', {'from': uid, 'candidate': data.get('candidate')}, room=f'user_{to}')
+
+
+@socketio.on('gc_invite')
+def handle_gc_invite(data):
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid   = current_user.id
+        uname = current_user.name
+    except Exception:
+        return
+    to = data.get('to')
+    if not to:
+        return
+    emit('gc_invite', {
+        'from':      uid,
+        'from_name': uname,
+        'room':      data.get('room'),
+        'call_type': data.get('call_type', 'audio'),
+    }, room=f'user_{to}')
+
+
 @socketio.on('delete_message')
 def handle_delete_message(data):
-    """Удалить у всех (только отправитель)"""
     if not current_user.is_authenticated:
         return
     msg_id  = data.get('msg_id')
     chat_id = data.get('chat_id')
     if not msg_id or not chat_id:
         return
+
     try:
         uid = current_user.id
     except Exception:
@@ -2305,14 +2374,14 @@ def handle_delete_message(data):
 
     msg = db.session.get(Message, msg_id)
     if not msg or msg.sender_id != uid:
-        return  # только автор может удалить у всех
+        return
 
     msg.is_deleted = True
     msg.content    = None
     db.session.commit()
     _chat_cache.invalidate_prefix(str(chat_id))
 
-    del_payload = {'msg_id': msg_id, 'chat_id': chat_id, 'mode': 'all'}
+    del_payload = {'msg_id': msg_id, 'chat_id': chat_id}
     chat = db.session.get(Chat, chat_id)
     if chat:
         if chat.room_key.startswith('group_'):
@@ -2322,39 +2391,6 @@ def handle_delete_message(data):
             for uid_str in parts:
                 if uid_str.isdigit():
                     emit('message_deleted', del_payload, room=f'user_{uid_str}')
-
-
-@socketio.on('delete_message_for_me')
-def handle_delete_for_me(data):
-    """Удалить только у себя — скрываем через hidden_for"""
-    if not current_user.is_authenticated:
-        return
-    msg_id  = data.get('msg_id')
-    chat_id = data.get('chat_id')
-    if not msg_id or not chat_id:
-        return
-    try:
-        uid = current_user.id
-    except Exception:
-        return
-
-    msg = db.session.get(Message, msg_id)
-    if not msg or msg.chat_id != chat_id:
-        return
-
-    # Добавляем uid в список hidden_for
-    try:
-        hidden = json.loads(msg.hidden_for or '[]')
-    except Exception:
-        hidden = []
-    if uid not in hidden:
-        hidden.append(uid)
-    msg.hidden_for = json.dumps(hidden)
-    db.session.commit()
-    _chat_cache.delete(uid)
-
-    # Уведомляем только этого пользователя
-    emit('message_deleted', {'msg_id': msg_id, 'chat_id': chat_id, 'mode': 'me'}, room=f'user_{uid}')
 
 
 def _get_partner_id_sio(chat_id):
