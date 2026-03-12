@@ -1052,25 +1052,32 @@ body {
             </div>
 
             <!-- Эквалайзер -->
-            <div id="music-eq-section" style="display:none;margin:16px 16px 0;background:rgba(255,255,255,.03);border:.5px solid rgba(255,255,255,.07);border-radius:22px;padding:18px">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-                    <span style="font-size:13px;font-weight:800;letter-spacing:.6px;color:rgba(255,255,255,.4)">ЭКВАЛАЙЗЕР</span>
+            <div id="music-eq-section" style="display:none;margin:16px 16px 0;background:rgba(20,20,28,.95);border:.5px solid rgba(255,255,255,.07);border-radius:22px;overflow:hidden">
+                <!-- Заголовок -->
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px">
+                    <span style="font-size:13px;font-weight:800;letter-spacing:.8px;color:rgba(255,255,255,.5)">ЭКВАЛАЙЗЕР</span>
                     <div style="display:flex;gap:8px;align-items:center">
-                        <span id="eq-toggle-label" style="font-size:11px;color:rgba(255,255,255,.3)">ВЫКЛ</span>
-                        <div id="eq-toggle-switch" onclick="musicToggleEQ()" style="width:44px;height:26px;border-radius:13px;background:rgba(255,255,255,.1);cursor:pointer;position:relative;transition:background .2s;-webkit-tap-highlight-color:transparent">
-                            <div id="eq-toggle-thumb" style="width:22px;height:22px;border-radius:50%;background:white;position:absolute;top:2px;left:2px;transition:transform .2s;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>
+                        <span id="eq-toggle-label" style="font-size:11px;font-weight:700;color:rgba(255,255,255,.3)">ВЫКЛ</span>
+                        <div id="eq-toggle-switch" onclick="musicToggleEQ()" style="width:44px;height:26px;border-radius:13px;background:rgba(255,255,255,.1);cursor:pointer;position:relative;transition:background .25s;-webkit-tap-highlight-color:transparent">
+                            <div id="eq-toggle-thumb" style="width:22px;height:22px;border-radius:50%;background:white;position:absolute;top:2px;left:2px;transition:transform .25s;box-shadow:0 2px 6px rgba(0,0,0,.5)"></div>
                         </div>
                     </div>
                 </div>
                 <!-- Пресеты -->
-                <div id="eq-presets-row" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px"></div>
-                <!-- Слайдеры -->
-                <div id="eq-bands-container" style="display:flex;gap:0;align-items:flex-end;height:130px;padding:0"></div>
-                <!-- Частоты -->
-                <div style="display:flex;justify-content:space-between;margin-top:7px">
-                    ${['32','64','125','250','500','1k','2k','4k','8k','16k'].map(f=>`<span style="font-size:9px;color:rgba(255,255,255,.2);flex:1;text-align:center">${f}</span>`).join('')}
+                <div id="eq-presets-row" style="display:flex;gap:6px;flex-wrap:wrap;padding:0 18px 14px"></div>
+                <!-- Canvas EQ — перетаскиваемые точки с кривой -->
+                <div style="position:relative;margin:0 12px;border-radius:14px;overflow:hidden;background:rgba(0,0,0,.4)">
+                    <canvas id="eq-canvas" style="width:100%;height:200px;display:block;touch-action:none"></canvas>
                 </div>
-                <button onclick="musicResetEQ()" style="margin-top:12px;width:100%;padding:10px;background:rgba(255,255,255,.04);border:.5px solid rgba(255,255,255,.08);border-radius:12px;color:rgba(255,255,255,.3);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit">Сбросить EQ</button>
+                <!-- Частоты -->
+                <div style="display:flex;justify-content:space-around;padding:8px 18px 4px">
+                    ${['32','64','125','250','500','1k','2k','4k','8k','16k'].map(f=>`<span style="font-size:9px;color:rgba(255,255,255,.2);text-align:center;flex:1">${f}</span>`).join('')}
+                </div>
+                <!-- Кнопки -->
+                <div style="display:flex;gap:8px;padding:10px 18px 16px">
+                    <button onclick="musicResetEQ()" style="flex:1;padding:11px;background:rgba(255,255,255,.05);border:.5px solid rgba(255,255,255,.08);border-radius:12px;color:rgba(255,255,255,.4);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Сбросить</button>
+                    <button onclick="musicDisableEQ()" style="flex:1;padding:11px;background:rgba(255,255,255,.05);border:.5px solid rgba(255,255,255,.08);border-radius:12px;color:rgba(255,255,255,.4);font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">Выключить</button>
+                </div>
             </div>
 
             <!-- Список треков -->
@@ -6944,7 +6951,7 @@ async function doLogout() {
 
 window.onload = init;
 // ══════════════════════════════════════════════════════════════════
-//  🎵 MUSIC PLAYER v3 — полностью переписан, надёжный
+//  🎵 MUSIC PLAYER v4 — Background play, Canvas EQ, Long video
 // ══════════════════════════════════════════════════════════════════
 
 const MP = {
@@ -6953,9 +6960,13 @@ const MP = {
     volume: 0.8, filterQuery: '',
     ctx: null, srcNode: null, gainNode: null, analyserNode: null,
     eqFilters: [], audioEl: null, vizRAF: null,
+    // EQ canvas state: 10 bands, gain -12..+12 dB
+    eqGains: [0,0,0,0,0,0,0,0,0,0],
+    eqDragging: -1,
 };
 
-const EQ_FREQS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const EQ_FREQS = [32,64,125,250,500,1000,2000,4000,8000,16000];
+const EQ_LABELS = ['32','64','125','250','500','1k','2k','4k','8k','16k'];
 const EQ_PRESETS = {
     'Flat':       [0,0,0,0,0,0,0,0,0,0],
     'Bass Boost': [8,7,5,2,0,0,0,0,0,0],
@@ -6975,10 +6986,8 @@ async function _mdbOpen() {
         const req = indexedDB.open('wc_music_v1', 1);
         req.onupgradeneeded = e => {
             const db = e.target.result;
-            if (!db.objectStoreNames.contains('tracks'))
-                db.createObjectStore('tracks', { keyPath: 'id', autoIncrement: true });
-            if (!db.objectStoreNames.contains('blobs'))
-                db.createObjectStore('blobs', { keyPath: 'id' });
+            if (!db.objectStoreNames.contains('tracks')) db.createObjectStore('tracks',{keyPath:'id',autoIncrement:true});
+            if (!db.objectStoreNames.contains('blobs'))  db.createObjectStore('blobs', {keyPath:'id'});
         };
         req.onsuccess = e => { _mDB = e.target.result; res(_mDB); };
         req.onerror = () => rej(req.error);
@@ -6986,114 +6995,92 @@ async function _mdbOpen() {
 }
 async function _mdbPut(store, val) {
     const db = await _mdbOpen();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(store, 'readwrite');
-        const r = tx.objectStore(store).put(val);
-        r.onsuccess = () => res(r.result);
-        r.onerror = () => rej(r.error);
-    });
+    return new Promise((res,rej) => { const r=db.transaction(store,'readwrite').objectStore(store).put(val); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); });
 }
 async function _mdbGetAll(store) {
     const db = await _mdbOpen();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(store, 'readonly');
-        const r = tx.objectStore(store).getAll();
-        r.onsuccess = () => res(r.result || []);
-        r.onerror = () => rej(r.error);
-    });
+    return new Promise((res,rej) => { const r=db.transaction(store,'readonly').objectStore(store).getAll(); r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error); });
 }
 async function _mdbGet(store, key) {
     const db = await _mdbOpen();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(store, 'readonly');
-        const r = tx.objectStore(store).get(key);
-        r.onsuccess = () => res(r.result || null);
-        r.onerror = () => rej(r.error);
-    });
+    return new Promise((res,rej) => { const r=db.transaction(store,'readonly').objectStore(store).get(key); r.onsuccess=()=>res(r.result||null); r.onerror=()=>rej(r.error); });
 }
 async function _mdbDelete(store, key) {
     const db = await _mdbOpen();
-    return new Promise((res, rej) => {
-        const tx = db.transaction(store, 'readwrite');
-        const r = tx.objectStore(store).delete(key);
-        r.onsuccess = () => res();
-        r.onerror = () => rej(r.error);
-    });
+    return new Promise((res,rej) => { const r=db.transaction(store,'readwrite').objectStore(store).delete(key); r.onsuccess=()=>res(); r.onerror=()=>rej(r.error); });
 }
 
-// ══ Прогресс-оверлей загрузки ══
-function _showImportProgress(msg, pct) {
+// ══ Progress overlay ══
+function _showImportProgress(msg, pct, sub) {
     let ov = document.getElementById('music-import-overlay');
     if (!ov) {
         ov = document.createElement('div');
         ov.id = 'music-import-overlay';
-        ov.style.cssText = [
-            'position:fixed;inset:0;z-index:8500',
-            'background:rgba(0,0,0,.75)',
-            'backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)',
-            'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px',
-        ].join(';');
+        ov.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,.82);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px';
         ov.innerHTML = `
-            <div style="width:72px;height:72px;border-radius:50%;background:rgba(16,185,129,.15);border:2px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" style="animation:spin 1.2s linear infinite">
-                    <path d="M9 18V5l12-2v13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                    <circle cx="6" cy="18" r="3" stroke="var(--accent)" stroke-width="2"/>
-                    <circle cx="18" cy="16" r="3" stroke="var(--accent)" stroke-width="2"/>
+            <div style="width:76px;height:76px;border-radius:50%;background:rgba(16,185,129,.12);border:2px solid rgba(16,185,129,.3);display:flex;align-items:center;justify-content:center">
+                <svg id="miov-icon" width="30" height="30" viewBox="0 0 24 24" fill="none" style="animation:mpSpin 1s linear infinite">
+                    <circle cx="12" cy="12" r="10" stroke="rgba(16,185,129,.2)" stroke-width="2"/>
+                    <path d="M12 2a10 10 0 0 1 10 10" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/>
                 </svg>
             </div>
-            <div id="miov-msg" style="font-size:16px;font-weight:700;color:white;text-align:center;max-width:280px;line-height:1.4"></div>
-            <div style="width:240px;height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden">
-                <div id="miov-bar" style="height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .3s ease"></div>
+            <div style="text-align:center;max-width:280px">
+                <div id="miov-msg" style="font-size:17px;font-weight:700;color:white;margin-bottom:6px"></div>
+                <div id="miov-sub" style="font-size:13px;color:rgba(255,255,255,.45);min-height:18px"></div>
             </div>
-            <div id="miov-sub" style="font-size:12px;color:rgba(255,255,255,.4)"></div>`;
+            <div style="width:260px">
+                <div style="height:4px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden">
+                    <div id="miov-bar" style="height:100%;background:var(--accent);border-radius:2px;width:0%;transition:width .4s ease"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;margin-top:5px">
+                    <span id="miov-pct" style="font-size:11px;color:rgba(255,255,255,.3)">0%</span>
+                    <span id="miov-eta" style="font-size:11px;color:rgba(255,255,255,.3)"></span>
+                </div>
+            </div>`;
         document.body.appendChild(ov);
     }
     ov.style.display = 'flex';
-    const msgEl = document.getElementById('miov-msg');
-    const barEl = document.getElementById('miov-bar');
-    if (msgEl) msgEl.textContent = msg;
-    if (barEl)  barEl.style.width = Math.round(pct) + '%';
-}
-function _updateImportSub(txt) {
-    const el = document.getElementById('miov-sub');
-    if (el) el.textContent = txt;
+    const p = Math.round(Math.min(100, Math.max(0, pct)));
+    const el = id => document.getElementById(id);
+    if (el('miov-msg')) el('miov-msg').textContent = msg;
+    if (el('miov-sub')) el('miov-sub').textContent = sub || '';
+    if (el('miov-bar')) el('miov-bar').style.width = p + '%';
+    if (el('miov-pct')) el('miov-pct').textContent = p + '%';
 }
 function _hideImportProgress() {
     const ov = document.getElementById('music-import-overlay');
-    if (ov) {
-        ov.style.opacity = '0';
-        ov.style.transition = 'opacity .3s';
-        setTimeout(() => { ov.style.display = 'none'; ov.style.opacity = ''; }, 350);
-    }
+    if (!ov) return;
+    ov.style.transition = 'opacity .35s';
+    ov.style.opacity = '0';
+    setTimeout(() => { ov.style.display='none'; ov.style.opacity=''; ov.style.transition=''; }, 380);
 }
 
-// ══ Web Audio init ══
+// ══ Web Audio ══
 function _initAudioCtx() {
     if (MP.ctx) return;
     MP.audioEl = new Audio();
     MP.audioEl.volume = MP.volume;
+    // Важно для фонового воспроизведения на iOS
+    MP.audioEl.setAttribute('playsinline', '');
+    MP.audioEl.setAttribute('webkit-playsinline', '');
 
-    const ACtx = window.AudioContext || window.webkitAudioContext;
-    MP.ctx = new ACtx();
-
+    const AC = window.AudioContext || window.webkitAudioContext;
+    MP.ctx = new AC();
     MP.srcNode = MP.ctx.createMediaElementSource(MP.audioEl);
 
     MP.eqFilters = EQ_FREQS.map((freq, i) => {
         const f = MP.ctx.createBiquadFilter();
-        f.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length - 1 ? 'highshelf' : 'peaking';
+        f.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length-1 ? 'highshelf' : 'peaking';
         f.frequency.value = freq;
         f.gain.value = 0;
         f.Q.value = 1.4;
         return f;
     });
-
     MP.analyserNode = MP.ctx.createAnalyser();
     MP.analyserNode.fftSize = 512;
-
     MP.gainNode = MP.ctx.createGain();
     MP.gainNode.gain.value = MP.volume;
 
-    // Цепочка: src → eq[0..9] → analyser → gain → output
     let prev = MP.srcNode;
     MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
     prev.connect(MP.analyserNode);
@@ -7102,7 +7089,7 @@ function _initAudioCtx() {
 
     MP.audioEl.addEventListener('timeupdate', _mpTimeUpdate);
     MP.audioEl.addEventListener('ended', () => {
-        if (MP.repeat) { MP.audioEl.currentTime = 0; MP.audioEl.play(); }
+        if (MP.repeat) { MP.audioEl.currentTime = 0; MP.audioEl.play().catch(()=>{}); }
         else musicNext();
     });
     MP.audioEl.addEventListener('loadedmetadata', () => {
@@ -7110,16 +7097,34 @@ function _initAudioCtx() {
         if (el) el.textContent = _mpFmt(MP.audioEl.duration);
     });
     MP.audioEl.addEventListener('error', e => {
-        console.error('audio error:', e);
+        console.error('audio element error:', MP.audioEl.error);
         showToast('Ошибка воспроизведения', 'error');
+        MP.playing = false;
+        _mpUpdateCard();
     });
+
+    // ══ Media Session API — управление из шторки/наушников/локскрина ══
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.setActionHandler('play',          () => { if(!MP.playing) musicTogglePlay(); });
+        navigator.mediaSession.setActionHandler('pause',         () => { if(MP.playing)  musicTogglePlay(); });
+        navigator.mediaSession.setActionHandler('previoustrack', musicPrev);
+        navigator.mediaSession.setActionHandler('nexttrack',     musicNext);
+        navigator.mediaSession.setActionHandler('seekto',        e => { if(MP.audioEl && e.seekTime != null) MP.audioEl.currentTime = e.seekTime; });
+    }
 }
+
+// ══ Фоновое воспроизведение — iOS требует AudioContext resume при visibilitychange ══
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && MP.ctx && MP.ctx.state === 'suspended' && MP.playing) {
+        MP.ctx.resume().catch(() => {});
+    }
+});
 
 // ══ Открытие плеера ══
 async function musicTabOpened() {
     await _mpLoadTracks();
-    _mpBuildEqSliders();
     _mpBuildEqPresets();
+    _mpInitEqCanvas();
     if (MP.idx >= 0) _mpUpdateCard();
     _injectMusicButton();
 }
@@ -7127,21 +7132,18 @@ async function musicTabOpened() {
 async function _mpLoadTracks() {
     try {
         const raw = await _mdbGetAll('tracks');
-        MP.tracks = raw.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        MP.tracks = raw.sort((a,b) => (a.title||'').localeCompare(b.title||''));
         _mpRender();
-    } catch (e) {
-        console.error('music load error:', e);
-        showToast('Ошибка загрузки треков', 'error');
-    }
+    } catch(e) { console.error('music load:', e); showToast('Ошибка загрузки', 'error'); }
 }
 
-// ══ Добавление файлов — главная точка входа ══
+// ══ Файловый пикер ══
 function musicPickFiles() {
     const inp = document.createElement('input');
     inp.type = 'file';
     inp.accept = 'audio/*,video/mp4,video/webm,video/quicktime,.mp3,.flac,.aac,.wav,.ogg,.m4a,.mp4,.mov,.webm,.mkv';
     inp.multiple = true;
-    inp.onchange = async (e) => {
+    inp.onchange = async e => {
         const files = Array.from(e.target.files || []);
         if (!files.length) return;
         await _mpImportFiles(files);
@@ -7150,207 +7152,190 @@ function musicPickFiles() {
 }
 
 async function _mpImportFiles(files) {
-    const total = files.length;
-    let done = 0;
-    let added = 0;
-    let errors = 0;
-
+    let done=0, added=0, errors=0;
     for (const file of files) {
         const name = file.name.replace(/\.[^/.]+$/, '');
         const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(file.name);
-
-        if (isVideo) {
-            _showImportProgress(`Извлекаю аудио…`, (done / total) * 100);
-            _updateImportSub(`🎬 ${name}`);
-        } else {
-            _showImportProgress(`Добавляю ${done + 1} из ${total}`, (done / total) * 100);
-            _updateImportSub(`🎵 ${name}`);
-        }
-
         try {
             if (isVideo) {
                 await _mpImportVideo(file, (p, sub) => {
-                    _showImportProgress(`Извлекаю аудио… ${Math.round(p)}%`, (done / total) * 100 + p / total);
-                    if (sub) _updateImportSub(sub);
+                    _showImportProgress(`🎬 Извлекаю аудио из видео`, p, sub || name);
                 });
             } else {
+                _showImportProgress(`🎵 Добавляю ${done+1} из ${files.length}`, (done/files.length)*100, name);
                 await _mpImportAudio(file);
             }
             added++;
-        } catch (err) {
-            console.error('import failed:', file.name, err);
-            errors++;
-        }
-
+        } catch(e) { console.error('import:', file.name, e); errors++; }
         done++;
-        _showImportProgress(
-            done < total ? `Обработано ${done} из ${total}` : 'Сохраняю…',
-            (done / total) * 100
-        );
     }
-
     _hideImportProgress();
     await _mpLoadTracks();
-
-    if (errors > 0 && added === 0) {
-        showToast(`Не удалось добавить файлы`, 'error');
-    } else if (errors > 0) {
-        showToast(`Добавлено ${added}, ошибок: ${errors}`, 'warning');
-    } else {
-        showToast(`Добавлено ${added} трек${added === 1 ? '' : 'ов'} 🎵`, 'success');
-    }
+    if (added > 0) showToast(`Добавлено ${added} трек${added===1?'':'ов'} 🎵`, 'success');
+    else showToast('Не удалось добавить файлы', 'error');
 }
 
-// ══ Импорт аудио файла ══
+// ══ Импорт аудио ══
 async function _mpImportAudio(file) {
     const tags = await _mpReadID3(file);
     const track = {
-        title:       tags.title  || file.name.replace(/\.[^/.]+$/, ''),
-        artist:      tags.artist || 'Неизвестный',
-        album:       tags.album  || '',
-        duration:    0,
-        coverUrl:    tags.coverUrl || null,
-        isFromVideo: false,
-        size:        file.size,
-        addedAt:     Date.now(),
+        title: tags.title || file.name.replace(/\.[^/.]+$/,''),
+        artist: tags.artist || 'Неизвестный',
+        album: tags.album || '',
+        duration: 0, coverUrl: tags.coverUrl || null,
+        isFromVideo: false, size: file.size, addedAt: Date.now(),
     };
-    const id = await _mdbPut('tracks', track);
+    const id  = await _mdbPut('tracks', track);
     const buf = await file.arrayBuffer();
     await _mdbPut('blobs', { id, data: buf, mime: file.type || 'audio/mpeg' });
 }
 
-// ══ Импорт видео → аудио ══
+// ══ Импорт видео → аудио (надёжный стриминговый метод) ══
 async function _mpImportVideo(file, onProgress) {
     onProgress(5, '📂 Читаю файл…');
 
-    // Шаг 1: Пробуем decodeAudioData (самый надёжный способ)
-    try {
-        const arrBuf = await file.arrayBuffer();
-        onProgress(30, '🔊 Декодирую аудио…');
-
-        const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
-        let audioBuf;
+    // Метод 1: decodeAudioData только для НЕБОЛЬШИХ файлов (<80MB)
+    // Для длинных видео сразу используем MediaRecorder (стриминг без буферизации всего файла)
+    if (file.size < 80 * 1024 * 1024) {
         try {
-            audioBuf = await tmpCtx.decodeAudioData(arrBuf.slice(0));
-        } finally {
-            await tmpCtx.close().catch(() => {});
+            onProgress(15, '🔊 Декодирую аудио…');
+            const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const arrBuf = await file.arrayBuffer();
+            let audioBuf;
+            try {
+                audioBuf = await tmpCtx.decodeAudioData(arrBuf.slice(0));
+            } finally {
+                await tmpCtx.close().catch(()=>{});
+            }
+            onProgress(75, '💾 Конвертирую…');
+            const wavBlob = _mpToWav(audioBuf);
+            const wavBuf  = await wavBlob.arrayBuffer();
+            onProgress(92, '📝 Сохраняю…');
+            const id = await _mdbPut('tracks', {
+                title: file.name.replace(/\.[^/.]+$/,''),
+                artist: '🎬 из видео', album: '',
+                duration: audioBuf.duration,
+                coverUrl: null, isFromVideo: true,
+                size: wavBuf.byteLength, addedAt: Date.now(),
+            });
+            await _mdbPut('blobs', { id, data: wavBuf, mime: 'audio/wav' });
+            onProgress(100, '✅ Готово');
+            return;
+        } catch(e) {
+            console.warn('decodeAudioData failed, using MediaRecorder:', e.message);
         }
-
-        onProgress(70, '💾 Конвертирую в WAV…');
-        const wavBlob = _mpToWav(audioBuf);
-        const wavBuf  = await wavBlob.arrayBuffer();
-
-        onProgress(90, '📝 Сохраняю…');
-        const title = file.name.replace(/\.[^/.]+$/, '');
-        const track = {
-            title, artist: '🎬 из видео', album: '',
-            duration: audioBuf.duration,
-            coverUrl: null, isFromVideo: true,
-            size: wavBuf.byteLength, addedAt: Date.now(),
-        };
-        const id = await _mdbPut('tracks', track);
-        await _mdbPut('blobs', { id, data: wavBuf, mime: 'audio/wav' });
-        onProgress(100, '✅ Готово');
-        return;
-    } catch (e) {
-        console.warn('decodeAudioData failed, trying MediaRecorder:', e.message);
+    } else {
+        onProgress(8, '🎬 Большое видео — стриминговый режим…');
     }
 
-    // Шаг 2: Fallback через MediaRecorder (для форматов которые браузер не декодирует напрямую)
-    onProgress(10, '🎬 Читаю видео…');
-    await _mpImportVideoRecorder(file, onProgress);
+    // Метод 2: MediaRecorder — работает для ЛЮБОЙ длины, никакой буферизации
+    await _mpImportVideoStream(file, onProgress);
 }
 
-async function _mpImportVideoRecorder(file, onProgress) {
+// Стриминговый захват аудио — не грузит файл целиком в RAM
+async function _mpImportVideoStream(file, onProgress) {
     return new Promise((resolve, reject) => {
-        const video = document.createElement('video');
         const objUrl = URL.createObjectURL(file);
-        video.src = objUrl;
-        video.muted = false;
+        const video  = document.createElement('video');
+        video.src     = objUrl;
         video.preload = 'metadata';
+        video.muted   = false;
+        video.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0';
+        document.body.appendChild(video);
 
-        const cleanup = () => { try { URL.revokeObjectURL(objUrl); } catch(e){} };
+        const cleanup = () => {
+            try { document.body.removeChild(video); } catch(e) {}
+            URL.revokeObjectURL(objUrl);
+        };
 
-        video.onerror = () => { cleanup(); reject(new Error('Видео не поддерживается')); };
+        video.onerror = () => { cleanup(); reject(new Error('Видео не поддерживается браузером')); };
 
         video.onloadedmetadata = () => {
             const duration = video.duration || 0;
-            onProgress(20, '🎙 Захватываю аудио…');
+            onProgress(12, `🎙 Длительность: ${_mpFmt(duration)}`);
 
+            // captureStream — стримим напрямую, без загрузки всего файла
             let stream;
             try {
                 stream = video.captureStream ? video.captureStream() : video.mozCaptureStream ? video.mozCaptureStream() : null;
             } catch(e) { stream = null; }
 
-            if (!stream) { cleanup(); reject(new Error('captureStream недоступен')); return; }
+            if (!stream) { cleanup(); reject(new Error('captureStream не поддерживается')); return; }
 
             const audioTracks = stream.getAudioTracks();
-            if (!audioTracks.length) { cleanup(); reject(new Error('Нет аудиодорожки в видео')); return; }
+            if (!audioTracks.length) { cleanup(); reject(new Error('В видео нет аудиодорожки')); return; }
 
             const audioStream = new MediaStream(audioTracks);
-            const mimeType = ['audio/webm;codecs=opus','audio/webm','audio/ogg'].find(m => {
-                try { return MediaRecorder.isTypeSupported(m); } catch(e) { return false; }
-            }) || 'audio/webm';
+
+            // Выбираем лучший поддерживаемый формат
+            const mimeType = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+                'audio/ogg',
+                'audio/mp4',
+            ].find(m => { try { return MediaRecorder.isTypeSupported(m); } catch(e) { return false; } }) || '';
 
             let recorder;
             try {
-                recorder = new MediaRecorder(audioStream, { mimeType });
-            } catch(e) {
-                try { recorder = new MediaRecorder(audioStream); }
-                catch(e2) { cleanup(); reject(new Error('MediaRecorder не поддерживается')); return; }
-            }
+                recorder = mimeType ? new MediaRecorder(audioStream, { mimeType }) : new MediaRecorder(audioStream);
+            } catch(e) { cleanup(); reject(new Error('MediaRecorder недоступен')); return; }
 
             const chunks = [];
             recorder.ondataavailable = e => { if (e.data && e.data.size > 0) chunks.push(e.data); };
 
             recorder.onstop = async () => {
+                clearInterval(progressTick);
+                clearTimeout(safetyTimeout);
                 try {
-                    if (!chunks.length) throw new Error('Нет записанных данных');
-                    const blob = new Blob(chunks, { type: recorder.mimeType || mimeType });
-                    const buf  = await blob.arrayBuffer();
-                    onProgress(90, '📝 Сохраняю…');
-                    const title = file.name.replace(/\.[^/.]+$/, '');
-                    const track = {
-                        title, artist: '🎬 из видео', album: '',
-                        duration, coverUrl: null, isFromVideo: true,
+                    if (!chunks.length) throw new Error('Нет данных — видео без звука?');
+                    const blob = new Blob(chunks, { type: recorder.mimeType || mimeType || 'audio/webm' });
+                    onProgress(92, '📝 Сохраняю в библиотеку…');
+                    const buf = await blob.arrayBuffer();
+                    const id  = await _mdbPut('tracks', {
+                        title: file.name.replace(/\.[^/.]+$/,''),
+                        artist: '🎬 из видео', album: '',
+                        duration,
+                        coverUrl: null, isFromVideo: true,
                         size: buf.byteLength, addedAt: Date.now(),
-                    };
-                    const id = await _mdbPut('tracks', track);
+                    });
                     await _mdbPut('blobs', { id, data: buf, mime: blob.type });
                     cleanup();
                     onProgress(100, '✅ Готово');
                     resolve();
                 } catch(e) { cleanup(); reject(e); }
             };
+            recorder.onerror = e => { cleanup(); reject(e.error || new Error('Ошибка записи')); };
 
-            recorder.onerror = e => { cleanup(); reject(e.error || new Error('recorder error')); };
+            // Старт
+            recorder.start(1000); // чанки каждую секунду
+            video.play().catch(() => {
+                // Autoplay заблокирован? Пробуем через пользовательское взаимодействие
+                // На iOS обязательно нужен user gesture — но мы уже внутри onchange файлового input
+            });
 
-            // Старт записи
-            recorder.start(500);
-            video.play().catch(e => { /* autoplay может быть заблокирован */ });
-
-            // Прогресс во время записи
-            let lastPct = 20;
-            const ticker = setInterval(() => {
-                if (duration > 0) {
-                    const elapsed = video.currentTime / duration;
-                    const pct = 20 + elapsed * 65;
-                    if (pct > lastPct) { lastPct = pct; onProgress(pct, `🎙 ${Math.round(elapsed*100)}%`); }
+            // Прогресс-тикер
+            const progressTick = setInterval(() => {
+                if (duration > 0 && video.currentTime > 0) {
+                    const frac = video.currentTime / duration;
+                    onProgress(12 + frac * 78, `🎙 ${Math.round(frac*100)}% · ${_mpFmt(video.currentTime)} / ${_mpFmt(duration)}`);
                 }
-            }, 500);
+            }, 800);
 
-            const finish = () => {
-                clearInterval(ticker);
-                if (recorder.state !== 'inactive') recorder.stop();
+            // Таймаут безопасности: duration + 10 сек
+            const safetyTimeout = setTimeout(() => {
+                if (recorder.state === 'recording') recorder.stop();
+            }, (duration > 0 ? duration : 600) * 1000 + 10000);
+
+            video.onended = () => {
+                if (recorder.state === 'recording') recorder.stop();
             };
 
-            video.onended = finish;
-            // Таймаут: duration + 5 сек
-            const timeout = setTimeout(finish, (duration > 0 ? duration : 300) * 1000 + 5000);
-            recorder.onstop_orig = recorder.onstop;
-            recorder.onstop = async function() {
-                clearTimeout(timeout);
-                await recorder.onstop_orig.call(this);
+            // Если видео длинное — прогресс может зависнуть, следим
+            video.onerror = () => {
+                clearInterval(progressTick);
+                clearTimeout(safetyTimeout);
+                if (recorder.state === 'recording') recorder.stop();
             };
         };
     });
@@ -7358,66 +7343,281 @@ async function _mpImportVideoRecorder(file, onProgress) {
 
 // ══ PCM → WAV ══
 function _mpToWav(buf) {
-    const nCh = buf.numberOfChannels, rate = buf.sampleRate, frames = buf.length;
-    const bytes = frames * nCh * 2;
-    const ab = new ArrayBuffer(44 + bytes);
-    const v  = new DataView(ab);
-    const s  = (str, off) => { for(let i=0;i<str.length;i++) v.setUint8(off+i, str.charCodeAt(i)); };
-    s('RIFF',0); v.setUint32(4, 36+bytes, true);
-    s('WAVE',8); s('fmt ',12);
-    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,nCh,true);
-    v.setUint32(24,rate,true); v.setUint32(28,rate*nCh*2,true);
-    v.setUint16(32,nCh*2,true); v.setUint16(34,16,true);
-    s('data',36); v.setUint32(40,bytes,true);
-    let off = 44;
-    const chs = Array.from({length:nCh}, (_,c) => buf.getChannelData(c));
-    for(let i=0;i<frames;i++) for(let c=0;c<nCh;c++) {
-        const x = Math.max(-1,Math.min(1,chs[c][i]));
-        v.setInt16(off, x < 0 ? x*0x8000 : x*0x7FFF, true); off+=2;
+    const nCh=buf.numberOfChannels, rate=buf.sampleRate, frames=buf.length;
+    const bytes=frames*nCh*2, ab=new ArrayBuffer(44+bytes), v=new DataView(ab);
+    const s=(str,off)=>{for(let i=0;i<str.length;i++)v.setUint8(off+i,str.charCodeAt(i));};
+    s('RIFF',0);v.setUint32(4,36+bytes,true);s('WAVE',8);s('fmt ',12);
+    v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,nCh,true);
+    v.setUint32(24,rate,true);v.setUint32(28,rate*nCh*2,true);
+    v.setUint16(32,nCh*2,true);v.setUint16(34,16,true);
+    s('data',36);v.setUint32(40,bytes,true);
+    let off=44;
+    const chs=Array.from({length:nCh},(_,c)=>buf.getChannelData(c));
+    for(let i=0;i<frames;i++)for(let c=0;c<nCh;c++){
+        const x=Math.max(-1,Math.min(1,chs[c][i]));
+        v.setInt16(off,x<0?x*0x8000:x*0x7FFF,true);off+=2;
     }
-    return new Blob([ab], { type:'audio/wav' });
+    return new Blob([ab],{type:'audio/wav'});
 }
 
 // ══ ID3 tags ══
 async function _mpReadID3(file) {
-    const r = { title:'', artist:'', album:'', coverUrl:null };
+    const r={title:'',artist:'',album:'',coverUrl:null};
     try {
-        const ab = await file.slice(0, 256*1024).arrayBuffer();
-        const b  = new Uint8Array(ab);
-        if (b[0]===73&&b[1]===68&&b[2]===51) { // ID3v2
-            const dv = new DataView(ab);
-            const sz = ((b[6]&0x7f)<<21)|((b[7]&0x7f)<<14)|((b[8]&0x7f)<<7)|(b[9]&0x7f);
-            let p = 10;
-            while (p < sz+10 && p+10 < ab.byteLength) {
-                const id = String.fromCharCode(b[p],b[p+1],b[p+2],b[p+3]);
-                const fs = dv.getUint32(p+4);
-                if (!fs || fs > 2e6) break;
-                const fd = b.slice(p+10, p+10+fs);
-                if (['TIT2','TPE1','TALB'].includes(id)) {
-                    const enc = fd[0];
-                    const raw = enc===1
-                        ? new TextDecoder('utf-16').decode(fd.slice(1))
-                        : new TextDecoder('latin1').decode(fd.slice(1));
-                    const val = raw.replace(/\0/g,'').trim();
-                    if (id==='TIT2') r.title=val;
-                    else if (id==='TPE1') r.artist=val;
-                    else r.album=val;
-                } else if (id==='APIC') {
-                    const me = fd.indexOf(0,1);
-                    const is = fd.indexOf(0, me+2)+1;
-                    if (is>0&&is<fd.length) {
-                        const mime = new TextDecoder().decode(fd.slice(1,me))||'image/jpeg';
-                        r.coverUrl = URL.createObjectURL(new Blob([fd.slice(is)],{type:mime}));
+        const ab=await file.slice(0,256*1024).arrayBuffer();
+        const b=new Uint8Array(ab);
+        if(b[0]===73&&b[1]===68&&b[2]===51){
+            const dv=new DataView(ab);
+            const sz=((b[6]&0x7f)<<21)|((b[7]&0x7f)<<14)|((b[8]&0x7f)<<7)|(b[9]&0x7f);
+            let p=10;
+            while(p<sz+10&&p+10<ab.byteLength){
+                const id=String.fromCharCode(b[p],b[p+1],b[p+2],b[p+3]);
+                const fs=new DataView(ab).getUint32(p+4);
+                if(!fs||fs>2e6)break;
+                const fd=b.slice(p+10,p+10+fs);
+                if(['TIT2','TPE1','TALB'].includes(id)){
+                    const enc=fd[0];
+                    const raw=enc===1?new TextDecoder('utf-16').decode(fd.slice(1)):new TextDecoder('latin1').decode(fd.slice(1));
+                    const val=raw.replace(/\0/g,'').trim();
+                    if(id==='TIT2')r.title=val;else if(id==='TPE1')r.artist=val;else r.album=val;
+                }else if(id==='APIC'){
+                    const me=fd.indexOf(0,1),is=fd.indexOf(0,me+2)+1;
+                    if(is>0&&is<fd.length){
+                        const mime=new TextDecoder().decode(fd.slice(1,me))||'image/jpeg';
+                        r.coverUrl=URL.createObjectURL(new Blob([fd.slice(is)],{type:mime}));
                     }
                 }
-                p += 10+fs;
+                p+=10+fs;
             }
         }
-    } catch(e) {}
+    }catch(e){}
     return r;
 }
 
-// ══ Рендер списка треков ══
+// ══ Canvas EQ — перетаскиваемые точки с кривой ══
+function _mpInitEqCanvas() {
+    const canvas = document.getElementById('eq-canvas');
+    if (!canvas || canvas._mpInit) return;
+    canvas._mpInit = true;
+
+    const dpr = window.devicePixelRatio || 1;
+
+    function resize() {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width  = rect.width  * dpr;
+        canvas.height = rect.height * dpr;
+        _mpDrawEq();
+    }
+
+    // Resize observer
+    if (window.ResizeObserver) {
+        new ResizeObserver(resize).observe(canvas);
+    } else {
+        setTimeout(resize, 100);
+    }
+
+    // ── Взаимодействие: touch + mouse ──
+    function getPos(e) {
+        const rect = canvas.getBoundingClientRect();
+        const touch = e.touches ? e.touches[0] || e.changedTouches[0] : e;
+        return {
+            x: (touch.clientX - rect.left) / rect.width,
+            y: (touch.clientY - rect.top)  / rect.height,
+        };
+    }
+
+    function yToGain(y) { return (0.5 - y) * 24; } // -12..+12 dB
+    function gainToY(g) { return 0.5 - g / 24; }
+    function xToBand(x) {
+        const n = EQ_FREQS.length;
+        return Math.max(0, Math.min(n-1, Math.round(x * (n-1) + 0.5) - 1));
+    }
+    function bandToX(i) { return (i + 0.5) / EQ_FREQS.length; }
+
+    function findClosestBand(x, y) {
+        let best = -1, bestDist = Infinity;
+        for (let i = 0; i < EQ_FREQS.length; i++) {
+            const bx = bandToX(i);
+            const by = gainToY(MP.eqGains[i]);
+            const dist = Math.hypot(x - bx, y - by);
+            if (dist < bestDist) { bestDist = dist; best = i; }
+        }
+        // Хит-зона — 10% ширины (достаточно большая)
+        return bestDist < 0.12 ? best : -1;
+    }
+
+    function onStart(e) {
+        e.preventDefault();
+        const pos = getPos(e);
+        const band = findClosestBand(pos.x, pos.y);
+        if (band >= 0) {
+            MP.eqDragging = band;
+            if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); _mpApplyEqToFilters(); }
+        }
+    }
+
+    function onMove(e) {
+        e.preventDefault();
+        if (MP.eqDragging < 0) return;
+        const pos  = getPos(e);
+        const gain = Math.max(-12, Math.min(12, yToGain(pos.y)));
+        MP.eqGains[MP.eqDragging] = Math.round(gain * 2) / 2; // шаг 0.5 dB
+        if (MP.eqFilters[MP.eqDragging]) MP.eqFilters[MP.eqDragging].gain.value = MP.eqGains[MP.eqDragging];
+        _mpDrawEq();
+        // Снимаем активный пресет
+        document.querySelectorAll('.eq-preset-btn').forEach(b => _mpEqPresetStyle(b, false));
+    }
+
+    function onEnd(e) { MP.eqDragging = -1; }
+
+    canvas.addEventListener('touchstart',  onStart, { passive: false });
+    canvas.addEventListener('touchmove',   onMove,  { passive: false });
+    canvas.addEventListener('touchend',    onEnd,   { passive: false });
+    canvas.addEventListener('mousedown',   onStart);
+    canvas.addEventListener('mousemove',   onMove);
+    canvas.addEventListener('mouseup',     onEnd);
+    canvas.addEventListener('mouseleave',  onEnd);
+
+    resize();
+}
+
+function _mpDrawEq() {
+    const canvas = document.getElementById('eq-canvas');
+    if (!canvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width, H = canvas.height;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, W, H);
+
+    const N = EQ_FREQS.length;
+    const bandToX = i => (i + 0.5) / N * W;
+    const gainToY = g => (0.5 - g/24) * H;
+
+    // Сетка
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    // Горизонтальные линии: +12, +6, 0, -6, -12
+    [-12,-6,0,6,12].forEach(db => {
+        const y = gainToY(db);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+    });
+    // Вертикальные — по бандам
+    for (let i = 0; i < N; i++) {
+        const x = bandToX(i);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+    }
+
+    // Нулевая линия — ярче
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, gainToY(0)); ctx.lineTo(W, gainToY(0)); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Кривая — сглаженная через catmull-rom spline
+    const pts = Array.from({length: N}, (_, i) => ({
+        x: bandToX(i),
+        y: gainToY(MP.eqGains[i]),
+    }));
+
+    // Градиент заливки под кривой
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0,   'rgba(139,92,246,0.35)');
+    grad.addColorStop(0.5, 'rgba(99,102,241,0.15)');
+    grad.addColorStop(1,   'rgba(99,102,241,0)');
+
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i-1)];
+        const p1 = pts[i];
+        const p2 = pts[i+1];
+        const p3 = pts[Math.min(pts.length-1, i+2)];
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+    // Замыкаем путь для заливки
+    ctx.lineTo(pts[N-1].x, H);
+    ctx.lineTo(pts[0].x, H);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Линия кривой
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[Math.max(0, i-1)];
+        const p1 = pts[i];
+        const p2 = pts[i+1];
+        const p3 = pts[Math.min(pts.length-1, i+2)];
+        const cp1x = p1.x + (p2.x - p0.x) / 6;
+        const cp1y = p1.y + (p2.y - p0.y) / 6;
+        const cp2x = p2.x - (p3.x - p1.x) / 6;
+        const cp2y = p2.y - (p3.y - p1.y) / 6;
+        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    }
+    ctx.strokeStyle = MP.eqEnabled ? '#a78bfa' : 'rgba(167,139,250,0.35)';
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.stroke();
+
+    // Точки — перетаскиваемые
+    pts.forEach((pt, i) => {
+        const isActive = MP.eqDragging === i;
+        const gain = MP.eqGains[i];
+        const col  = gain > 0.5 ? '#a78bfa' : gain < -0.5 ? '#818cf8' : 'rgba(255,255,255,0.6)';
+
+        // Тень/свечение для активной точки
+        if (isActive) {
+            ctx.shadowColor = '#a78bfa';
+            ctx.shadowBlur  = 12 * dpr;
+        }
+
+        // Вертикальная линия от точки до нуля
+        const zeroY = gainToY(0);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.globalAlpha = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(pt.x, pt.y);
+        ctx.lineTo(pt.x, zeroY);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        // Круг
+        const r = (isActive ? 10 : 7) * dpr;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = isActive ? '#a78bfa' : 'white';
+        ctx.shadowBlur = isActive ? 12 * dpr : 0;
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+
+        // Значение gain над точкой (если не ноль)
+        if (Math.abs(gain) >= 0.5) {
+            ctx.font = `${Math.round(9 * dpr)}px -apple-system,sans-serif`;
+            ctx.fillStyle = gain > 0 ? '#a78bfa' : '#f87171';
+            ctx.textAlign = 'center';
+            const label = gain > 0 ? `+${gain}` : `${gain}`;
+            const textY  = pt.y < H * 0.15 ? pt.y + 18*dpr : pt.y - 12*dpr;
+            ctx.fillText(label, pt.x, textY);
+        }
+    });
+}
+
+// ══ Применяем EQ к фильтрам ══
+function _mpApplyEqToFilters() {
+    MP.eqGains.forEach((db, i) => {
+        if (MP.eqFilters[i]) MP.eqFilters[i].gain.value = MP.eqEnabled ? db : 0;
+    });
+}
+
+// ══ Рендер треков ══
 function _mpRender(filter) {
     if (filter === undefined) filter = MP.filterQuery || '';
     const list   = document.getElementById('music-track-list');
@@ -7428,9 +7628,7 @@ function _mpRender(filter) {
     if (!list) return;
 
     const q = filter.toLowerCase().trim();
-    const visible = q
-        ? MP.tracks.filter(t => (t.title+' '+t.artist).toLowerCase().includes(q))
-        : MP.tracks;
+    const visible = q ? MP.tracks.filter(t=>(t.title+' '+t.artist).toLowerCase().includes(q)) : MP.tracks;
 
     if (cnt) cnt.textContent = `${MP.tracks.length} трек${MP.tracks.length===1?'':'ов'}`;
     const sub = document.getElementById('music-btn-subtitle');
@@ -7456,22 +7654,14 @@ function _mpRender(filter) {
             'display:flex;align-items:center;gap:12px',
             'padding:10px 12px;border-radius:16px;margin-bottom:3px',
             'cursor:pointer;-webkit-tap-highlight-color:transparent',
-            isCur
-                ? 'background:rgba(16,185,129,.1);border:.5px solid rgba(16,185,129,.22)'
-                : 'border:.5px solid transparent',
+            isCur ? 'background:rgba(16,185,129,.1);border:.5px solid rgba(16,185,129,.22)' : 'border:.5px solid transparent',
             'transition:background .12s',
         ].join(';');
 
-        // Обложка
         const cov = document.createElement('div');
-        cov.style.cssText = [
-            'width:50px;height:50px;border-radius:13px;flex-shrink:0',
-            'overflow:hidden;position:relative',
-            'background:rgba(255,255,255,.06)',
-            'display:flex;align-items:center;justify-content:center',
-        ].join(';');
+        cov.style.cssText = 'width:50px;height:50px;border-radius:13px;flex-shrink:0;overflow:hidden;position:relative;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center';
         if (track.isFromVideo) {
-            cov.innerHTML = `<span style="font-size:22px">🎬</span>`;
+            cov.innerHTML = '<span style="font-size:22px">🎬</span>';
         } else if (track.coverUrl) {
             cov.innerHTML = `<img src="${track.coverUrl}" style="width:100%;height:100%;object-fit:cover" loading="lazy">`;
         } else {
@@ -7482,23 +7672,20 @@ function _mpRender(filter) {
         if (isCur && MP.playing) {
             const bars = document.createElement('div');
             bars.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,.52);display:flex;align-items:center;justify-content:center;gap:2px';
-            [10,17,13].forEach((h, i) => {
+            [10,17,13].forEach((h,i) => {
                 const b = document.createElement('div');
-                b.style.cssText = `width:3px;background:var(--accent);border-radius:2px;animation:mpBar${i} .7s ease-in-out infinite alternate`;
-                b.style.height = h + 'px';
+                b.style.cssText = `width:3px;height:${h}px;background:var(--accent);border-radius:2px;animation:mpBar${i} .7s ease-in-out infinite alternate`;
                 bars.appendChild(b);
             });
             cov.appendChild(bars);
         }
 
-        // Инфо
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0';
         info.innerHTML = `
             <div style="font-size:14px;font-weight:${isCur?'800':'600'};color:${isCur?'var(--accent)':'#fff'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3">${escHtml(track.title||'Без названия')}</div>
             <div style="font-size:12px;color:rgba(255,255,255,.38);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(track.artist||'')}</div>`;
 
-        // Справа
         const right = document.createElement('div');
         right.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0';
         if (track.duration > 0) {
@@ -7509,22 +7696,22 @@ function _mpRender(filter) {
         }
         const del = document.createElement('button');
         del.style.cssText = 'width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.05);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.28);-webkit-tap-highlight-color:transparent';
-        del.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+        del.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
         del.onclick = e => { e.stopPropagation(); musicDeleteTrack(track.id); };
         right.appendChild(del);
 
         row.appendChild(cov); row.appendChild(info); row.appendChild(right);
-
         const trackIdx = MP.tracks.indexOf(track);
         row.addEventListener('click', () => musicPlayAt(trackIdx));
-        row.addEventListener('pointerdown', () => row.style.background = isCur ? 'rgba(16,185,129,.16)' : 'rgba(255,255,255,.05)');
-        row.addEventListener('pointerup',   () => row.style.background = isCur ? 'rgba(16,185,129,.1)' : '');
-        row.addEventListener('pointerleave',() => row.style.background = isCur ? 'rgba(16,185,129,.1)' : '');
+        row.addEventListener('pointerdown',  () => row.style.background = isCur ? 'rgba(16,185,129,.16)' : 'rgba(255,255,255,.05)');
+        row.addEventListener('pointerup',    () => row.style.background = isCur ? 'rgba(16,185,129,.1)' : '');
+        row.addEventListener('pointerleave', () => row.style.background = isCur ? 'rgba(16,185,129,.1)' : '');
         list.appendChild(row);
     });
-}
 
-// Алиасы для совместимости
+    // Обновляем карточку "сейчас играет" в профиле
+    _mpUpdateProfileCard();
+}
 function _renderTrackList(f) { _mpRender(f); }
 
 // ══ Воспроизведение ══
@@ -7538,10 +7725,7 @@ async function musicPlayAt(idx) {
     const track = MP.tracks[idx];
     try {
         const rec = await _mdbGet('blobs', track.id);
-        if (!rec || !rec.data) {
-            showToast('Файл не найден', 'error');
-            return;
-        }
+        if (!rec || !rec.data) { showToast('Файл не найден', 'error'); return; }
         const blob = new Blob([rec.data], { type: rec.mime || 'audio/mpeg' });
         const url  = URL.createObjectURL(blob);
         if (MP.audioEl.src) URL.revokeObjectURL(MP.audioEl.src);
@@ -7549,50 +7733,52 @@ async function musicPlayAt(idx) {
         MP.audioEl.load();
         await MP.audioEl.play();
         MP.playing = true;
-
-        // Обновляем duration если ещё не сохранена
-        if (!track.duration && MP.audioEl.duration > 0) {
-            track.duration = MP.audioEl.duration;
-            await _mdbPut('tracks', track);
-        }
-
+        if (!track.duration && MP.audioEl.duration > 0) { track.duration = MP.audioEl.duration; await _mdbPut('tracks', track); }
         _mpUpdateCard();
         _mpRender();
         _mpStartViz();
-
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.metadata = new MediaMetadata({
-                title:  track.title  || 'Трек',
-                artist: track.artist || '',
-                artwork: track.coverUrl ? [{ src: track.coverUrl }] : [],
-            });
-            navigator.mediaSession.setActionHandler('previoustrack', musicPrev);
-            navigator.mediaSession.setActionHandler('nexttrack',     musicNext);
-            navigator.mediaSession.setActionHandler('play',  musicTogglePlay);
-            navigator.mediaSession.setActionHandler('pause', musicTogglePlay);
-        }
+        _mpSetMediaSession(track);
     } catch(e) {
-        console.error('musicPlayAt error:', e);
+        console.error('playAt:', e);
         showToast('Не удалось воспроизвести', 'error');
+        MP.playing = false; _mpUpdateCard();
     }
+}
+
+function _mpSetMediaSession(track) {
+    if (!('mediaSession' in navigator)) return;
+    navigator.mediaSession.metadata = new MediaMetadata({
+        title:  track.title  || 'Трек',
+        artist: track.artist || 'WayChat Music',
+        album:  track.album  || '',
+        artwork: track.coverUrl ? [{ src: track.coverUrl, sizes: '512x512' }] : [
+            { src: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 24 24"><rect width="24" height="24" fill="%230a0a0e"/><path d="M9 18V5l12-2v13" stroke="%2310b981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" stroke="%2310b981" stroke-width="1.5"/><circle cx="18" cy="16" r="3" stroke="%2310b981" stroke-width="1.5"/></svg>', sizes: '512x512', type: 'image/svg+xml' }
+        ],
+    });
+    navigator.mediaSession.playbackState = 'playing';
 }
 
 function musicTogglePlay() {
     if (!MP.audioEl || MP.idx < 0) return;
     if (MP.playing) {
-        MP.audioEl.pause(); MP.playing = false; _mpStopViz();
+        MP.audioEl.pause();
+        MP.playing = false;
+        _mpStopViz();
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     } else {
         if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(()=>{});
-        MP.audioEl.play().catch(e => { console.error(e); showToast('Нажми ещё раз', 'info'); });
-        MP.playing = true; _mpStartViz();
+        MP.audioEl.play().catch(e => console.error(e));
+        MP.playing = true;
+        _mpStartViz();
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     }
     _mpUpdateCard();
+    const sub = document.getElementById('music-btn-subtitle');
+    if (sub && MP.tracks.length) sub.textContent = `${MP.tracks.length} треков · ${MP.playing ? '▶ играет' : 'пауза'}`;
 }
 function musicNext() {
     if (!MP.tracks.length) return;
-    musicPlayAt(MP.shuffle
-        ? Math.floor(Math.random() * MP.tracks.length)
-        : (MP.idx + 1) % MP.tracks.length);
+    musicPlayAt(MP.shuffle ? Math.floor(Math.random()*MP.tracks.length) : (MP.idx+1)%MP.tracks.length);
 }
 function musicPrev() {
     if (!MP.tracks.length) return;
@@ -7602,65 +7788,49 @@ function musicPrev() {
 function musicToggleShuffle() {
     MP.shuffle = !MP.shuffle;
     const btn = document.getElementById('mpc-shuffle-btn');
-    if (btn) {
-        btn.style.color      = MP.shuffle ? 'var(--accent)' : 'rgba(255,255,255,.4)';
-        btn.style.background = MP.shuffle ? 'rgba(16,185,129,.15)' : 'rgba(255,255,255,.07)';
-    }
-    showToast(MP.shuffle ? 'Перемешивание вкл' : 'Перемешивание выкл', 'info');
+    if (btn) { btn.style.color = MP.shuffle ? 'var(--accent)' : 'rgba(255,255,255,.4)'; btn.style.background = MP.shuffle ? 'rgba(16,185,129,.15)' : 'rgba(255,255,255,.07)'; }
+    showToast(MP.shuffle ? 'Перемешивание вкл 🔀' : 'Перемешивание выкл', 'info');
 }
 function musicToggleRepeat() {
     MP.repeat = !MP.repeat;
     const btn = document.getElementById('mpc-repeat-btn');
-    if (btn) {
-        btn.style.color      = MP.repeat ? 'var(--accent)' : 'rgba(255,255,255,.4)';
-        btn.style.background = MP.repeat ? 'rgba(16,185,129,.15)' : 'rgba(255,255,255,.07)';
-    }
-    showToast(MP.repeat ? 'Повтор вкл' : 'Повтор выкл', 'info');
+    if (btn) { btn.style.color = MP.repeat ? 'var(--accent)' : 'rgba(255,255,255,.4)'; btn.style.background = MP.repeat ? 'rgba(16,185,129,.15)' : 'rgba(255,255,255,.07)'; }
+    showToast(MP.repeat ? 'Повтор вкл 🔁' : 'Повтор выкл', 'info');
 }
 function musicSetVolume(v) {
-    MP.volume = v / 100;
-    if (MP.audioEl)  MP.audioEl.volume = MP.volume;
+    MP.volume = v/100;
+    if (MP.audioEl)  MP.audioEl.volume  = MP.volume;
     if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 }
 function musicSeek(e, wrap) {
     if (!MP.audioEl || !MP.audioEl.duration) return;
     const r = wrap.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    MP.audioEl.currentTime = pct * MP.audioEl.duration;
+    MP.audioEl.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * MP.audioEl.duration;
 }
 function musicSearch(q) { MP.filterQuery = q; _mpRender(q); }
 
 async function musicDeleteTrack(id) {
     vibrate(30);
-    await _mdbDelete('tracks', id);
-    await _mdbDelete('blobs', id);
+    await _mdbDelete('tracks', id); await _mdbDelete('blobs', id);
     const wi = MP.tracks.findIndex(t => t.id === id);
-    MP.tracks.splice(wi, 1);
-    if (wi === MP.idx) {
-        MP.audioEl?.pause();
-        MP.playing = false;
-        MP.idx = -1;
-        _mpStopViz();
-    } else if (wi < MP.idx) {
-        MP.idx--;
-    }
+    if (wi >= 0) MP.tracks.splice(wi, 1);
+    if (wi === MP.idx) { MP.audioEl?.pause(); MP.playing=false; MP.idx=-1; _mpStopViz(); }
+    else if (wi < MP.idx && MP.idx > 0) MP.idx--;
     _mpRender();
     showToast('Трек удалён', 'success');
 }
 
-// ══ Карточка плеера ══
+// ══ Player card ══
 function _mpUpdateCard() {
     const track = MP.tracks[MP.idx];
-    if (!track) return;
-
     const pc = document.getElementById('music-player-card');
     const eq = document.getElementById('music-eq-section');
-    if (pc) pc.style.display = '';
-    if (eq) eq.style.display = '';
+    if (pc) pc.style.display = track ? '' : 'none';
+    if (eq) eq.style.display = track ? '' : 'none';
+    if (!track) return;
 
     const el = id => document.getElementById(id);
-    const set = (id, val) => { const e = el(id); if (e) e.textContent = val; };
-
+    const set = (id, v) => { const e=el(id); if(e) e.textContent=v; };
     set('mpc-title',  track.title  || '—');
     set('mpc-artist', track.artist || '—');
 
@@ -7669,31 +7839,40 @@ function _mpUpdateCard() {
 
     const covImg = el('mpc-cover-img');
     const covBg  = el('mpc-cover-bg');
-    if (covImg) { covImg.src = track.coverUrl || ''; covImg.style.display = track.coverUrl ? '' : 'none'; }
+    if (covImg) { covImg.src = track.coverUrl||''; covImg.style.display = track.coverUrl ? '' : 'none'; }
     if (covBg) {
-        if (track.isFromVideo) {
-            covBg.style.background = 'linear-gradient(135deg,#0f0c29,#302b63,#24243e)';
-        } else if (track.coverUrl) {
-            covBg.style.background = 'transparent';
-        } else {
-            const hue = ((track.title||'')[0]||'a').charCodeAt(0) * 31 % 360;
+        if (track.isFromVideo) covBg.style.background = 'linear-gradient(135deg,#0f0c29,#302b63,#24243e)';
+        else if (!track.coverUrl) {
+            const hue = ((track.title||'')[0]||'a').charCodeAt(0)*31%360;
             covBg.style.background = `linear-gradient(135deg,hsl(${hue},40%,14%),#0a0a0e)`;
-        }
+        } else covBg.style.background = 'transparent';
     }
 
     const ico = el('mpc-play-ico');
     if (ico) ico.innerHTML = MP.playing
         ? '<rect x="6" y="4" width="4" height="16" rx="1.5" fill="black"/><rect x="14" y="4" width="4" height="16" rx="1.5" fill="black"/>'
         : '<polygon points="6 3 20 12 6 21 6 3" fill="black"/>';
+
+    _mpUpdateProfileCard();
 }
 
 function _mpTimeUpdate() {
-    if (!MP.audioEl || !MP.audioEl.duration) return;
+    if (!MP.audioEl?.duration) return;
     const pct = (MP.audioEl.currentTime / MP.audioEl.duration) * 100;
     const bar = document.getElementById('mpc-prog-bar');
     const cur = document.getElementById('mpc-cur');
     if (bar) bar.style.width = pct + '%';
     if (cur) cur.textContent = _mpFmt(MP.audioEl.currentTime);
+    // Media Session position state
+    if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
+        try {
+            navigator.mediaSession.setPositionState({
+                duration:     MP.audioEl.duration,
+                playbackRate: MP.audioEl.playbackRate,
+                position:     MP.audioEl.currentTime,
+            });
+        } catch(e) {}
+    }
 }
 
 function _mpFmt(sec) {
@@ -7705,91 +7884,40 @@ function _mpFmt(sec) {
 function _mpStartViz() {
     const canvas = document.getElementById('music-viz-canvas');
     if (!canvas || !MP.analyserNode) return;
-
-    canvas.width  = canvas.offsetWidth  * (devicePixelRatio || 1);
-    canvas.height = canvas.offsetHeight * (devicePixelRatio || 1);
+    canvas.width  = canvas.offsetWidth  * (devicePixelRatio||1);
+    canvas.height = canvas.offsetHeight * (devicePixelRatio||1);
     const ctx2 = canvas.getContext('2d');
     const data = new Uint8Array(MP.analyserNode.frequencyBinCount);
-
-    const BARS = 56;
+    const BARS = 52;
     const draw = () => {
         if (!MP.playing) return;
         MP.vizRAF = requestAnimationFrame(draw);
         MP.analyserNode.getByteFrequencyData(data);
-        ctx2.clearRect(0, 0, canvas.width, canvas.height);
-        const W = canvas.width, H = canvas.height;
-        const bw = Math.floor(W / BARS) - 1;
-        for (let i = 0; i < BARS; i++) {
-            const v = data[Math.floor(i * data.length / BARS)] / 255;
-            const h = Math.max(3, v * H * 0.88);
-            const hue = 155 + v * 85;
-            ctx2.fillStyle = `hsla(${hue},75%,52%,${0.35 + v * 0.65})`;
-            ctx2.beginPath();
-            ctx2.roundRect(i * (bw + 1), H - h, bw, h, 3);
-            ctx2.fill();
+        ctx2.clearRect(0,0,canvas.width,canvas.height);
+        const W=canvas.width, H=canvas.height, bw=Math.floor(W/BARS)-1;
+        for (let i=0;i<BARS;i++) {
+            const v=data[Math.floor(i*data.length/BARS)]/255;
+            const h=Math.max(3,v*H*.88);
+            ctx2.fillStyle=`hsla(${155+v*85},72%,52%,${.35+v*.65})`;
+            ctx2.beginPath(); ctx2.roundRect(i*(bw+1),H-h,bw,h,3); ctx2.fill();
         }
     };
     if (MP.vizRAF) cancelAnimationFrame(MP.vizRAF);
     draw();
 }
 function _mpStopViz() {
-    if (MP.vizRAF) { cancelAnimationFrame(MP.vizRAF); MP.vizRAF = null; }
+    if (MP.vizRAF) { cancelAnimationFrame(MP.vizRAF); MP.vizRAF=null; }
 }
 
-// ══ Эквалайзер ══
-function _mpBuildEqSliders() {
-    const cont = document.getElementById('eq-bands-container');
-    if (!cont || cont.children.length) return;
-
-    EQ_FREQS.forEach((freq, i) => {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'flex:1;display:flex;flex-direction:column;align-items:center;height:100%;gap:4px';
-
-        const val = document.createElement('div');
-        val.id = `eq-v${i}`;
-        val.style.cssText = 'font-size:9px;font-weight:800;text-align:center;height:14px;line-height:14px;color:rgba(255,255,255,.3)';
-        val.textContent = '0';
-
-        const slider = document.createElement('input');
-        slider.type  = 'range';
-        slider.min   = '-12';
-        slider.max   = '12';
-        slider.step  = '0.5';
-        slider.value = '0';
-        slider.id    = `eq-s${i}`;
-        slider.style.cssText = [
-            'writing-mode:vertical-lr;direction:rtl',
-            '-webkit-appearance:slider-vertical;appearance:slider-vertical',
-            'width:100%;flex:1',
-            'accent-color:var(--accent);cursor:pointer',
-        ].join(';');
-
-        slider.addEventListener('input', () => {
-            const db = parseFloat(slider.value);
-            val.textContent = db > 0 ? `+${db}` : `${db}`;
-            val.style.color = db > 0 ? 'var(--accent)' : db < 0 ? '#f87171' : 'rgba(255,255,255,.3)';
-            if (MP.eqEnabled && MP.eqFilters[i]) {
-                MP.eqFilters[i].gain.value = db;
-            }
-            // Снимаем выделение пресета
-            document.querySelectorAll('.eq-preset-btn').forEach(b => _mpEqPresetStyle(b, false));
-        });
-
-        wrap.appendChild(val);
-        wrap.appendChild(slider);
-        cont.appendChild(wrap);
-    });
-}
-
+// ══ EQ presets ══
 function _mpBuildEqPresets() {
     const row = document.getElementById('eq-presets-row');
     if (!row || row.children.length) return;
-
     Object.keys(EQ_PRESETS).forEach(name => {
         const btn = document.createElement('button');
         btn.className = 'eq-preset-btn';
         btn.textContent = name;
-        btn.style.cssText = 'padding:5px 12px;border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;white-space:nowrap;transition:all .15s';
+        btn.style.cssText = 'padding:6px 14px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;white-space:nowrap;transition:all .15s';
         _mpEqPresetStyle(btn, false);
         btn.addEventListener('click', () => {
             musicApplyPreset(name);
@@ -7799,97 +7927,114 @@ function _mpBuildEqPresets() {
         row.appendChild(btn);
     });
 }
-
 function _mpEqPresetStyle(btn, active) {
-    if (active) {
-        btn.style.background    = 'rgba(16,185,129,.2)';
-        btn.style.color         = 'var(--accent)';
-        btn.style.borderColor   = 'rgba(16,185,129,.4)';
-        btn.style.border        = '.5px solid rgba(16,185,129,.4)';
-    } else {
-        btn.style.background  = 'rgba(255,255,255,.06)';
-        btn.style.color       = 'rgba(255,255,255,.55)';
-        btn.style.border      = '.5px solid rgba(255,255,255,.1)';
-    }
+    btn.style.background  = active ? 'rgba(167,139,250,.22)' : 'rgba(255,255,255,.07)';
+    btn.style.color       = active ? '#c4b5fd' : 'rgba(255,255,255,.55)';
+    btn.style.border      = active ? '.5px solid rgba(167,139,250,.4)' : '.5px solid rgba(255,255,255,.1)';
 }
 
 function musicApplyPreset(name) {
-    const gains = EQ_PRESETS[name];
-    if (!gains) return;
-    if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); }
-    gains.forEach((db, i) => {
-        const s = document.getElementById(`eq-s${i}`);
-        const v = document.getElementById(`eq-v${i}`);
-        if (s) s.value = db;
-        if (v) {
-            v.textContent = db > 0 ? `+${db}` : `${db}`;
-            v.style.color = db > 0 ? 'var(--accent)' : db < 0 ? '#f87171' : 'rgba(255,255,255,.3)';
-        }
-        if (MP.eqFilters[i]) MP.eqFilters[i].gain.value = db;
-    });
+    const gains = EQ_PRESETS[name]; if (!gains) return;
+    if (!MP.eqEnabled) { MP.eqEnabled=true; _mpEqToggleUI(true); }
+    MP.eqGains = [...gains];
+    _mpApplyEqToFilters();
+    _mpDrawEq();
     showToast(`EQ: ${name}`, 'info');
 }
-
 function musicToggleEQ() {
     MP.eqEnabled = !MP.eqEnabled;
     _mpEqToggleUI(MP.eqEnabled);
-    if (MP.eqEnabled) {
-        EQ_FREQS.forEach((_, i) => {
-            const s = document.getElementById(`eq-s${i}`);
-            if (s && MP.eqFilters[i]) MP.eqFilters[i].gain.value = parseFloat(s.value);
-        });
-        showToast('Эквалайзер включён', 'success');
-    } else {
-        MP.eqFilters.forEach(f => { if (f) f.gain.value = 0; });
-        showToast('Эквалайзер выключен', 'info');
-    }
+    _mpApplyEqToFilters();
+    _mpDrawEq();
+    showToast(MP.eqEnabled ? 'Эквалайзер включён' : 'Эквалайзер выключен', 'info');
 }
-
-function _mpEqToggleUI(on) {
-    const sw = document.getElementById('eq-toggle-switch');
-    const th = document.getElementById('eq-toggle-thumb');
-    const lb = document.getElementById('eq-toggle-label');
-    if (sw) sw.style.background = on ? 'var(--accent)' : 'rgba(255,255,255,.1)';
-    if (th) th.style.transform  = on ? 'translateX(18px)' : '';
-    if (lb) { lb.textContent = on ? 'ВКЛ' : 'ВЫКЛ'; lb.style.color = on ? 'var(--accent)' : 'rgba(255,255,255,.3)'; }
+function musicDisableEQ() {
+    MP.eqEnabled = false;
+    _mpEqToggleUI(false);
+    _mpApplyEqToFilters();
+    _mpDrawEq();
 }
-
 function musicResetEQ() {
-    EQ_FREQS.forEach((_, i) => {
-        const s = document.getElementById(`eq-s${i}`);
-        const v = document.getElementById(`eq-v${i}`);
-        if (s) s.value = '0';
-        if (v) { v.textContent = '0'; v.style.color = 'rgba(255,255,255,.3)'; }
-        if (MP.eqFilters[i]) MP.eqFilters[i].gain.value = 0;
-    });
+    MP.eqGains = [0,0,0,0,0,0,0,0,0,0];
+    if (MP.eqEnabled) _mpApplyEqToFilters();
+    _mpDrawEq();
     document.querySelectorAll('.eq-preset-btn').forEach(b => _mpEqPresetStyle(b, false));
     showToast('EQ сброшен', 'info');
 }
+function _mpEqToggleUI(on) {
+    const sw=document.getElementById('eq-toggle-switch');
+    const th=document.getElementById('eq-toggle-thumb');
+    const lb=document.getElementById('eq-toggle-label');
+    if (sw) sw.style.background = on ? '#7c3aed' : 'rgba(255,255,255,.1)';
+    if (th) th.style.transform  = on ? 'translateX(18px)' : '';
+    if (lb) { lb.textContent = on ? 'ВКЛ' : 'ВЫКЛ'; lb.style.color = on ? '#c4b5fd' : 'rgba(255,255,255,.3)'; }
+}
 
-// ══ Кнопка музыки в профиле ══
+// ══ Карточка "сейчас играет" в профиле ══
+function _mpUpdateProfileCard() {
+    const track = MP.tracks[MP.idx];
+    const card  = document.getElementById('mp-profile-card');
+    if (!card) return;
+    if (!track) { card.style.display = 'none'; return; }
+    card.style.display = '';
+
+    const title  = card.querySelector('#mppc-title');
+    const artist = card.querySelector('#mppc-artist');
+    const icon   = card.querySelector('#mppc-play-ico');
+    const prog   = card.querySelector('#mppc-prog');
+
+    if (title)  title.textContent  = track.title  || '—';
+    if (artist) artist.textContent = track.artist || '—';
+    if (icon)   icon.innerHTML     = MP.playing
+        ? '<rect x="5" y="4" width="3" height="14" rx="1" fill="currentColor"/><rect x="12" y="4" width="3" height="14" rx="1" fill="currentColor"/>'
+        : '<polygon points="4 3 18 11 4 19 4 3" fill="currentColor"/>';
+    if (prog && MP.audioEl?.duration) {
+        prog.style.width = (MP.audioEl.currentTime / MP.audioEl.duration * 100) + '%';
+    }
+}
+
+// ══ Кнопка музыки в профиле + мини-карточка ══
 function _injectMusicButton() {
     if (document.getElementById('music-open-btn')) return;
-    // Ищем блок «Контакты» в настройках
     const headers = [...document.querySelectorAll('#settings-section p')];
     const contactsP = headers.find(p => p.textContent.trim() === 'Контакты');
-    const target = contactsP ? contactsP.closest('div[style*="margin-bottom"]') : null;
-    if (!target) return;
+    const insertTarget = contactsP ? contactsP.closest('div[style*="margin-bottom"]') : null;
+    if (!insertTarget) return;
 
     const wrap = document.createElement('div');
     wrap.id = 'music-open-btn';
     wrap.style.cssText = 'margin-bottom:8px';
     wrap.innerHTML = `
-        <div onclick="openMusicPlayer()" style="display:flex;align-items:center;gap:13px;padding:14px 16px;background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(99,102,241,.07));border:.5px solid rgba(16,185,129,.18);border-radius:18px;cursor:pointer;-webkit-tap-highlight-color:transparent">
-            <div style="width:42px;height:42px;border-radius:13px;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" stroke="var(--accent)" stroke-width="2"/><circle cx="18" cy="16" r="3" stroke="var(--accent)" stroke-width="2"/></svg>
+        <!-- Кнопка открытия плеера -->
+        <div onclick="openMusicPlayer()" style="display:flex;align-items:center;gap:13px;padding:14px 16px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(99,102,241,.07));border:.5px solid rgba(124,58,237,.2);border-radius:18px;cursor:pointer;-webkit-tap-highlight-color:transparent;margin-bottom:6px">
+            <div style="width:42px;height:42px;border-radius:13px;background:rgba(124,58,237,.18);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" stroke="#a78bfa" stroke-width="2"/><circle cx="18" cy="16" r="3" stroke="#a78bfa" stroke-width="2"/></svg>
             </div>
             <div style="flex:1">
                 <div style="font-size:15px;font-weight:600">Музыка</div>
                 <div id="music-btn-subtitle" style="font-size:12px;color:rgba(255,255,255,.38);margin-top:2px">Открыть плеер</div>
             </div>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="opacity:.28;flex-shrink:0"><path d="M9 18l6-6-6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+        <!-- Мини-карточка "сейчас играет" -->
+        <div id="mp-profile-card" style="display:none;background:rgba(124,58,237,.1);border:.5px solid rgba(124,58,237,.2);border-radius:16px;padding:12px 14px;overflow:hidden;position:relative">
+            <div style="font-size:10px;font-weight:700;letter-spacing:.6px;color:rgba(167,139,250,.7);margin-bottom:8px">СЕЙЧАС ИГРАЕТ</div>
+            <div style="display:flex;align-items:center;gap:10px">
+                <div style="flex:1;min-width:0">
+                    <div id="mppc-title" style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#e9d5ff"></div>
+                    <div id="mppc-artist" style="font-size:12px;color:rgba(167,139,250,.6);margin-top:2px"></div>
+                </div>
+                <button onclick="musicTogglePlay()" style="width:36px;height:36px;border-radius:50%;background:rgba(124,58,237,.3);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#c4b5fd;flex-shrink:0;-webkit-tap-highlight-color:transparent">
+                    <svg id="mppc-play-ico" width="15" height="15" viewBox="0 0 24 24" fill="none"><polygon points="4 3 18 11 4 19 4 3" fill="currentColor"/></svg>
+                </button>
+            </div>
+            <!-- Прогресс -->
+            <div style="margin-top:10px;height:2px;background:rgba(167,139,250,.15);border-radius:1px;overflow:hidden">
+                <div id="mppc-prog" style="height:100%;background:#a78bfa;border-radius:1px;width:0%;transition:width .5s linear"></div>
+            </div>
         </div>`;
-    target.parentNode.insertBefore(wrap, target);
+    insertTarget.parentNode.insertBefore(wrap, insertTarget);
+    _mpUpdateProfileCard();
 }
 
 function openMusicPlayer() {
@@ -7904,13 +8049,12 @@ function openMusicPlayer() {
     }));
     musicTabOpened();
 }
-
 function closeMusicPlayer() {
     const sec = document.getElementById('music-section');
     if (!sec) return;
     sec.style.transition = 'transform .3s cubic-bezier(.32,.72,0,1)';
     sec.style.transform  = 'translateY(100%)';
-    setTimeout(() => { sec.style.display = 'none'; }, 320);
+    setTimeout(() => { sec.style.display='none'; }, 320);
     _mpStopViz();
 }
 
@@ -7921,9 +8065,8 @@ function closeMusicPlayer() {
         @keyframes mpBar0 { from{transform:scaleY(.25)} to{transform:scaleY(1)} }
         @keyframes mpBar1 { from{transform:scaleY(.45)} to{transform:scaleY(1.15)} }
         @keyframes mpBar2 { from{transform:scaleY(.3)}  to{transform:scaleY(.85)} }
-        @keyframes spin   { to{transform:rotate(360deg)} }
+        @keyframes mpSpin { to{transform:rotate(360deg)} }
         #music-section { will-change:transform; }
-        #music-import-overlay { transition:opacity .3s; }
     `;
     document.head.appendChild(s);
 })();
