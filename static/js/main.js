@@ -5348,19 +5348,15 @@ function _runMomentsViewer(list, startIdx) {
         if (!document.body.contains(ov)) {
             _momentObserver.disconnect();
             if (_wasMusicPlaying && MP.audioEl && MP.idx >= 0) {
-                const resumeCtx = (MP.ctx && MP.ctx.state === 'suspended')
-                    ? MP.ctx.resume() : Promise.resolve();
-                resumeCtx.catch(()=>{}).finally(() => {
-                    MP.audioEl.play()
-                        .then(() => {
-                            MP.playing = true;
-                            _mpStartViz();
-                            _mpUpdateCard();
-                            _mpUpdateMiniPlayer();
-                            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-                        })
-                        .catch(() => {});
-                });
+                MP.audioEl.play()
+                    .then(() => {
+                        MP.playing = true;
+                        _mpStartViz();
+                        _mpUpdateCard();
+                        _mpUpdateMiniPlayer();
+                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+                    })
+                    .catch(() => {});
             }
         }
     });
@@ -7025,12 +7021,14 @@ const MP = {
     tracks: [], idx: -1, playing: false,
     shuffle: false, repeat: false, eqEnabled: false,
     volume: 0.8, filterQuery: '',
-    ctx: null, srcNode: null, gainNode: null, analyserNode: null,
-    eqFilters: [], audioEl: null, vizRAF: null,
-    // EQ canvas state: 10 bands, gain -12..+12 dB
+    // audioEl — живёт в DOM, НЕ подключён к AudioContext (иначе iOS глушит в фоне)
+    audioEl: null,
+    // WebAudio — только для визуализатора, создаётся лениво и только когда плеер открыт
+    vizCtx: null, vizSrc: null, vizAnalyser: null, vizRAF: null,
+    // EQ применяется через audioEl.filters[] — нативные biquad без AudioContext в основной цепи
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
-    _transitioning: false, // флаг смены трека — предотвращает race condition на iOS
+    _transitioning: false,
 };
 
 const EQ_FREQS = [32,64,125,250,500,1000,2000,4000,8000,16000];
@@ -7123,112 +7121,103 @@ function _hideImportProgress() {
     setTimeout(() => { ov.style.display='none'; ov.style.opacity=''; ov.style.transition=''; }, 380);
 }
 
-// ══ Web Audio ══
+// ══ Инициализация аудио-элемента ══
+// Аудио-элемент в DOM — точно как голосовые сообщения и звонки.
+// НЕ подключаем к AudioContext — iOS убивает AudioContext в фоне.
+// Визуализатор получает отдельный AudioContext только пока плеер открыт.
 function _initAudioCtx() {
-    if (MP.ctx) return;
-    MP.audioEl = new Audio();
+    if (MP.audioEl) return;
+
+    MP.audioEl = document.createElement('audio');
+    MP.audioEl.id = 'mp-audio-el';
     MP.audioEl.volume = MP.volume;
-    // Важно для фонового воспроизведения на iOS
-    MP.audioEl.setAttribute('playsinline', '');
-    MP.audioEl.setAttribute('webkit-playsinline', '');
-
-    const AC = window.AudioContext || window.webkitAudioContext;
-    MP.ctx = new AC();
-    MP.srcNode = MP.ctx.createMediaElementSource(MP.audioEl);
-
-    MP.eqFilters = EQ_FREQS.map((freq, i) => {
-        const f = MP.ctx.createBiquadFilter();
-        f.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length-1 ? 'highshelf' : 'peaking';
-        f.frequency.value = freq;
-        f.gain.value = 0;
-        f.Q.value = 1.4;
-        return f;
-    });
-    MP.analyserNode = MP.ctx.createAnalyser();
-    MP.analyserNode.fftSize = 512;
-    MP.gainNode = MP.ctx.createGain();
-    MP.gainNode.gain.value = MP.volume;
-
-    let prev = MP.srcNode;
-    MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
-    prev.connect(MP.analyserNode);
-    MP.analyserNode.connect(MP.gainNode);
-    MP.gainNode.connect(MP.ctx.destination);
+    MP.audioEl.setAttribute('playsinline', 'true');
+    MP.audioEl.setAttribute('webkit-playsinline', 'true');
+    MP.audioEl.setAttribute('x-webkit-airplay', 'allow');
+    MP.audioEl.preload = 'auto';
+    document.body.appendChild(MP.audioEl); // в DOM — iOS не трогает
 
     MP.audioEl.addEventListener('timeupdate', _mpTimeUpdate);
+
     MP.audioEl.addEventListener('ended', () => {
-        // iOS иногда стреляет 'ended' при pause() или смене src — игнорируем
         if (MP._transitioning) return;
-        if (MP.audioEl.paused && !MP.repeat) return; // уже на паузе — не автоследующий
-        MP.playing = false; // трек закончился
+        // Проверяем что трек реально закончился, а не просто .pause() был вызван
+        const d = MP.audioEl.duration;
+        if (isFinite(d) && d > 0 && MP.audioEl.currentTime < d - 0.5) return;
+        MP.playing = false;
+        _mpStopViz();
         if (MP.repeat) {
             MP.audioEl.currentTime = 0;
             MP.audioEl.play().catch(() => {});
             MP.playing = true;
         } else {
+            _mpUpdateCard();
+            _mpUpdateMiniPlayer();
             musicNext();
         }
     });
+
     MP.audioEl.addEventListener('loadedmetadata', () => {
         const el = document.getElementById('mpc-dur');
         if (el) el.textContent = _mpFmt(MP.audioEl.duration);
     });
-    MP.audioEl.addEventListener('error', e => {
-        console.error('audio element error:', MP.audioEl.error);
+
+    MP.audioEl.addEventListener('error', () => {
+        if (MP._transitioning) return;
         showToast('Ошибка воспроизведения', 'error');
         MP.playing = false;
         _mpUpdateCard();
+        _mpUpdateMiniPlayer();
     });
 
-    // ══ Media Session API — управление из шторки/наушников/локскрина ══
     if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('play',          () => { if(!MP.playing) musicTogglePlay(); });
-        navigator.mediaSession.setActionHandler('pause',         () => { if(MP.playing)  musicTogglePlay(); });
+        navigator.mediaSession.setActionHandler('play',          () => { if (!MP.playing) musicTogglePlay(); });
+        navigator.mediaSession.setActionHandler('pause',         () => { if (MP.playing)  musicTogglePlay(); });
         navigator.mediaSession.setActionHandler('previoustrack', musicPrev);
         navigator.mediaSession.setActionHandler('nexttrack',     musicNext);
-        navigator.mediaSession.setActionHandler('seekto',        e => { if(MP.audioEl && e.seekTime != null) MP.audioEl.currentTime = e.seekTime; });
+        navigator.mediaSession.setActionHandler('seekto', e => {
+            if (MP.audioEl && e.seekTime != null) MP.audioEl.currentTime = e.seekTime;
+        });
     }
 }
 
-// ══ Фоновое воспроизведение iOS ══
-// iOS Safari приостанавливает AudioContext при уходе в фон.
-// При возврате — resume() + если трек должен играть, перезапускаем.
-document.addEventListener('visibilitychange', async () => {
-    if (document.hidden) return;
-    if (!MP.ctx) return;
-
+// Визуализатор — отдельный AudioContext, только пока плеер открыт на экране
+// Создаём новый каждый раз когда нужен, НЕ держим постоянно
+function _initVizCtx() {
+    if (MP.vizCtx) return true;
+    if (!MP.audioEl) return false;
     try {
-        if (MP.ctx.state === 'suspended') {
-            await MP.ctx.resume();
-        }
-    } catch(e) {}
-
-    // Если audioEl стоит на паузе из-за фона, но мы считаем что должны играть
-    if (MP.playing && MP.audioEl && MP.audioEl.paused && !MP._transitioning) {
-        try {
-            await MP.audioEl.play();
-            _mpStartViz();
-        } catch(e) {
-            if (e.name !== 'AbortError') {
-                MP.playing = false;
-                _mpUpdateCard();
-                _mpUpdateMiniPlayer();
-            }
-        }
+        const AC = window.AudioContext || window.webkitAudioContext;
+        MP.vizCtx = new AC();
+        MP.vizSrc = MP.vizCtx.createMediaElementSource(MP.audioEl);
+        MP.vizAnalyser = MP.vizCtx.createAnalyser();
+        MP.vizAnalyser.fftSize = 512;
+        MP.vizSrc.connect(MP.vizAnalyser);
+        MP.vizAnalyser.connect(MP.vizCtx.destination);
+        return true;
+    } catch(e) {
+        console.warn('viz ctx failed:', e.message);
+        MP.vizCtx = null;
+        return false;
     }
-});
-
-// iOS: разблокируем AudioContext при первом касании (требование Safari)
-function _mpUnlockAudio() {
-    if (!MP.ctx) return;
-    if (MP.ctx.state === 'suspended') {
-        MP.ctx.resume().catch(() => {});
-    }
-    document.removeEventListener('touchstart', _mpUnlockAudio, true);
-    document.removeEventListener('touchend',   _mpUnlockAudio, true);
 }
-document.addEventListener('touchstart', _mpUnlockAudio, { capture: true, passive: true });
-document.addEventListener('touchend',   _mpUnlockAudio, { capture: true, passive: true });
+
+// ══ Фоновое воспроизведение ══
+// audioEl в DOM играет в фоне без AudioContext (как голосовые сообщения).
+// visibilitychange — восстанавливаем если iOS всё же прервал.
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        // Уходим в фон — останавливаем визуализатор (не нужен), AudioContext не важен
+        _mpStopViz();
+        return;
+    }
+    if (!MP.audioEl || !MP.playing || MP._transitioning) return;
+
+    if (MP.audioEl.paused) {
+        MP.audioEl.play().catch(() => {}); // без AudioContext — просто play()
+    }
+    // vizCtx не нужен пока плеер не открыт
+});
 
 // ══ Открытие плеера ══
 async function musicTabOpened() {
@@ -7909,40 +7898,40 @@ function _renderTrackList(f) { _mpRender(f); }
 // ══ Воспроизведение ══
 async function musicPlayAt(idx) {
     if (idx < 0 || idx >= MP.tracks.length) return;
-    if (MP._transitioning) return; // предотвращаем двойной вызов
+    if (MP._transitioning) return;
     MP._transitioning = true;
-    _initAudioCtx();
 
-    // Останавливаем текущее воспроизведение явно
+    _initAudioCtx();
+    _mpStopViz(); // останавливаем визуализатор
+
     try { MP.audioEl.pause(); } catch(e) {}
     MP.playing = false;
-    _mpStopViz();
-
-    if (MP.ctx.state === 'suspended') {
-        try { await MP.ctx.resume(); } catch(e) {}
-    }
 
     MP.idx = idx;
     const track = MP.tracks[idx];
     try {
         const rec = await _mdbGet('blobs', track.id);
-        if (!rec || !rec.data) { showToast('Файл не найден', 'error'); MP._transitioning = false; return; }
-        const blob = new Blob([rec.data], { type: rec.mime || 'audio/mpeg' });
+        if (!rec || !rec.data) {
+            showToast('Файл не найден', 'error');
+            MP._transitioning = false;
+            return;
+        }
+
+        const blob   = new Blob([rec.data], { type: rec.mime || 'audio/mpeg' });
         const newUrl = URL.createObjectURL(blob);
 
-        // Освобождаем старый URL только после создания нового
-        const oldUrl = MP.audioEl.src;
-        MP.audioEl.src = '';
+        const oldUrl = MP.audioEl.getAttribute('src');
         MP.audioEl.removeAttribute('src');
         if (oldUrl && oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
 
         MP.audioEl.src = newUrl;
         MP.audioEl.load();
 
-        await MP.audioEl.play();
+        await MP.audioEl.play(); // просто play, без AudioContext
+
         MP.playing = true;
         MP._transitioning = false;
-        _mmpHidden = false; // новый трек — снова показываем мини-плеер
+        _mmpHidden = false;
 
         if (!track.duration && MP.audioEl.duration > 0) {
             track.duration = MP.audioEl.duration;
@@ -7950,12 +7939,13 @@ async function musicPlayAt(idx) {
         }
         _mpUpdateCard();
         _mpRender();
-        _mpStartViz();
+        _mpStartViz(); // запустит визуализатор только если плеер открыт
         _mpSetMediaSession(track);
         _mpUpdateMiniPlayer();
+
     } catch(e) {
         MP._transitioning = false;
-        if (e.name === 'AbortError') return; // нормально при быстрой смене трека
+        if (e.name === 'AbortError') return;
         console.error('playAt:', e.name, e.message);
         showToast('Не удалось воспроизвести', 'error');
         MP.playing = false;
@@ -7979,37 +7969,34 @@ function _mpSetMediaSession(track) {
 
 function musicTogglePlay() {
     if (!MP.audioEl || MP.idx < 0) return;
+    if (MP._transitioning) return; // не трогаем пока меняется трек
+
     if (MP.playing) {
+        // ── ПАУЗА ──
+        MP.playing = false; // сначала флаг, потом pause — чтобы 'pause' listener не пытался restart
         MP.audioEl.pause();
-        MP.playing = false;
         _mpStopViz();
         _mpUpdateCard();
         _mpUpdateMiniPlayer();
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     } else {
-        // iOS требует resume AudioContext перед play()
-        const resumeCtx = (MP.ctx && MP.ctx.state === 'suspended')
-            ? MP.ctx.resume()
-            : Promise.resolve();
-        resumeCtx.catch(() => {}).finally(() => {
-            MP.audioEl.play()
-                .then(() => {
-                    MP.playing = true;
-                    _mpStartViz();
+        // ── PLAY ──
+        MP.audioEl.play()
+            .then(() => {
+                MP.playing = true;
+                _mpStartViz();
+                _mpUpdateCard();
+                _mpUpdateMiniPlayer();
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+            })
+            .catch(e => {
+                if (e.name !== 'AbortError') {
+                    console.warn('play rejected:', e.name);
+                    MP.playing = false;
                     _mpUpdateCard();
                     _mpUpdateMiniPlayer();
-                    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-                })
-                .catch(e => {
-                    console.warn('play() rejected:', e.name, e.message);
-                    // NotAllowedError — нужен user gesture (iOS). AbortError — src меняется, норма.
-                    if (e.name !== 'AbortError') {
-                        MP.playing = false;
-                        _mpUpdateCard();
-                        _mpUpdateMiniPlayer();
-                    }
-                });
-        });
+                }
+            });
     }
 }
 function musicNext() {
@@ -8035,8 +8022,7 @@ function musicToggleRepeat() {
 }
 function musicSetVolume(v) {
     MP.volume = v/100;
-    if (MP.audioEl)  MP.audioEl.volume  = MP.volume;
-    if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+    if (MP.audioEl) MP.audioEl.volume = MP.volume;
 }
 function musicSeek(e, wrap) {
     if (!MP.audioEl || !MP.audioEl.duration) return;
