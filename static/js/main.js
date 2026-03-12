@@ -7141,7 +7141,13 @@ async function _mpLoadTracks() {
 function musicPickFiles() {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = 'audio/*,video/mp4,video/webm,video/quicktime,.mp3,.flac,.aac,.wav,.ogg,.m4a,.mp4,.mov,.webm,.mkv';
+    // iOS Safari лучше понимает явные MIME types + расширения
+    inp.accept = [
+        'audio/*',
+        'video/mp4','video/quicktime','video/webm','video/x-m4v',
+        '.mp3','.flac','.aac','.wav','.ogg','.m4a',
+        '.mp4','.mov','.m4v','.webm','.mkv','.3gp',
+    ].join(',');
     inp.multiple = true;
     inp.onchange = async e => {
         const files = Array.from(e.target.files || []);
@@ -7155,7 +7161,10 @@ async function _mpImportFiles(files) {
     let done=0, added=0, errors=0;
     for (const file of files) {
         const name = file.name.replace(/\.[^/.]+$/, '');
-        const isVideo = file.type.startsWith('video/') || /\.(mp4|mov|webm|avi|mkv|m4v)$/i.test(file.name);
+        // iOS Safari иногда отдаёт пустой file.type — проверяем и по расширению
+        const isVideo = file.type.startsWith('video/') ||
+                        file.type === '' && /\.(mp4|mov|webm|avi|mkv|m4v|m4b|3gp)$/i.test(file.name) ||
+                        /\.(mp4|mov|m4v|3gp)$/i.test(file.name); // .mov и .mp4 всегда видео
         try {
             if (isVideo) {
                 await _mpImportVideo(file, (p, sub) => {
@@ -7171,8 +7180,18 @@ async function _mpImportFiles(files) {
     }
     _hideImportProgress();
     await _mpLoadTracks();
-    if (added > 0) showToast(`Добавлено ${added} трек${added===1?'':'ов'} 🎵`, 'success');
-    else showToast('Не удалось добавить файлы', 'error');
+    if (added > 0) {
+        showToast(`Добавлено ${added} трек${added===1?'':'ов'} 🎵`, 'success');
+    } else {
+        // Показываем подсказку для iOS
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        if (isIOS) {
+            _mpShowIOSHelp();
+        } else {
+            showToast('Не удалось добавить файлы', 'error');
+        }
+    }
 }
 
 // ══ Импорт аудио ══
@@ -7194,41 +7213,62 @@ async function _mpImportAudio(file) {
 async function _mpImportVideo(file, onProgress) {
     onProgress(5, '📂 Читаю файл…');
 
-    // Метод 1: decodeAudioData только для НЕБОЛЬШИХ файлов (<80MB)
-    // Для длинных видео сразу используем MediaRecorder (стриминг без буферизации всего файла)
-    if (file.size < 80 * 1024 * 1024) {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+    // ══ Метод 1: decodeAudioData ══
+    // Работает везде включая iOS Safari. На iOS — единственный надёжный метод.
+    // Ограничение: файл целиком в RAM. Для больших файлов на iOS всё равно нет альтернативы.
+    try {
+        onProgress(10, '📖 Читаю файл…');
+        const arrBuf = await file.arrayBuffer();
+        onProgress(30, '🔊 Декодирую аудио…');
+
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const tmpCtx = new AC();
+        let audioBuf;
         try {
-            onProgress(15, '🔊 Декодирую аудио…');
-            const tmpCtx = new (window.AudioContext || window.webkitAudioContext)();
-            const arrBuf = await file.arrayBuffer();
-            let audioBuf;
-            try {
-                audioBuf = await tmpCtx.decodeAudioData(arrBuf.slice(0));
-            } finally {
-                await tmpCtx.close().catch(()=>{});
-            }
-            onProgress(75, '💾 Конвертирую…');
-            const wavBlob = _mpToWav(audioBuf);
-            const wavBuf  = await wavBlob.arrayBuffer();
-            onProgress(92, '📝 Сохраняю…');
-            const id = await _mdbPut('tracks', {
-                title: file.name.replace(/\.[^/.]+$/,''),
-                artist: '🎬 из видео', album: '',
-                duration: audioBuf.duration,
-                coverUrl: null, isFromVideo: true,
-                size: wavBuf.byteLength, addedAt: Date.now(),
+            // iOS: decodeAudioData не поддерживает Promise-синтаксис в старых версиях,
+            // используем callback-обёртку которая работает везде
+            audioBuf = await new Promise((res, rej) => {
+                tmpCtx.decodeAudioData(
+                    arrBuf.slice(0),
+                    buf => res(buf),
+                    err => rej(err || new Error('decodeAudioData failed'))
+                );
             });
-            await _mdbPut('blobs', { id, data: wavBuf, mime: 'audio/wav' });
-            onProgress(100, '✅ Готово');
-            return;
-        } catch(e) {
-            console.warn('decodeAudioData failed, using MediaRecorder:', e.message);
+        } finally {
+            tmpCtx.close().catch(() => {});
         }
-    } else {
-        onProgress(8, '🎬 Большое видео — стриминговый режим…');
+
+        onProgress(70, '💾 Конвертирую в WAV…');
+        const wavBlob = _mpToWav(audioBuf);
+        const wavBuf  = await wavBlob.arrayBuffer();
+        onProgress(90, '📝 Сохраняю…');
+        const id = await _mdbPut('tracks', {
+            title:       file.name.replace(/\.[^/.]+$/, ''),
+            artist:      '🎬 из видео',
+            album:       '',
+            duration:    audioBuf.duration,
+            coverUrl:    null,
+            isFromVideo: true,
+            size:        wavBuf.byteLength,
+            addedAt:     Date.now(),
+        });
+        await _mdbPut('blobs', { id, data: wavBuf, mime: 'audio/wav' });
+        onProgress(100, '✅ Готово');
+        return;
+    } catch(e) {
+        console.warn('decodeAudioData failed:', e.message || e);
+        if (isIOS) {
+            // На iOS больше нет вариантов — captureStream и MediaRecorder не работают
+            throw new Error('iOS: не удалось декодировать видео. Попробуй конвертировать в MP4 (H.264+AAC).');
+        }
     }
 
-    // Метод 2: MediaRecorder — работает для ЛЮБОЙ длины, никакой буферизации
+    // ══ Метод 2: MediaRecorder — только для Android/Desktop ══
+    // На iOS captureStream() не существует
+    onProgress(8, '🎬 Стриминговый режим…');
     await _mpImportVideoStream(file, onProgress);
 }
 
@@ -7341,23 +7381,65 @@ async function _mpImportVideoStream(file, onProgress) {
     });
 }
 
-// ══ PCM → WAV ══
+// ══ Подсказка iOS ══
+function _mpShowIOSHelp() {
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.85);backdrop-filter:blur(16px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center';
+    d.innerHTML = `
+        <div style="font-size:40px;margin-bottom:16px">⚠️</div>
+        <div style="font-size:18px;font-weight:800;margin-bottom:12px">Не удалось прочитать файл</div>
+        <div style="font-size:14px;color:rgba(255,255,255,.6);line-height:1.6;margin-bottom:24px">
+            Убедись что видео в формате <b style="color:white">MP4</b> (H.264 + AAC).<br>
+            Файлы записанные камерой iPhone обычно работают.<br>
+            <br>
+            Если проблема остаётся — попробуй добавить<br>аудио файл напрямую (MP3, AAC, M4A).
+        </div>
+        <button onclick="this.parentNode.remove()" style="padding:13px 32px;background:var(--accent);border:none;border-radius:14px;color:#000;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit">Понятно</button>`;
+    document.body.appendChild(d);
+}
+
+// ══ PCM → WAV с умным даунсемплингом для экономии памяти на iOS ══
 function _mpToWav(buf) {
-    const nCh=buf.numberOfChannels, rate=buf.sampleRate, frames=buf.length;
-    const bytes=frames*nCh*2, ab=new ArrayBuffer(44+bytes), v=new DataView(ab);
-    const s=(str,off)=>{for(let i=0;i<str.length;i++)v.setUint8(off+i,str.charCodeAt(i));};
-    s('RIFF',0);v.setUint32(4,36+bytes,true);s('WAVE',8);s('fmt ',12);
-    v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,nCh,true);
-    v.setUint32(24,rate,true);v.setUint32(28,rate*nCh*2,true);
-    v.setUint16(32,nCh*2,true);v.setUint16(34,16,true);
-    s('data',36);v.setUint32(40,bytes,true);
-    let off=44;
-    const chs=Array.from({length:nCh},(_,c)=>buf.getChannelData(c));
-    for(let i=0;i<frames;i++)for(let c=0;c<nCh;c++){
-        const x=Math.max(-1,Math.min(1,chs[c][i]));
-        v.setInt16(off,x<0?x*0x8000:x*0x7FFF,true);off+=2;
+    // На iOS ограниченная RAM — конвертируем в моно 44100Hz если стерео/высокий rate
+    const srcRate = buf.sampleRate;
+    const outRate = srcRate > 44100 ? 44100 : srcRate;
+    const outCh   = 1; // всегда моно — вдвое меньше памяти, для музыки достаточно
+
+    const srcFrames = buf.length;
+    // Ресемплинг: линейная интерполяция
+    const ratio     = srcRate / outRate;
+    const outFrames = Math.ceil(srcFrames / ratio);
+
+    // Смешиваем все каналы в моно
+    const srcL = buf.getChannelData(0);
+    const srcR = buf.numberOfChannels > 1 ? buf.getChannelData(1) : srcL;
+
+    const bytes = outFrames * outCh * 2;
+    const ab    = new ArrayBuffer(44 + bytes);
+    const v     = new DataView(ab);
+    const s     = (str, off) => { for(let i=0;i<str.length;i++) v.setUint8(off+i, str.charCodeAt(i)); };
+
+    s('RIFF',0); v.setUint32(4, 36+bytes, true);
+    s('WAVE',8); s('fmt ',12);
+    v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,outCh,true);
+    v.setUint32(24,outRate,true); v.setUint32(28,outRate*outCh*2,true);
+    v.setUint16(32,outCh*2,true); v.setUint16(34,16,true);
+    s('data',36); v.setUint32(40,bytes,true);
+
+    let off = 44;
+    for (let i = 0; i < outFrames; i++) {
+        const srcIdx = i * ratio;
+        const lo = Math.floor(srcIdx);
+        const hi = Math.min(lo + 1, srcFrames - 1);
+        const frac = srcIdx - lo;
+        // Линейная интерполяция + микс L+R в моно
+        const lSample = srcL[lo] + (srcL[hi] - srcL[lo]) * frac;
+        const rSample = srcR[lo] + (srcR[hi] - srcR[lo]) * frac;
+        const mono    = Math.max(-1, Math.min(1, (lSample + rSample) * 0.5));
+        v.setInt16(off, mono < 0 ? mono * 0x8000 : mono * 0x7FFF, true);
+        off += 2;
     }
-    return new Blob([ab],{type:'audio/wav'});
+    return new Blob([ab], { type: 'audio/wav' });
 }
 
 // ══ ID3 tags ══
