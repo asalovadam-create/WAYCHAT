@@ -1090,8 +1090,7 @@ body {
         </div>
 
         <!-- ══ НАСТРОЙКИ ══ -->
-        <div id="settings-section" class="hidden" style="background:#111">
-        <div id="settings-section" class="hidden" style="background:#111">
+        <div id="settings-section" class="hidden" style="background:#111;overflow-y:auto;height:100%">
             <!-- iOS 26 hero: размытый фон из аватара -->
             <div style="position:relative;height:300px;overflow:hidden;flex-shrink:0">
                 <div id="settings-bg" style="position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(0.45) saturate(1.7);transition:background-image 0.4s"></div>
@@ -1389,7 +1388,7 @@ function switchTab(tab) {
             if (c) renderMomentsList(c, momentsCache);
         }
     }
-    if (tab === 'settings') updateSettingsUI();
+    if (tab === 'settings') { updateSettingsUI(); setTimeout(_injectMusicButton, 50); }
     vibrate(8);
 }
 
@@ -6970,39 +6969,33 @@ const EQ_PRESETS = {
 
 // ── Добавляем кнопку «Музыка» в настройки/профиль ──
 function _injectMusicButton() {
-    // Ищем секцию настроек — вставляем красивую карточку
-    const existing = document.getElementById('music-open-btn');
-    if (existing) return;
-    const settingsContent = document.querySelector('#settings-section .settings-section');
-    if (!settingsContent) return;
+    if (document.getElementById('music-open-btn')) return;
+
+    // Вставляем кнопку «Музыка» в блок настроек — перед разделом «Контакты»
+    const contactsHeader = [...document.querySelectorAll('#settings-section p')]
+        .find(p => p.textContent.trim() === 'Контакты');
+    if (!contactsHeader) return;
+    const insertTarget = contactsHeader.closest('div[style*="margin-bottom"]') || contactsHeader.parentNode;
+
     const wrap = document.createElement('div');
     wrap.id = 'music-open-btn';
-    wrap.style.cssText = [
-        'margin:16px 0',
-        'background:linear-gradient(135deg,rgba(16,185,129,.15),rgba(99,102,241,.1))',
-        'border:.5px solid rgba(16,185,129,.25)',
-        'border-radius:20px',
-        'padding:16px 18px',
-        'display:flex;align-items:center;gap:14px',
-        'cursor:pointer',
-        '-webkit-tap-highlight-color:transparent',
-    ].join(';');
+    wrap.style.cssText = 'margin-bottom:8px';
     wrap.innerHTML = `
-        <div style="width:46px;height:46px;border-radius:14px;background:rgba(16,185,129,.18);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                <path d="M9 18V5l12-2v13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <circle cx="6" cy="18" r="3" stroke="var(--accent)" stroke-width="2"/>
-                <circle cx="18" cy="16" r="3" stroke="var(--accent)" stroke-width="2"/>
-            </svg>
-        </div>
-        <div style="flex:1">
-            <div style="font-size:15px;font-weight:700">Музыка</div>
-            <div id="music-btn-subtitle" style="font-size:12px;color:rgba(255,255,255,.4);margin-top:2px">Открыть плеер</div>
-        </div>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="opacity:.3"><path d="M9 18l6-6-6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-    wrap.addEventListener('click', openMusicPlayer);
-    // Вставляем в первую settings-section
-    settingsContent.parentNode.insertBefore(wrap, settingsContent);
+        <div onclick="openMusicPlayer()" style="display:flex;align-items:center;gap:14px;padding:14px 16px;background:linear-gradient(135deg,rgba(16,185,129,.12),rgba(99,102,241,.07));border:.5px solid rgba(16,185,129,.2);border-radius:18px;cursor:pointer;-webkit-tap-highlight-color:transparent">
+            <div style="width:42px;height:42px;border-radius:13px;background:rgba(16,185,129,.18);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 18V5l12-2v13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="6" cy="18" r="3" stroke="var(--accent)" stroke-width="2"/>
+                    <circle cx="18" cy="16" r="3" stroke="var(--accent)" stroke-width="2"/>
+                </svg>
+            </div>
+            <div style="flex:1">
+                <div style="font-size:15px;font-weight:600">Музыка</div>
+                <div id="music-btn-subtitle" style="font-size:12px;color:rgba(255,255,255,.38);margin-top:2px">Открыть плеер</div>
+            </div>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style="opacity:.3;flex-shrink:0"><path d="M9 18l6-6-6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>`;
+    insertTarget.parentNode.insertBefore(wrap, insertTarget);
 }
 
 // ── Открыть / закрыть плеер ──
