@@ -1235,6 +1235,40 @@ body {
     </div>
 </div>
 
+<!-- ══ МИНИ-ПЛЕЕР (глобальный, поверх всего) ══ -->
+<div id="music-mini-player" style="display:none;position:fixed;bottom:calc(env(safe-area-inset-bottom) + 68px);left:12px;right:12px;z-index:6500;border-radius:18px;overflow:hidden;background:rgba(15,15,20,0.96);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:.5px solid rgba(255,255,255,.1);box-shadow:0 8px 40px rgba(0,0,0,.7);transform:translateY(120%);transition:transform .4s cubic-bezier(.32,.72,0,1)">
+    <!-- Прогресс бар сверху -->
+    <div style="height:2.5px;background:rgba(255,255,255,.08);position:relative">
+        <div id="mmp-prog" style="height:100%;background:var(--accent);width:0%;transition:width .5s linear;border-radius:0 2px 2px 0"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px">
+        <!-- Обложка -->
+        <div id="mmp-cover" onclick="openMusicPlayer()" style="width:40px;height:40px;border-radius:10px;flex-shrink:0;overflow:hidden;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="opacity:.4"><path d="M9 18V5l12-2v13" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" stroke="white" stroke-width="2"/><circle cx="18" cy="16" r="3" stroke="white" stroke-width="2"/></svg>
+        </div>
+        <!-- Инфо (кликабельно — открывает плеер) -->
+        <div onclick="openMusicPlayer()" style="flex:1;min-width:0;cursor:pointer">
+            <div id="mmp-title" style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:white;line-height:1.2">—</div>
+            <div id="mmp-artist" style="font-size:12px;color:rgba(255,255,255,.45);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+        </div>
+        <!-- Кнопки управления -->
+        <div style="display:flex;align-items:center;gap:2px;flex-shrink:0">
+            <button onclick="musicPrev()" style="width:38px;height:38px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.7);-webkit-tap-highlight-color:transparent" onpointerdown="this.style.background='rgba(255,255,255,.1)'" onpointerup="this.style.background='transparent'" onpointerleave="this.style.background='transparent'">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="19 20 9 12 19 4 19 20" fill="currentColor"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            <button id="mmp-play-btn" onclick="musicTogglePlay()" style="width:44px;height:44px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;transition:transform .1s;flex-shrink:0" onpointerdown="this.style.transform='scale(.9)'" onpointerup="this.style.transform=''" onpointerleave="this.style.transform=''">
+                <svg id="mmp-play-ico" width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="black"/></svg>
+            </button>
+            <button onclick="musicNext()" style="width:38px;height:38px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.7);-webkit-tap-highlight-color:transparent" onpointerdown="this.style.background='rgba(255,255,255,.1)'" onpointerup="this.style.background='transparent'" onpointerleave="this.style.background='transparent'">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polygon points="5 4 15 12 5 20 5 4" fill="currentColor"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            <button onclick="_mpCloseMiniPlayer()" style="width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.3);-webkit-tap-highlight-color:transparent;margin-left:2px" onpointerdown="this.style.color='rgba(255,255,255,.7)'" onpointerup="this.style.color='rgba(255,255,255,.3)'" onpointerleave="this.style.color='rgba(255,255,255,.3)'">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- ══ ЧАТ ОКНО ══ -->
 <div id="chat-window" class="chat-view">
     <div id="chat-header" class="glass" style="padding:10px 14px;padding-top:max(env(safe-area-inset-top),44px);display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);position:relative;z-index:5">
@@ -5091,6 +5125,16 @@ function _cl_video_poster(videoUrl) {
 }
 
 function _runMomentsViewer(list, startIdx) {
+    // Пауза музыки на время просмотра момента
+    const _wasMusicPlaying = MP.playing;
+    if (MP.playing && MP.audioEl) {
+        MP.audioEl.pause();
+        MP.playing = false;
+        _mpStopViz();
+        _mpUpdateCard();
+        _mpUpdateMiniPlayer();
+    }
+
     let idx = startIdx;
     let autoTimer = null;
     let mediaLoaded = false;
@@ -5298,6 +5342,29 @@ function _runMomentsViewer(list, startIdx) {
 
     document.body.appendChild(ov);
     render();
+
+    // Следим за удалением оверлея — возобновляем музыку
+    const _momentObserver = new MutationObserver(() => {
+        if (!document.body.contains(ov)) {
+            _momentObserver.disconnect();
+            if (_wasMusicPlaying && MP.audioEl && MP.idx >= 0) {
+                const resumeCtx = (MP.ctx && MP.ctx.state === 'suspended')
+                    ? MP.ctx.resume() : Promise.resolve();
+                resumeCtx.catch(()=>{}).finally(() => {
+                    MP.audioEl.play()
+                        .then(() => {
+                            MP.playing = true;
+                            _mpStartViz();
+                            _mpUpdateCard();
+                            _mpUpdateMiniPlayer();
+                            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+                        })
+                        .catch(() => {});
+                });
+            }
+        }
+    });
+    _momentObserver.observe(document.body, { childList: true });
 }
 
 const _viewersCache = {};
@@ -6963,6 +7030,7 @@ const MP = {
     // EQ canvas state: 10 bands, gain -12..+12 dB
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
+    _transitioning: false, // флаг смены трека — предотвращает race condition на iOS
 };
 
 const EQ_FREQS = [32,64,125,250,500,1000,2000,4000,8000,16000];
@@ -7089,8 +7157,17 @@ function _initAudioCtx() {
 
     MP.audioEl.addEventListener('timeupdate', _mpTimeUpdate);
     MP.audioEl.addEventListener('ended', () => {
-        if (MP.repeat) { MP.audioEl.currentTime = 0; MP.audioEl.play().catch(()=>{}); }
-        else musicNext();
+        // iOS иногда стреляет 'ended' при pause() или смене src — игнорируем
+        if (MP._transitioning) return;
+        if (MP.audioEl.paused && !MP.repeat) return; // уже на паузе — не автоследующий
+        MP.playing = false; // трек закончился
+        if (MP.repeat) {
+            MP.audioEl.currentTime = 0;
+            MP.audioEl.play().catch(() => {});
+            MP.playing = true;
+        } else {
+            musicNext();
+        }
     });
     MP.audioEl.addEventListener('loadedmetadata', () => {
         const el = document.getElementById('mpc-dur');
@@ -7113,12 +7190,45 @@ function _initAudioCtx() {
     }
 }
 
-// ══ Фоновое воспроизведение — iOS требует AudioContext resume при visibilitychange ══
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && MP.ctx && MP.ctx.state === 'suspended' && MP.playing) {
-        MP.ctx.resume().catch(() => {});
+// ══ Фоновое воспроизведение iOS ══
+// iOS Safari приостанавливает AudioContext при уходе в фон.
+// При возврате — resume() + если трек должен играть, перезапускаем.
+document.addEventListener('visibilitychange', async () => {
+    if (document.hidden) return;
+    if (!MP.ctx) return;
+
+    try {
+        if (MP.ctx.state === 'suspended') {
+            await MP.ctx.resume();
+        }
+    } catch(e) {}
+
+    // Если audioEl стоит на паузе из-за фона, но мы считаем что должны играть
+    if (MP.playing && MP.audioEl && MP.audioEl.paused && !MP._transitioning) {
+        try {
+            await MP.audioEl.play();
+            _mpStartViz();
+        } catch(e) {
+            if (e.name !== 'AbortError') {
+                MP.playing = false;
+                _mpUpdateCard();
+                _mpUpdateMiniPlayer();
+            }
+        }
     }
 });
+
+// iOS: разблокируем AudioContext при первом касании (требование Safari)
+function _mpUnlockAudio() {
+    if (!MP.ctx) return;
+    if (MP.ctx.state === 'suspended') {
+        MP.ctx.resume().catch(() => {});
+    }
+    document.removeEventListener('touchstart', _mpUnlockAudio, true);
+    document.removeEventListener('touchend',   _mpUnlockAudio, true);
+}
+document.addEventListener('touchstart', _mpUnlockAudio, { capture: true, passive: true });
+document.addEventListener('touchend',   _mpUnlockAudio, { capture: true, passive: true });
 
 // ══ Открытие плеера ══
 async function musicTabOpened() {
@@ -7799,31 +7909,58 @@ function _renderTrackList(f) { _mpRender(f); }
 // ══ Воспроизведение ══
 async function musicPlayAt(idx) {
     if (idx < 0 || idx >= MP.tracks.length) return;
+    if (MP._transitioning) return; // предотвращаем двойной вызов
+    MP._transitioning = true;
     _initAudioCtx();
+
+    // Останавливаем текущее воспроизведение явно
+    try { MP.audioEl.pause(); } catch(e) {}
+    MP.playing = false;
+    _mpStopViz();
+
     if (MP.ctx.state === 'suspended') {
         try { await MP.ctx.resume(); } catch(e) {}
     }
+
     MP.idx = idx;
     const track = MP.tracks[idx];
     try {
         const rec = await _mdbGet('blobs', track.id);
-        if (!rec || !rec.data) { showToast('Файл не найден', 'error'); return; }
+        if (!rec || !rec.data) { showToast('Файл не найден', 'error'); MP._transitioning = false; return; }
         const blob = new Blob([rec.data], { type: rec.mime || 'audio/mpeg' });
-        const url  = URL.createObjectURL(blob);
-        if (MP.audioEl.src) URL.revokeObjectURL(MP.audioEl.src);
-        MP.audioEl.src = url;
+        const newUrl = URL.createObjectURL(blob);
+
+        // Освобождаем старый URL только после создания нового
+        const oldUrl = MP.audioEl.src;
+        MP.audioEl.src = '';
+        MP.audioEl.removeAttribute('src');
+        if (oldUrl && oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
+
+        MP.audioEl.src = newUrl;
         MP.audioEl.load();
+
         await MP.audioEl.play();
         MP.playing = true;
-        if (!track.duration && MP.audioEl.duration > 0) { track.duration = MP.audioEl.duration; await _mdbPut('tracks', track); }
+        MP._transitioning = false;
+        _mmpHidden = false; // новый трек — снова показываем мини-плеер
+
+        if (!track.duration && MP.audioEl.duration > 0) {
+            track.duration = MP.audioEl.duration;
+            _mdbPut('tracks', track).catch(() => {});
+        }
         _mpUpdateCard();
         _mpRender();
         _mpStartViz();
         _mpSetMediaSession(track);
+        _mpUpdateMiniPlayer();
     } catch(e) {
-        console.error('playAt:', e);
+        MP._transitioning = false;
+        if (e.name === 'AbortError') return; // нормально при быстрой смене трека
+        console.error('playAt:', e.name, e.message);
         showToast('Не удалось воспроизвести', 'error');
-        MP.playing = false; _mpUpdateCard();
+        MP.playing = false;
+        _mpUpdateCard();
+        _mpUpdateMiniPlayer();
     }
 }
 
@@ -7846,17 +7983,34 @@ function musicTogglePlay() {
         MP.audioEl.pause();
         MP.playing = false;
         _mpStopViz();
+        _mpUpdateCard();
+        _mpUpdateMiniPlayer();
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     } else {
-        if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(()=>{});
-        MP.audioEl.play().catch(e => console.error(e));
-        MP.playing = true;
-        _mpStartViz();
-        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+        // iOS требует resume AudioContext перед play()
+        const resumeCtx = (MP.ctx && MP.ctx.state === 'suspended')
+            ? MP.ctx.resume()
+            : Promise.resolve();
+        resumeCtx.catch(() => {}).finally(() => {
+            MP.audioEl.play()
+                .then(() => {
+                    MP.playing = true;
+                    _mpStartViz();
+                    _mpUpdateCard();
+                    _mpUpdateMiniPlayer();
+                    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+                })
+                .catch(e => {
+                    console.warn('play() rejected:', e.name, e.message);
+                    // NotAllowedError — нужен user gesture (iOS). AbortError — src меняется, норма.
+                    if (e.name !== 'AbortError') {
+                        MP.playing = false;
+                        _mpUpdateCard();
+                        _mpUpdateMiniPlayer();
+                    }
+                });
+        });
     }
-    _mpUpdateCard();
-    const sub = document.getElementById('music-btn-subtitle');
-    if (sub && MP.tracks.length) sub.textContent = `${MP.tracks.length} треков · ${MP.playing ? '▶ играет' : 'пауза'}`;
 }
 function musicNext() {
     if (!MP.tracks.length) return;
@@ -7945,6 +8099,11 @@ function _mpTimeUpdate() {
     const cur = document.getElementById('mpc-cur');
     if (bar) bar.style.width = pct + '%';
     if (cur) cur.textContent = _mpFmt(MP.audioEl.currentTime);
+    // Мини-плеер прогресс
+    _mpUpdateMiniProgress();
+    // Карточка в профиле
+    const pp = document.getElementById('mppc-prog');
+    if (pp) pp.style.width = pct + '%';
     // Media Session position state
     if ('mediaSession' in navigator && 'setPositionState' in navigator.mediaSession) {
         try {
@@ -8072,6 +8231,76 @@ function _mpUpdateProfileCard() {
         : '<polygon points="4 3 18 11 4 19 4 3" fill="currentColor"/>';
     if (prog && MP.audioEl?.duration) {
         prog.style.width = (MP.audioEl.currentTime / MP.audioEl.duration * 100) + '%';
+    }
+}
+
+// ══ Мини-плеер — глобальный ══
+let _mmpHidden = false; // пользователь закрыл крестиком — не показываем пока трек не сменится
+
+function _mpUpdateMiniPlayer() {
+    const mmp = document.getElementById('music-mini-player');
+    if (!mmp) return;
+
+    const track = MP.tracks[MP.idx];
+    if (!track || _mmpHidden) {
+        // Скрываем с анимацией
+        mmp.style.transform = 'translateY(120%)';
+        setTimeout(() => { mmp.style.display = 'none'; }, 420);
+        return;
+    }
+
+    // Показываем
+    if (mmp.style.display === 'none') {
+        mmp.style.display = '';
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            mmp.style.transform = 'translateY(0)';
+        }));
+    }
+
+    // Обложка
+    const covEl = document.getElementById('mmp-cover');
+    if (covEl) {
+        if (track.coverUrl) {
+            covEl.innerHTML = `<img src="${track.coverUrl}" style="width:100%;height:100%;object-fit:cover">`;
+        } else if (track.isFromVideo) {
+            covEl.innerHTML = '<span style="font-size:18px">🎬</span>';
+        } else {
+            const letter = (track.title||'?')[0].toUpperCase();
+            const hue = letter.charCodeAt(0)*41%360;
+            covEl.innerHTML = `<span style="font-size:16px;font-weight:900;color:hsl(${hue},65%,65%)">${letter}</span>`;
+        }
+    }
+
+    const titleEl  = document.getElementById('mmp-title');
+    const artistEl = document.getElementById('mmp-artist');
+    const icoEl    = document.getElementById('mmp-play-ico');
+    if (titleEl)  titleEl.textContent  = track.title  || '—';
+    if (artistEl) artistEl.textContent = track.artist || '';
+    if (icoEl) icoEl.innerHTML = MP.playing
+        ? '<rect x="4" y="3" width="5" height="18" rx="1.5" fill="black"/><rect x="15" y="3" width="5" height="18" rx="1.5" fill="black"/>'
+        : '<polygon points="5 3 19 12 5 21 5 3" fill="black"/>';
+}
+
+function _mpUpdateMiniProgress() {
+    if (!MP.audioEl?.duration) return;
+    const prog = document.getElementById('mmp-prog');
+    if (prog) prog.style.width = (MP.audioEl.currentTime / MP.audioEl.duration * 100) + '%';
+}
+
+function _mpCloseMiniPlayer() {
+    _mmpHidden = true;
+    const mmp = document.getElementById('music-mini-player');
+    if (mmp) {
+        mmp.style.transform = 'translateY(120%)';
+        setTimeout(() => { mmp.style.display = 'none'; }, 420);
+    }
+    // Останавливаем музыку
+    if (MP.playing) {
+        MP.audioEl?.pause();
+        MP.playing = false;
+        _mpStopViz();
+        _mpUpdateCard();
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     }
 }
 
