@@ -7288,19 +7288,25 @@ function _mpSyncVizAudio() {
 }
 
 // Routing: управляем что слышно
-// audioEl — всегда играет, volume управляется через audioEl.volume
-// vizAudio — играет параллельно, eqGainNode.gain:
-//   EQ вкл: audioEl.volume=0 (глушим оригинал), eqGainNode.gain=vol (слышим EQ)
-//   EQ выкл: audioEl.volume=vol, eqGainNode.gain=0 (vizAudio в тишине, только анализ)
+// ROUTING:
+// audioEl — ВСЕГДА слышен и НИКОГДА не muted → фоновое воспроизведение гарантировано
+// EQ вкл на переднем плане: vizAudio тоже слышен (с EQ-обработкой),
+//   audioEl.volume снижаем до 0 только если мы на переднем плане
+//   → crossfade: передний план = только EQ-звук, фон = оригинал без EQ
+// При уходе в фон: vizAudio паузится, audioEl продолжает играть без EQ
 function _mpRoutingUpdate() {
     if (!MP.audioEl) return;
-    if (MP.eqEnabled && MP.eqCtx && MP.vizAudio) {
-        MP.audioEl.muted = true;             // глушим прямой звук
+    const inFg = !document.hidden;
+    if (MP.eqEnabled && inFg && MP.eqCtx && MP.vizAudio) {
+        // Передний план + EQ: audioEl тихо, vizAudio с EQ громко
+        MP.audioEl.volume = 0;
         if (MP.eqGainNode) MP.eqGainNode.gain.setTargetAtTime(MP.volume, MP.eqCtx.currentTime, 0.01);
     } else {
-        MP.audioEl.muted = false;
+        // Фон или EQ выкл: audioEl нормально, vizAudio тихо
         MP.audioEl.volume = MP.volume;
-        if (MP.eqGainNode) MP.eqGainNode.gain.setTargetAtTime(0, MP.eqCtx?.currentTime || 0, 0.01);
+        if (MP.eqGainNode && MP.eqCtx) {
+            MP.eqGainNode.gain.setTargetAtTime(0, MP.eqCtx.currentTime, 0.01);
+        }
     }
 }
 
@@ -7324,12 +7330,17 @@ function _mpVizAudioPause() {
 // vizAudio подключён, но мы его паузим при уходе в фон (он не нужен)
 document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
+        // Уходим в фон:
+        // 1. Восстанавливаем audioEl.volume (был 0 если EQ вкл на переднем плане)
+        if (MP.audioEl) MP.audioEl.volume = MP.volume;
+        // 2. Останавливаем визуализатор и vizAudio — в фоне не нужны
         _mpStopViz();
-        _mpVizAudioPause(); // vizAudio не нужен в фоне
-        // audioEl продолжает играть сам!
+        _mpVizAudioPause();
+        // audioEl продолжает играть — iOS его не трогает (нет createMediaElementSource)
         return;
     }
-    // Вернулись — resume AudioContext для EQ/визуализатора
+    // Вернулись на передний план:
+    // Resume AudioContext для EQ/визуализатора
     if (MP.eqCtx?.state === 'suspended') {
         await MP.eqCtx.resume().catch(() => {});
         _mpStartSilentBuffer();
@@ -7338,7 +7349,9 @@ document.addEventListener('visibilitychange', async () => {
     if (MP.playing && MP.audioEl?.paused && !MP._transitioning) {
         MP.audioEl.play().catch(() => {});
     }
-    // Возобновляем vizAudio если плеер открыт
+    // Обновляем routing (audioEl.volume=0 если EQ вкл)
+    _mpRoutingUpdate();
+    // Возобновляем vizAudio и визуализатор
     if (MP.playing) {
         if (MP.eqEnabled) _mpVizAudioPlay();
         const playerOpen = document.getElementById('music-section')?.style.display !== 'none';
@@ -8065,6 +8078,9 @@ async function musicPlayAt(idx) {
 
         await MP.audioEl.play();
 
+        // Обновляем routing (audioEl.volume=0 если EQ вкл на переднем плане)
+        _mpRoutingUpdate();
+
         // Запускаем vizAudio для EQ/визуализатора
         if (MP.vizAudio && MP.eqCtx) {
             MP.vizAudio.currentTime = MP.audioEl.currentTime;
@@ -8116,7 +8132,9 @@ function musicTogglePlay() {
     if (MP.playing) {
         // ── ПАУЗА ──
         MP.playing = false;
+        if (MP.audioEl) MP.audioEl.volume = MP.volume; // восстанавливаем если был 0 от EQ
         MP.audioEl.pause();
+        _mpVizAudioPause();
         _mpStopViz();
         _mpUpdateCard();
         _mpUpdateMiniPlayer();
