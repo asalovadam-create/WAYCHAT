@@ -7166,33 +7166,31 @@ function _initAudioEl() {
         navigator.mediaSession.setActionHandler('seekto', e => {
             if (MP.audioEl && e.seekTime != null) {
                 MP.audioEl.currentTime = e.seekTime;
-                if (MP.vizAudio) MP.vizAudio.currentTime = e.seekTime;
             }
         });
     }
 }
 
 // ══ Web Audio ══
-// ЕДИНСТВЕННАЯ РАБОЧАЯ АРХИТЕКТУРА для iOS Safari PWA:
+// ФИНАЛЬНАЯ АРХИТЕКТУРА:
 //
-//   audioEl  (DOM, НЕ в AudioContext)  ←── всегда играет, фон/блокировка = OK
-//   vizAudio (DOM, в AudioContext)     ←── EQ + визуализатор, только передний план
+//   audioEl → createMediaElementSource → eqFilters[10] → analyserNode → gainNode → destination
 //
-// EQ В ФОНЕ: audioEl играет БЕЗ EQ — это неизбежно на iOS.
-//            Нет никакого способа применить Web Audio EQ к элементу который
-//            работает в фоне. Это ограничение iOS Safari, не наш баг.
+// gainNode.gain = volume (0..1 обычно, до 3.0 для усиления)
+// EQ: BiquadFilter на каждой частоте
+// Фоновое воспроизведение: silent buffer keepalive держит ctx running
+// При блокировке экрана: ctx может suspend — keepalive interval делает resume каждые 25 сек
 //
-// НО: при возврате из фона vizAudio немедленно синхронизируется и EQ включается.
-// Keepalive interval пытается держать ctx живым через resume каждые 25 сек.
+// ВАЖНО: gainNode позволяет усиление выше 1.0 (например 2.0 = +200%) — это работает в фоне.
+// В отличие от audioEl.volume который ограничен 0..1 и игнорируется iOS.
 
 const MP = {
     tracks: [], idx: -1, playing: false,
     shuffle: false, repeat: false, eqEnabled: false,
     volume: 0.8, filterQuery: '',
-    audioEl:     null,  // главный — без AudioContext, фон гарантирован
-    vizAudio:    null,  // для EQ/визуализатора — через AudioContext
-    ctx:         null,  // AudioContext
-    vizSrc:      null,
+    audioEl:     null,
+    ctx:         null,
+    srcNode:     null,
     eqFilters:   [],
     analyserNode: null,
     gainNode:    null,
@@ -7202,17 +7200,20 @@ const MP = {
     _transitioning: false,
 };
 
-// ── Инициализация audioEl ──
+// ── Инициализация audioEl + AudioContext ──
 function _initAudioEl() {
     if (MP.audioEl) return;
+
     MP.audioEl = document.createElement('audio');
     MP.audioEl.id = 'mp-audio-main';
     MP.audioEl.setAttribute('playsinline', 'true');
     MP.audioEl.setAttribute('webkit-playsinline', 'true');
     MP.audioEl.setAttribute('x-webkit-airplay', 'allow');
     MP.audioEl.preload = 'auto';
-    MP.audioEl.volume = MP.volume;
     document.body.appendChild(MP.audioEl);
+
+    // Сразу строим AudioContext — audioEl и ctx неразделимы
+    _initWebAudio();
 
     MP.audioEl.addEventListener('timeupdate', _mpTimeUpdate);
     MP.audioEl.addEventListener('ended', () => {
@@ -7223,9 +7224,7 @@ function _initAudioEl() {
         _mpStopViz();
         if (MP.repeat) {
             MP.audioEl.currentTime = 0;
-            if (MP.vizAudio) MP.vizAudio.currentTime = 0;
             MP.audioEl.play().catch(() => {});
-            if (MP.vizAudio) MP.vizAudio.play().catch(() => {});
             MP.playing = true;
         } else {
             _mpUpdateCard(); _mpUpdateMiniPlayer(); musicNext();
@@ -7241,35 +7240,24 @@ function _initAudioEl() {
         MP.playing = false; _mpUpdateCard(); _mpUpdateMiniPlayer();
     });
     if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('play',  () => { if (!MP.playing) musicTogglePlay(); });
-        navigator.mediaSession.setActionHandler('pause', () => { if (MP.playing)  musicTogglePlay(); });
+        navigator.mediaSession.setActionHandler('play',          () => { if (!MP.playing) musicTogglePlay(); });
+        navigator.mediaSession.setActionHandler('pause',         () => { if (MP.playing)  musicTogglePlay(); });
         navigator.mediaSession.setActionHandler('previoustrack', musicPrev);
         navigator.mediaSession.setActionHandler('nexttrack',     musicNext);
         navigator.mediaSession.setActionHandler('seekto', e => {
-            if (e.seekTime != null) {
-                MP.audioEl.currentTime = e.seekTime;
-                if (MP.vizAudio) MP.vizAudio.currentTime = e.seekTime;
-            }
+            if (e.seekTime != null) MP.audioEl.currentTime = e.seekTime;
         });
     }
 }
 
-// ── Инициализация AudioContext + vizAudio ──
 function _initWebAudio() {
-    if (MP.ctx) return true;
-    if (!MP.audioEl) return false;
+    if (MP.ctx || !MP.audioEl) return false;
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
         MP.ctx = new AC();
 
-        // vizAudio — отдельный элемент ТОЛЬКО для AudioContext
-        MP.vizAudio = document.createElement('audio');
-        MP.vizAudio.setAttribute('playsinline', 'true');
-        MP.vizAudio.setAttribute('webkit-playsinline', 'true');
-        MP.vizAudio.preload = 'none';
-        document.body.appendChild(MP.vizAudio);
-
-        MP.vizSrc = MP.ctx.createMediaElementSource(MP.vizAudio);
+        // audioEl → srcNode → eqFilters → analyserNode → gainNode → destination
+        MP.srcNode = MP.ctx.createMediaElementSource(MP.audioEl);
 
         MP.eqFilters = EQ_FREQS.map((freq, i) => {
             const f = MP.ctx.createBiquadFilter();
@@ -7286,119 +7274,76 @@ function _initWebAudio() {
         MP.gainNode = MP.ctx.createGain();
         MP.gainNode.gain.value = MP.volume;
 
-        let prev = MP.vizSrc;
+        let prev = MP.srcNode;
         MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
         prev.connect(MP.analyserNode);
         MP.analyserNode.connect(MP.gainNode);
         MP.gainNode.connect(MP.ctx.destination);
 
-        _mpSilentKeepAlive(); // запускаем keepalive
+        _mpKeepAlive();
         return true;
     } catch(e) {
         console.warn('WebAudio failed:', e.message);
         MP.ctx = null; return false;
     }
 }
-function _initVizCtx() { return _initWebAudio(); }
+function _initVizCtx() { return !!MP.ctx; }
 
-// ── Silent keepalive: держим ctx.state='running' ──
-// Бесконечный тихий буфер + setInterval resume
-let _silentNode = null, _keepAliveTimer = null;
-function _mpSilentKeepAlive() {
+// ── Keepalive: держим ctx running в фоне ──
+let _silentNode = null, _keepTimer = null;
+function _mpKeepAlive() {
     if (!MP.ctx) return;
-    // Тихий буфер
+    // Бесконечный тихий буфер — iOS видит активное воспроизведение
     try {
         if (_silentNode) { try { _silentNode.stop(); } catch(e) {} }
         const buf = MP.ctx.createBuffer(1, MP.ctx.sampleRate, MP.ctx.sampleRate);
         const d = buf.getChannelData(0);
-        for (let i = 0; i < d.length; i++) d[i] = (Math.random()*2-1)*1e-10;
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 1e-10;
         _silentNode = MP.ctx.createBufferSource();
         _silentNode.buffer = buf;
         _silentNode.loop = true;
         _silentNode.connect(MP.ctx.destination);
         _silentNode.start(0);
     } catch(e) {}
-    // Interval resume — каждые 25 сек принудительно resume
-    if (_keepAliveTimer) clearInterval(_keepAliveTimer);
-    _keepAliveTimer = setInterval(() => {
+    // Resume каждые 25 сек на случай если iOS всё же suspend'нул
+    if (_keepTimer) clearInterval(_keepTimer);
+    _keepTimer = setInterval(() => {
         if (!MP.ctx) return;
-        if (MP.ctx.state === 'suspended') {
-            MP.ctx.resume().catch(() => {});
-        }
-        // Перезапускаем silent buffer если остановился
-        if (!_silentNode || _silentNode.playbackState === 'finished') {
-            _mpSilentKeepAlive();
-        }
+        if (MP.ctx.state === 'suspended') MP.ctx.resume().catch(() => {});
     }, 25000);
 }
 
-// ── Синхронизация vizAudio ──
-function _mpSyncViz(src, time) {
-    if (!MP.vizAudio) return;
-    if (src && MP.vizAudio.src !== src) {
-        MP.vizAudio.src = src;
-        MP.vizAudio.load();
-    }
-    if (isFinite(time) && Math.abs(MP.vizAudio.currentTime - time) > 0.3) {
-        MP.vizAudio.currentTime = time;
-    }
-}
-
-// ── Routing: что слышно ──
 function _mpRoutingUpdate() {
-    if (!MP.audioEl) return;
-    const fg = !document.hidden;
-    if (MP.eqEnabled && fg && MP.ctx && MP.vizAudio) {
-        // Передний план + EQ вкл: тихий audioEl, громкий vizAudio через EQ
-        MP.audioEl.volume = 0;
-        if (MP.gainNode) MP.gainNode.gain.setTargetAtTime(MP.volume, MP.ctx.currentTime, 0.015);
-    } else {
-        // Фон ИЛИ EQ выкл: audioEl слышен, vizAudio тихо
-        MP.audioEl.volume = MP.volume;
-        if (MP.gainNode && MP.ctx) MP.gainNode.gain.setTargetAtTime(0, MP.ctx.currentTime, 0.015);
-    }
+    // Громкость только через gainNode — работает на iOS в фоне
+    if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 }
-
-// ── vizAudio play/pause ──
-async function _mpVizPlay() {
-    if (!MP.vizAudio || !MP.ctx || !MP.playing) return;
-    if (MP.ctx.state === 'suspended') { await MP.ctx.resume().catch(() => {}); }
-    _mpSyncViz(MP.audioEl?.src, MP.audioEl?.currentTime || 0);
-    MP.vizAudio.play().catch(() => {});
-}
-function _mpVizPause() { MP.vizAudio?.pause(); }
 
 // ══ Фоновое воспроизведение ══
 document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
-        // Уходим в фон — audioEl.volume восстанавливаем (мог быть 0 от EQ)
-        if (MP.audioEl) MP.audioEl.volume = MP.volume;
         _mpStopViz();
-        _mpVizPause(); // vizAudio не нужен в фоне
-        // audioEl продолжает играть без AudioContext — iOS не может его остановить
-        return;
+        return; // keepalive держит ctx running — ничего не делаем
     }
-    // Вернулись на передний план
+    // Вернулись — resume если всё же suspend'нулся
     if (MP.ctx?.state === 'suspended') {
         await MP.ctx.resume().catch(() => {});
-        _mpSilentKeepAlive();
+        _mpKeepAlive();
     }
-    // Если audioEl был остановлен (очень редко) — восстанавливаем
     if (MP.playing && MP.audioEl?.paused && !MP._transitioning) {
         MP.audioEl.play().catch(() => {});
     }
-    // Обновляем routing и запускаем vizAudio с EQ
-    _mpRoutingUpdate();
-    if (MP.playing && MP.eqEnabled) _mpVizPlay();
     if (MP.playing) {
         const open = document.getElementById('music-section')?.style.display !== 'none';
         if (open) _mpStartViz();
     }
 });
 
-// iOS: разблокируем AudioContext при первом касании
+// iOS: разблокируем ctx при первом касании
 function _mpUnlockCtx() {
-    if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+    if (!MP.ctx) _initWebAudio();
+    if (MP.ctx?.state === 'suspended') {
+        MP.ctx.resume().then(() => _mpKeepAlive()).catch(() => {});
+    }
     document.removeEventListener('touchstart', _mpUnlockCtx, true);
 }
 document.addEventListener('touchstart', _mpUnlockCtx, { capture: true, passive: true });
@@ -8097,25 +8042,15 @@ async function musicPlayAt(idx) {
         // Инициализируем WebAudio если первый запуск
         if (!MP.ctx) _initWebAudio();
 
-        // vizAudio — тот же src для EQ/визуализатора
-        if (MP.vizAudio) {
-            MP.vizAudio.src = newUrl;
-            MP.vizAudio.load();
-        }
 
         if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
         _mpApplyEqToFilters();
 
         await MP.audioEl.play();
 
-        // Routing после play: если EQ вкл на переднем плане — audioEl.volume=0
-        _mpRoutingUpdate();
+        if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 
         // Запускаем vizAudio синхронно с audioEl
-        if (MP.vizAudio && MP.ctx) {
-            MP.vizAudio.currentTime = MP.audioEl.currentTime;
-            MP.vizAudio.play().catch(() => {});
-        }
 
         MP.playing = true;
         MP._transitioning = false;
@@ -8162,9 +8097,8 @@ function musicTogglePlay() {
     if (MP.playing) {
         // ── ПАУЗА ──
         MP.playing = false;
-        if (MP.audioEl) MP.audioEl.volume = MP.volume; // восстанавливаем если был 0 от EQ
         MP.audioEl.pause();
-        _mpVizPause();
+        (void 0);
         _mpStopViz();
         _mpUpdateCard();
         _mpUpdateMiniPlayer();
@@ -8173,14 +8107,11 @@ function musicTogglePlay() {
         // ── PLAY ──
         if (!MP.ctx) _initWebAudio();
         if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
-        _mpRoutingUpdate();
+        if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+        if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
         MP.audioEl.play()
             .then(() => {
                 MP.playing = true;
-                if (MP.vizAudio && MP.ctx) {
-                    MP.vizAudio.currentTime = MP.audioEl.currentTime;
-                    MP.vizAudio.play().catch(() => {});
-                }
                 _mpStartViz();
                 _mpUpdateCard();
                 _mpUpdateMiniPlayer();
@@ -8226,8 +8157,7 @@ function musicSeek(e, wrap) {
     const r = wrap.getBoundingClientRect();
     const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * MP.audioEl.duration;
     MP.audioEl.currentTime = t;
-    if (MP.vizAudio) MP.vizAudio.currentTime = t;
-}
+    }
 function musicSearch(q) { MP.filterQuery = q; _mpRender(q); }
 
 async function musicDeleteTrack(id) {
@@ -8380,7 +8310,7 @@ function musicApplyPreset(name) {
     if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); _mpRoutingUpdate(); }
     MP.eqGains = [...gains];
     _mpApplyEqToFilters();
-    if (MP.playing) _mpVizPlay();
+    if (MP.playing) (void 0);
     _mpDrawEq();
     showToast(`EQ: ${name}`, 'info');
 }
@@ -8389,8 +8319,8 @@ function musicToggleEQ() {
     if (!MP.ctx && MP.audioEl) _initWebAudio();
     _mpApplyEqToFilters();
     _mpRoutingUpdate();
-    if (MP.eqEnabled && MP.playing) _mpVizPlay();
-    else _mpVizPause();
+    if (MP.eqEnabled && MP.playing) (void 0);
+    else (void 0);
     _mpEqToggleUI(MP.eqEnabled);
     _mpDrawEq();
     showToast(MP.eqEnabled ? 'Эквалайзер включён' : 'Эквалайзер выключен', 'info');
@@ -8399,7 +8329,7 @@ function musicDisableEQ() {
     MP.eqEnabled = false;
     _mpApplyEqToFilters();
     _mpRoutingUpdate();
-    _mpVizPause();
+    (void 0);
     _mpEqToggleUI(false);
     _mpDrawEq();
 }
