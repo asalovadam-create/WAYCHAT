@@ -7021,11 +7021,13 @@ const MP = {
     tracks: [], idx: -1, playing: false,
     shuffle: false, repeat: false, eqEnabled: false,
     volume: 0.8, filterQuery: '',
-    audioEl: null,        // <audio> в DOM
-    ctx: null,            // AudioContext — для EQ + визуализатора
-    srcNode: null,        // MediaElementSource
-    eqFilters: [],        // BiquadFilter × 10
-    analyserNode: null,   // для визуализатора
+    // Главный элемент воспроизведения — НИКОГДА не подключается к AudioContext
+    // iOS не глушит DOM-аудио без AudioContext
+    audioEl: null,
+    // EQ/визуализатор — отдельный AudioContext с отдельным audioEl
+    // Работает только пока плеер открыт на экране, при уходе в фон отключается
+    eqCtx: null, eqSrc: null, eqAudio: null,
+    eqFilters: [], analyserNode: null,
     vizRAF: null,
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
@@ -7182,59 +7184,109 @@ function _initAudioCtx() {
     }
 }
 
-// Визуализатор — отдельный AudioContext, только пока плеер открыт на экране
-// Создаём новый каждый раз когда нужен, НЕ держим постоянно
+// ── Инициализация EQ/Визуализатора ──
+// Используем ОТДЕЛЬНЫЙ <audio> элемент (eqAudio) подключённый к AudioContext.
+// Главный audioEl НИКОГДА не подключается к AudioContext → фон работает.
 function _initWebAudio() {
-    if (MP.ctx || !MP.audioEl) return false;
+    if (MP.eqCtx) return true;
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
-        MP.ctx = new AC();
+        MP.eqCtx = new AC();
 
-        // audioEl → srcNode → eq[0..9] → analyser → destination
-        MP.srcNode = MP.ctx.createMediaElementSource(MP.audioEl);
+        // Отдельный <audio> для EQ — только для обработки звука в AudioContext
+        MP.eqAudio = document.createElement('audio');
+        MP.eqAudio.volume = MP.volume;
+        MP.eqAudio.setAttribute('playsinline', 'true');
+        MP.eqAudio.muted = !MP.eqEnabled; // звук через eqAudio только когда EQ вкл
+        document.body.appendChild(MP.eqAudio);
+
+        MP.eqSrc = MP.eqCtx.createMediaElementSource(MP.eqAudio);
 
         MP.eqFilters = EQ_FREQS.map((freq, i) => {
-            const f = MP.ctx.createBiquadFilter();
+            const f = MP.eqCtx.createBiquadFilter();
             f.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length-1 ? 'highshelf' : 'peaking';
             f.frequency.value = freq;
-            f.gain.value = 0;
+            f.gain.value = MP.eqEnabled ? (MP.eqGains[i]||0) : 0;
             f.Q.value = 1.4;
             return f;
         });
 
-        MP.analyserNode = MP.ctx.createAnalyser();
+        MP.analyserNode = MP.eqCtx.createAnalyser();
         MP.analyserNode.fftSize = 512;
 
-        let prev = MP.srcNode;
+        let prev = MP.eqSrc;
         MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
         prev.connect(MP.analyserNode);
-        MP.analyserNode.connect(MP.ctx.destination);
+        MP.analyserNode.connect(MP.eqCtx.destination);
 
         return true;
     } catch(e) {
         console.warn('WebAudio init failed:', e.message);
-        MP.ctx = null;
+        MP.eqCtx = null;
         return false;
     }
 }
-// Алиас для совместимости
 function _initVizCtx() { return _initWebAudio(); }
+
+// Синхронизируем eqAudio с audioEl (src + position)
+function _mpSyncEqAudio() {
+    if (!MP.eqAudio || !MP.audioEl) return;
+    const src = MP.audioEl.src || MP.audioEl.getAttribute('src');
+    if (src && MP.eqAudio.src !== src) {
+        MP.eqAudio.src = src;
+        MP.eqAudio.load();
+    }
+    // Синхронизируем позицию если расхождение > 0.3 сек
+    const delta = Math.abs((MP.eqAudio.currentTime || 0) - (MP.audioEl.currentTime || 0));
+    if (delta > 0.3) MP.eqAudio.currentTime = MP.audioEl.currentTime;
+}
+
+// Запускаем/останавливаем eqAudio вместе с основным
+async function _mpEqAudioPlay() {
+    if (!MP.eqAudio || !MP.eqCtx) return;
+    _mpSyncEqAudio();
+    if (MP.eqCtx.state === 'suspended') await MP.eqCtx.resume().catch(() => {});
+    MP.eqAudio.play().catch(() => {});
+}
+function _mpEqAudioPause() {
+    if (MP.eqAudio) MP.eqAudio.pause();
+}
+
+// Когда EQ вкл — звук идёт через eqAudio (с обработкой), audioEl muted
+// Когда EQ выкл — звук через audioEl, eqAudio muted (только для визуализатора)
+function _mpRoutingUpdate() {
+    if (!MP.audioEl) return;
+    if (MP.eqEnabled && MP.eqAudio) {
+        MP.audioEl.muted = true;   // глушим прямой звук
+        MP.eqAudio.muted = false;  // звук через AudioContext с EQ
+    } else {
+        MP.audioEl.muted = false;  // прямой звук без обработки
+        if (MP.eqAudio) MP.eqAudio.muted = true;
+    }
+}
 
 // ══ Фоновое воспроизведение ══
 // audioEl в DOM играет в фоне без AudioContext (как голосовые сообщения).
-// visibilitychange — восстанавливаем если iOS всё же прервал.
+// visibilitychange — управляем eqAudio и визуализатором
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-        // Уходим в фон — останавливаем визуализатор (не нужен), AudioContext не важен
+        // Уходим в фон: останавливаем визуализатор и eqAudio
+        // audioEl продолжает играть сам — iOS его не трогает (нет AudioContext)
         _mpStopViz();
+        _mpEqAudioPause();
         return;
     }
     if (!MP.audioEl || !MP.playing || MP._transitioning) return;
 
-    if (MP.audioEl.paused) {
-        MP.audioEl.play().catch(() => {}); // без AudioContext — просто play()
+    // Вернулись: восстанавливаем audioEl если нужно
+    if (MP.audioEl.paused) MP.audioEl.play().catch(() => {});
+
+    // Запускаем eqAudio если плеер открыт
+    const playerOpen = document.getElementById('music-section')?.style.display !== 'none';
+    if (playerOpen) {
+        _mpEqAudioPlay();
+        _mpStartViz();
     }
-    // vizCtx не нужен пока плеер не открыт
 });
 
 // ══ Открытие плеера ══
@@ -7629,8 +7681,8 @@ function _mpInitEqCanvas() {
         const band = findBand(pos.x, pos.y);
         if (band < 0) return;
         MP.eqDragging = band;
-        if (!MP.ctx && MP.audioEl) _initWebAudio();
-        if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+        if (!MP.eqCtx && MP.audioEl) _initWebAudio();
+        if (MP.eqCtx?.state === 'suspended') MP.eqCtx.resume().catch(() => {});
         if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); _mpApplyEqToFilters(); }
         _mpDrawEq();
     }
@@ -7796,6 +7848,7 @@ function _mpApplyEqToFilters() {
     MP.eqGains.forEach((db, i) => {
         if (MP.eqFilters[i]) MP.eqFilters[i].gain.value = MP.eqEnabled ? db : 0;
     });
+    _mpRoutingUpdate();
 }
 
 // ══ Рендер треков ══
@@ -7927,7 +7980,10 @@ async function musicPlayAt(idx) {
         MP.audioEl.src = newUrl;
         MP.audioEl.load();
 
-        await MP.audioEl.play(); // просто play, без AudioContext
+        // Обновляем routing ДО play (иначе iOS мутирует не то)
+        _mpRoutingUpdate();
+
+        await MP.audioEl.play();
 
         MP.playing = true;
         MP._transitioning = false;
@@ -7939,7 +7995,7 @@ async function musicPlayAt(idx) {
         }
         _mpUpdateCard();
         _mpRender();
-        _mpStartViz(); // запустит визуализатор только если плеер открыт
+        _mpStartViz();
         _mpSetMediaSession(track);
         _mpUpdateMiniPlayer();
 
@@ -7973,8 +8029,9 @@ function musicTogglePlay() {
 
     if (MP.playing) {
         // ── ПАУЗА ──
-        MP.playing = false; // сначала флаг, потом pause — чтобы 'pause' listener не пытался restart
+        MP.playing = false;
         MP.audioEl.pause();
+        _mpEqAudioPause();
         _mpStopViz();
         _mpUpdateCard();
         _mpUpdateMiniPlayer();
@@ -8023,11 +8080,14 @@ function musicToggleRepeat() {
 function musicSetVolume(v) {
     MP.volume = v/100;
     if (MP.audioEl) MP.audioEl.volume = MP.volume;
+    if (MP.eqAudio) MP.eqAudio.volume = MP.volume;
 }
 function musicSeek(e, wrap) {
     if (!MP.audioEl || !MP.audioEl.duration) return;
     const r = wrap.getBoundingClientRect();
-    MP.audioEl.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * MP.audioEl.duration;
+    const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * MP.audioEl.duration;
+    MP.audioEl.currentTime = t;
+    if (MP.eqAudio) MP.eqAudio.currentTime = t;
 }
 function musicSearch(q) { MP.filterQuery = q; _mpRender(q); }
 
@@ -8113,8 +8173,8 @@ function _mpStartViz() {
     if (!canvas) return;
     if (MP.vizRAF) { cancelAnimationFrame(MP.vizRAF); MP.vizRAF = null; }
 
-    if (!MP.ctx) _initWebAudio();
-    if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+    if (!MP.eqCtx && MP.audioEl) _initWebAudio();
+    if (MP.playing) _mpEqAudioPlay();
 
     canvas.width  = canvas.offsetWidth  * (devicePixelRatio||1);
     canvas.height = canvas.offsetHeight * (devicePixelRatio||1);
@@ -8185,8 +8245,10 @@ function musicApplyPreset(name) {
 }
 function musicToggleEQ() {
     MP.eqEnabled = !MP.eqEnabled;
+    if (MP.eqEnabled && !MP.eqCtx && MP.audioEl) _initWebAudio();
     _mpEqToggleUI(MP.eqEnabled);
     _mpApplyEqToFilters();
+    if (MP.eqEnabled && MP.playing) _mpEqAudioPlay();
     _mpDrawEq();
     showToast(MP.eqEnabled ? 'Эквалайзер включён' : 'Эквалайзер выключен', 'info');
 }
