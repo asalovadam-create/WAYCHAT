@@ -7021,11 +7021,12 @@ const MP = {
     tracks: [], idx: -1, playing: false,
     shuffle: false, repeat: false, eqEnabled: false,
     volume: 0.8, filterQuery: '',
-    // audioEl — живёт в DOM, НЕ подключён к AudioContext (иначе iOS глушит в фоне)
-    audioEl: null,
-    // WebAudio — только для визуализатора, создаётся лениво и только когда плеер открыт
-    vizCtx: null, vizSrc: null, vizAnalyser: null, vizRAF: null,
-    // EQ применяется через audioEl.filters[] — нативные biquad без AudioContext в основной цепи
+    audioEl: null,        // <audio> в DOM
+    ctx: null,            // AudioContext — для EQ + визуализатора
+    srcNode: null,        // MediaElementSource
+    eqFilters: [],        // BiquadFilter × 10
+    analyserNode: null,   // для визуализатора
+    vizRAF: null,
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
     _transitioning: false,
@@ -7183,24 +7184,41 @@ function _initAudioCtx() {
 
 // Визуализатор — отдельный AudioContext, только пока плеер открыт на экране
 // Создаём новый каждый раз когда нужен, НЕ держим постоянно
-function _initVizCtx() {
-    if (MP.vizCtx) return true;
-    if (!MP.audioEl) return false;
+function _initWebAudio() {
+    if (MP.ctx || !MP.audioEl) return false;
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
-        MP.vizCtx = new AC();
-        MP.vizSrc = MP.vizCtx.createMediaElementSource(MP.audioEl);
-        MP.vizAnalyser = MP.vizCtx.createAnalyser();
-        MP.vizAnalyser.fftSize = 512;
-        MP.vizSrc.connect(MP.vizAnalyser);
-        MP.vizAnalyser.connect(MP.vizCtx.destination);
+        MP.ctx = new AC();
+
+        // audioEl → srcNode → eq[0..9] → analyser → destination
+        MP.srcNode = MP.ctx.createMediaElementSource(MP.audioEl);
+
+        MP.eqFilters = EQ_FREQS.map((freq, i) => {
+            const f = MP.ctx.createBiquadFilter();
+            f.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length-1 ? 'highshelf' : 'peaking';
+            f.frequency.value = freq;
+            f.gain.value = 0;
+            f.Q.value = 1.4;
+            return f;
+        });
+
+        MP.analyserNode = MP.ctx.createAnalyser();
+        MP.analyserNode.fftSize = 512;
+
+        let prev = MP.srcNode;
+        MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
+        prev.connect(MP.analyserNode);
+        MP.analyserNode.connect(MP.ctx.destination);
+
         return true;
     } catch(e) {
-        console.warn('viz ctx failed:', e.message);
-        MP.vizCtx = null;
+        console.warn('WebAudio init failed:', e.message);
+        MP.ctx = null;
         return false;
     }
 }
+// Алиас для совместимости
+function _initVizCtx() { return _initWebAudio(); }
 
 // ══ Фоновое воспроизведение ══
 // audioEl в DOM играет в фоне без AudioContext (как голосовые сообщения).
@@ -7226,6 +7244,8 @@ async function musicTabOpened() {
     _mpInitEqCanvas();
     if (MP.idx >= 0) _mpUpdateCard();
     _injectMusicButton();
+    // Перерисовываем EQ после того как секция стала видима (было display:none)
+    setTimeout(() => _mpDrawEq(), 80);
 }
 
 async function _mpLoadTracks() {
@@ -7581,217 +7601,197 @@ function _mpInitEqCanvas() {
     if (!canvas || canvas._mpInit) return;
     canvas._mpInit = true;
 
-    const dpr = window.devicePixelRatio || 1;
-
-    function resize() {
-        const rect = canvas.getBoundingClientRect();
-        canvas.width  = rect.width  * dpr;
-        canvas.height = rect.height * dpr;
-        _mpDrawEq();
-    }
-
-    // Resize observer
-    if (window.ResizeObserver) {
-        new ResizeObserver(resize).observe(canvas);
-    } else {
-        setTimeout(resize, 100);
-    }
-
-    // ── Взаимодействие: touch + mouse ──
     function getPos(e) {
         const rect = canvas.getBoundingClientRect();
-        const touch = e.touches ? e.touches[0] || e.changedTouches[0] : e;
+        const t = e.touches ? (e.touches[0] || e.changedTouches[0]) : e;
         return {
-            x: (touch.clientX - rect.left) / rect.width,
-            y: (touch.clientY - rect.top)  / rect.height,
+            x: Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width)),
+            y: Math.max(0, Math.min(1, (t.clientY - rect.top)  / rect.height)),
         };
     }
 
-    function yToGain(y) { return (0.5 - y) * 24; } // -12..+12 dB
-    function gainToY(g) { return 0.5 - g / 24; }
-    function xToBand(x) {
-        const n = EQ_FREQS.length;
-        return Math.max(0, Math.min(n-1, Math.round(x * (n-1) + 0.5) - 1));
-    }
+    function yToGain(y) { return (0.5 - y) * 24; }   // y=0 → +12dB, y=1 → -12dB
+    function gainToY(g) { return 0.5 - g / 24; }      // нормализованная позиция точки
     function bandToX(i) { return (i + 0.5) / EQ_FREQS.length; }
 
-    function findClosestBand(x, y) {
-        let best = -1, bestDist = Infinity;
-        for (let i = 0; i < EQ_FREQS.length; i++) {
-            const bx = bandToX(i);
-            const by = gainToY(MP.eqGains[i]);
-            const dist = Math.hypot(x - bx, y - by);
-            if (dist < bestDist) { bestDist = dist; best = i; }
-        }
-        // Хит-зона — 10% ширины (достаточно большая)
-        return bestDist < 0.12 ? best : -1;
+    function findBand(x, y) {
+        // Ищем ближайшую точку. По X — жёсткие зоны (каждая полоса = 1/N ширины)
+        // По Y — хит-зона ±0.25 (большая, чтобы легко попадать пальцем)
+        const bandIdx = Math.floor(x * EQ_FREQS.length);
+        const i = Math.max(0, Math.min(EQ_FREQS.length - 1, bandIdx));
+        const by = gainToY(MP.eqGains[i]);
+        return Math.abs(y - by) < 0.3 ? i : -1;
     }
 
     function onStart(e) {
         e.preventDefault();
-        const pos = getPos(e);
-        const band = findClosestBand(pos.x, pos.y);
-        if (band >= 0) {
-            MP.eqDragging = band;
-            if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); _mpApplyEqToFilters(); }
-        }
+        const pos  = getPos(e);
+        const band = findBand(pos.x, pos.y);
+        if (band < 0) return;
+        MP.eqDragging = band;
+        if (!MP.ctx && MP.audioEl) _initWebAudio();
+        if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+        if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); _mpApplyEqToFilters(); }
+        _mpDrawEq();
     }
 
     function onMove(e) {
         e.preventDefault();
         if (MP.eqDragging < 0) return;
         const pos  = getPos(e);
-        const gain = Math.max(-12, Math.min(12, yToGain(pos.y)));
-        MP.eqGains[MP.eqDragging] = Math.round(gain * 2) / 2; // шаг 0.5 dB
-        if (MP.eqFilters[MP.eqDragging]) MP.eqFilters[MP.eqDragging].gain.value = MP.eqGains[MP.eqDragging];
-        _mpDrawEq();
-        // Снимаем активный пресет
+        const gain = Math.round(Math.max(-12, Math.min(12, yToGain(pos.y))) * 2) / 2;
+        MP.eqGains[MP.eqDragging] = gain;
+        const f = MP.eqFilters[MP.eqDragging];
+        if (f) f.gain.value = MP.eqEnabled ? gain : 0;
         document.querySelectorAll('.eq-preset-btn').forEach(b => _mpEqPresetStyle(b, false));
+        _mpDrawEq();
     }
 
-    function onEnd(e) { MP.eqDragging = -1; }
+    function onEnd() { MP.eqDragging = -1; _mpDrawEq(); }
 
     canvas.addEventListener('touchstart',  onStart, { passive: false });
     canvas.addEventListener('touchmove',   onMove,  { passive: false });
     canvas.addEventListener('touchend',    onEnd,   { passive: false });
+    canvas.addEventListener('touchcancel', onEnd,   { passive: false });
     canvas.addEventListener('mousedown',   onStart);
-    canvas.addEventListener('mousemove',   onMove);
+    canvas.addEventListener('mousemove',   e => { if (e.buttons) onMove(e); });
     canvas.addEventListener('mouseup',     onEnd);
     canvas.addEventListener('mouseleave',  onEnd);
 
-    resize();
+    // Первый draw — canvas может быть скрыт, но draw всё равно вызовем
+    // Реальный resize произойдёт в _mpDrawEq каждый раз
+    setTimeout(() => _mpDrawEq(), 50);
 }
 
 function _mpDrawEq() {
     const canvas = document.getElementById('eq-canvas');
     if (!canvas) return;
-    const dpr = window.devicePixelRatio || 1;
+
+    // ── Авто-resize: каждый раз берём актуальные размеры ──
+    const dpr  = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const cssW = rect.width  || canvas.offsetWidth  || canvas.parentElement?.offsetWidth  || 300;
+    const cssH = rect.height || canvas.offsetHeight || 200;
+    if (canvas.width  !== Math.round(cssW * dpr) ||
+        canvas.height !== Math.round(cssH * dpr)) {
+        canvas.width  = Math.round(cssW * dpr);
+        canvas.height = Math.round(cssH * dpr);
+    }
+
     const W = canvas.width, H = canvas.height;
+    if (!W || !H) return; // ещё скрыт — пробуем позже
+
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, W, H);
 
-    const N = EQ_FREQS.length;
+    const N       = EQ_FREQS.length;
     const bandToX = i => (i + 0.5) / N * W;
-    const gainToY = g => (0.5 - g/24) * H;
+    const gainToY = g => (0.5 - g / 24) * H;
 
-    // Сетка
+    // ── Сетка ──
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
-    // Горизонтальные линии: +12, +6, 0, -6, -12
-    [-12,-6,0,6,12].forEach(db => {
+    [-12, -6, 0, 6, 12].forEach(db => {
         const y = gainToY(db);
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     });
-    // Вертикальные — по бандам
     for (let i = 0; i < N; i++) {
         const x = bandToX(i);
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
     }
 
-    // Нулевая линия — ярче
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-    ctx.setLineDash([4, 4]);
+    // ── Нулевая линия ──
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
     ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
     ctx.beginPath(); ctx.moveTo(0, gainToY(0)); ctx.lineTo(W, gainToY(0)); ctx.stroke();
     ctx.setLineDash([]);
 
-    // Кривая — сглаженная через catmull-rom spline
+    // ── Точки кривой ──
     const pts = Array.from({length: N}, (_, i) => ({
         x: bandToX(i),
         y: gainToY(MP.eqGains[i]),
     }));
 
-    // Градиент заливки под кривой
+    // Градиент под кривой
     const grad = ctx.createLinearGradient(0, 0, 0, H);
-    grad.addColorStop(0,   'rgba(139,92,246,0.35)');
-    grad.addColorStop(0.5, 'rgba(99,102,241,0.15)');
+    grad.addColorStop(0,   'rgba(139,92,246,0.4)');
+    grad.addColorStop(0.6, 'rgba(99,102,241,0.12)');
     grad.addColorStop(1,   'rgba(99,102,241,0)');
 
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[Math.max(0, i-1)];
-        const p1 = pts[i];
-        const p2 = pts[i+1];
-        const p3 = pts[Math.min(pts.length-1, i+2)];
-        const cp1x = p1.x + (p2.x - p0.x) / 6;
-        const cp1y = p1.y + (p2.y - p0.y) / 6;
-        const cp2x = p2.x - (p3.x - p1.x) / 6;
-        const cp2y = p2.y - (p3.y - p1.y) / 6;
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+    // ── Catmull-Rom сплайн ──
+    function drawSpline(close) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 0; i < pts.length - 1; i++) {
+            const p0 = pts[Math.max(0, i-1)];
+            const p1 = pts[i];
+            const p2 = pts[i+1];
+            const p3 = pts[Math.min(pts.length-1, i+2)];
+            const cp1x = p1.x + (p2.x - p0.x) / 6;
+            const cp1y = p1.y + (p2.y - p0.y) / 6;
+            const cp2x = p2.x - (p3.x - p1.x) / 6;
+            const cp2y = p2.y - (p3.y - p1.y) / 6;
+            ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+        }
+        if (close) {
+            ctx.lineTo(pts[N-1].x, H);
+            ctx.lineTo(pts[0].x, H);
+            ctx.closePath();
+        }
     }
-    // Замыкаем путь для заливки
-    ctx.lineTo(pts[N-1].x, H);
-    ctx.lineTo(pts[0].x, H);
-    ctx.closePath();
+
+    // Заливка
+    drawSpline(true);
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Линия кривой
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (let i = 0; i < pts.length - 1; i++) {
-        const p0 = pts[Math.max(0, i-1)];
-        const p1 = pts[i];
-        const p2 = pts[i+1];
-        const p3 = pts[Math.min(pts.length-1, i+2)];
-        const cp1x = p1.x + (p2.x - p0.x) / 6;
-        const cp1y = p1.y + (p2.y - p0.y) / 6;
-        const cp2x = p2.x - (p3.x - p1.x) / 6;
-        const cp2y = p2.y - (p3.y - p1.y) / 6;
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
-    }
-    ctx.strokeStyle = MP.eqEnabled ? '#a78bfa' : 'rgba(167,139,250,0.35)';
+    // Линия
+    drawSpline(false);
+    ctx.strokeStyle = MP.eqEnabled ? '#a78bfa' : 'rgba(167,139,250,0.3)';
     ctx.lineWidth = 2.5 * dpr;
     ctx.stroke();
 
-    // Точки — перетаскиваемые
+    // ── Точки ──
     pts.forEach((pt, i) => {
-        const isActive = MP.eqDragging === i;
-        const gain = MP.eqGains[i];
-        const col  = gain > 0.5 ? '#a78bfa' : gain < -0.5 ? '#818cf8' : 'rgba(255,255,255,0.6)';
+        const active = MP.eqDragging === i;
+        const gain   = MP.eqGains[i];
+        const zeroY  = gainToY(0);
 
-        // Тень/свечение для активной точки
-        if (isActive) {
-            ctx.shadowColor = '#a78bfa';
-            ctx.shadowBlur  = 12 * dpr;
+        // Вертикальная линия к нулю
+        if (Math.abs(gain) > 0.4) {
+            ctx.strokeStyle = gain > 0 ? 'rgba(167,139,250,0.5)' : 'rgba(129,140,248,0.5)';
+            ctx.lineWidth = 1.5 * dpr;
+            ctx.beginPath();
+            ctx.moveTo(pt.x, pt.y);
+            ctx.lineTo(pt.x, zeroY);
+            ctx.stroke();
         }
 
-        // Вертикальная линия от точки до нуля
-        const zeroY = gainToY(0);
-        ctx.strokeStyle = col;
-        ctx.lineWidth = 1.5 * dpr;
-        ctx.globalAlpha = 0.5;
-        ctx.beginPath();
-        ctx.moveTo(pt.x, pt.y);
-        ctx.lineTo(pt.x, zeroY);
-        ctx.stroke();
-        ctx.globalAlpha = 1;
+        // Свечение активной точки
+        ctx.shadowColor = active ? '#a78bfa' : 'transparent';
+        ctx.shadowBlur  = active ? 14 * dpr : 0;
 
-        // Круг
-        const r = (isActive ? 10 : 7) * dpr;
+        const r = (active ? 11 : 7) * dpr;
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2);
-        ctx.fillStyle = isActive ? '#a78bfa' : 'white';
-        ctx.shadowBlur = isActive ? 12 * dpr : 0;
+        ctx.fillStyle = active ? '#c4b5fd' : (MP.eqEnabled ? 'white' : 'rgba(255,255,255,0.4)');
         ctx.fill();
 
-        ctx.shadowBlur = 0;
+        ctx.shadowBlur  = 0;
         ctx.shadowColor = 'transparent';
 
-        // Значение gain над точкой (если не ноль)
-        if (Math.abs(gain) >= 0.5) {
-            ctx.font = `${Math.round(9 * dpr)}px -apple-system,sans-serif`;
-            ctx.fillStyle = gain > 0 ? '#a78bfa' : '#f87171';
+        // Значение dB
+        if (Math.abs(gain) >= 1) {
+            ctx.font = `bold ${Math.round(10 * dpr)}px -apple-system,sans-serif`;
             ctx.textAlign = 'center';
-            const label = gain > 0 ? `+${gain}` : `${gain}`;
-            const textY  = pt.y < H * 0.15 ? pt.y + 18*dpr : pt.y - 12*dpr;
+            ctx.fillStyle = gain > 0 ? '#c4b5fd' : '#f87171';
+            const label = (gain > 0 ? '+' : '') + gain;
+            const textY = pt.y < H * 0.2 ? pt.y + 18 * dpr : pt.y - 13 * dpr;
             ctx.fillText(label, pt.x, textY);
         }
     });
 }
-
-// ══ Применяем EQ к фильтрам ══
 function _mpApplyEqToFilters() {
     MP.eqGains.forEach((db, i) => {
         if (MP.eqFilters[i]) MP.eqFilters[i].gain.value = MP.eqEnabled ? db : 0;
@@ -8110,26 +8110,41 @@ function _mpFmt(sec) {
 // ══ Визуализатор ══
 function _mpStartViz() {
     const canvas = document.getElementById('music-viz-canvas');
-    if (!canvas || !MP.analyserNode) return;
+    if (!canvas) return;
+    if (MP.vizRAF) { cancelAnimationFrame(MP.vizRAF); MP.vizRAF = null; }
+
+    if (!MP.ctx) _initWebAudio();
+    if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+
     canvas.width  = canvas.offsetWidth  * (devicePixelRatio||1);
     canvas.height = canvas.offsetHeight * (devicePixelRatio||1);
     const ctx2 = canvas.getContext('2d');
-    const data = new Uint8Array(MP.analyserNode.frequencyBinCount);
     const BARS = 52;
+    let data = MP.analyserNode ? new Uint8Array(MP.analyserNode.frequencyBinCount) : null;
+
     const draw = () => {
         if (!MP.playing) return;
         MP.vizRAF = requestAnimationFrame(draw);
-        MP.analyserNode.getByteFrequencyData(data);
-        ctx2.clearRect(0,0,canvas.width,canvas.height);
-        const W=canvas.width, H=canvas.height, bw=Math.floor(W/BARS)-1;
-        for (let i=0;i<BARS;i++) {
-            const v=data[Math.floor(i*data.length/BARS)]/255;
-            const h=Math.max(3,v*H*.88);
-            ctx2.fillStyle=`hsla(${155+v*85},72%,52%,${.35+v*.65})`;
-            ctx2.beginPath(); ctx2.roundRect(i*(bw+1),H-h,bw,h,3); ctx2.fill();
+        ctx2.clearRect(0, 0, canvas.width, canvas.height);
+        const W = canvas.width, H = canvas.height;
+        const bw = Math.max(1, Math.floor(W / BARS) - 1);
+
+        if (data && MP.analyserNode) {
+            try { MP.analyserNode.getByteFrequencyData(data); } catch(e) { data = null; }
+        }
+
+        for (let i = 0; i < BARS; i++) {
+            const v = data
+                ? data[Math.floor(i * data.length / BARS)] / 255
+                : 0.1 + Math.sin(Date.now() / 400 + i * 0.4) * 0.08;
+            const h = Math.max(3, v * H * 0.88);
+            ctx2.fillStyle = `hsla(${155 + v * 85},72%,52%,${0.35 + v * 0.65})`;
+            ctx2.beginPath();
+            if (ctx2.roundRect) ctx2.roundRect(i * (bw+1), H - h, bw, h, 3);
+            else ctx2.rect(i * (bw+1), H - h, bw, h);
+            ctx2.fill();
         }
     };
-    if (MP.vizRAF) cancelAnimationFrame(MP.vizRAF);
     draw();
 }
 function _mpStopViz() {
@@ -8195,6 +8210,7 @@ function _mpEqToggleUI(on) {
     if (sw) sw.style.background = on ? '#7c3aed' : 'rgba(255,255,255,.1)';
     if (th) th.style.transform  = on ? 'translateX(18px)' : '';
     if (lb) { lb.textContent = on ? 'ВКЛ' : 'ВЫКЛ'; lb.style.color = on ? '#c4b5fd' : 'rgba(255,255,255,.3)'; }
+    _mpDrawEq();
 }
 
 // ══ Карточка "сейчас играет" в профиле ══
