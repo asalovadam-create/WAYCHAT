@@ -728,6 +728,16 @@ def _get_ip():
 
 
 @app.before_request
+def _ensure_clean_session():
+    """Откатываем зависшую транзакцию перед каждым запросом.
+    Нужно когда миграция падает и оставляет сессию в aborted состоянии."""
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
+
+
+@app.before_request
 def _check_ban_and_ip():
     """Снимаем временный бан если время вышло; обновляем IP"""
     if current_user.is_authenticated:
@@ -848,6 +858,7 @@ def _gen_code():
 @ip_rate_limit('check_phone', max_calls=10, window_sec=60)
 def check_phone():
     try:
+        db.session.rollback()  # сбрасываем зависшую транзакцию если есть
         data  = request.get_json() if request.is_json else request.form
         phone = (data.get('phone') or '').strip()
         if not phone:
@@ -855,6 +866,7 @@ def check_phone():
         exists = User.query.filter_by(phone=phone).first() is not None
         return jsonify({'success': True, 'exists': exists})
     except Exception as e:
+        db.session.rollback()
         app.logger.error(f'check_phone: {e}')
         return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
 
@@ -2797,19 +2809,17 @@ def run_migrations():
     ]
     for sql in migrations:
         try:
-            with db.engine.connect() as conn:
+            with db.engine.begin() as conn:   # begin() = autocommit on success, rollback on error
                 conn.execute(text(sql))
-                conn.commit()
         except Exception as e:
             app.logger.warning(f'migration skip: {e}')
 
     # Passwordless fix
     try:
-        with db.engine.connect() as conn:
+        with db.engine.begin() as conn:
             conn.execute(text(
                 'UPDATE "user" SET password_hash=:ph WHERE password_hash IS NULL OR password_hash=\'\''
             ), {'ph': generate_password_hash('__passwordless__')})
-            conn.commit()
     except Exception as e:
         app.logger.warning(f'password_hash migration: {e}')
 
