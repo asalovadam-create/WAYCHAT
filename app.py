@@ -121,7 +121,7 @@ class TTLCache:
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
 _user_dict_cache  = TTLCache(maxsize=3000, ttl=120.0)  # 3k юзеров × 2min
-_chat_cache       = TTLCache(maxsize=8000, ttl=30.0)   # 30с — достаточно, WS обновляет
+_chat_cache       = TTLCache(maxsize=8000, ttl=15.0)   # больше чатов
 _online_cache     = TTLCache(maxsize=8000, ttl=8.0)
 _partner_cache    = TTLCache(maxsize=3000, ttl=60.0)
 _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
@@ -439,9 +439,11 @@ class User(UserMixin, db.Model):
     verified_type = db.Column(db.String(30),   default='')      # 'official','star','dev','press'
     is_super_admin= db.Column(db.Boolean,      default=False)   # суперадмин
     ban_until     = db.Column(db.DateTime,     nullable=True)   # временная блокировка
-    ban_reason    = db.Column(db.String(500),  default='')      # причина
-    last_ip       = db.Column(db.String(64),   default='')      # последний IP
-    reg_ip        = db.Column(db.String(64),   default='')      # IP при регистрации
+    ban_reason         = db.Column(db.String(500),  default='')      # причина
+    last_ip            = db.Column(db.String(64),   default='')      # последний IP
+    reg_ip             = db.Column(db.String(64),   default='')      # IP при регистрации
+    moments_visibility = db.Column(db.String(20),   default='contacts')  # all/contacts/nobody
+    tracks_visibility  = db.Column(db.String(20),   default='contacts')  # all/contacts/nobody
 
     @property
     def online_status(self):
@@ -579,6 +581,33 @@ class BlockedUser(db.Model):
     blocked_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('blocker_id', 'blocked_id', name='uq_block'),)
+
+
+class SavedContact(db.Model):
+    __tablename__ = 'saved_contact'
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    contact_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    saved_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('user_id', 'contact_id', name='uq_saved_contact'),)
+
+
+class MomentHiddenFrom(db.Model):
+    __tablename__ = 'moment_hidden_from'
+    id             = db.Column(db.Integer, primary_key=True)
+    user_id        = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    hidden_from_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    __table_args__ = (db.UniqueConstraint('user_id', 'hidden_from_id', name='uq_moment_hidden'),)
+
+
+class UserTrack(db.Model):
+    __tablename__ = 'user_track'
+    id         = db.Column(db.Integer, primary_key=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    title      = db.Column(db.String(200), default='')
+    artist     = db.Column(db.String(200), default='')
+    duration   = db.Column(db.Float, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class UserReport(db.Model):
@@ -1154,28 +1183,44 @@ def get_current_user_route():
 @app.route('/get_user_profile/<int:user_id>')
 @login_required
 def get_user_profile(user_id):
-    cached = _partner_cache.get(user_id)
-    if cached:
-        return jsonify(cached)
+    uid = current_user.id
     u = db.session.get(User, user_id)
     if not u:
         return jsonify({'error': 'Not found'}), 404
-    # Вычисляем online_status пока объект в сессии
     online = u.is_online or (
         u.last_seen is not None and
         datetime.utcnow() - u.last_seen < timedelta(minutes=5)
     )
+    # Взаимное сохранение
+    i_saved_them  = SavedContact.query.filter_by(user_id=uid,      contact_id=user_id).first() is not None
+    they_saved_me = SavedContact.query.filter_by(user_id=user_id,  contact_id=uid).first() is not None
+    is_mutual = i_saved_them and they_saved_me
+
+    # Треки пользователя — видны если разрешено
+    tracks = []
+    vis = u.tracks_visibility or 'contacts'
+    can_see_tracks = (uid == user_id) or (vis == 'all') or (vis == 'contacts' and is_mutual)
+    if can_see_tracks:
+        track_rows = UserTrack.query.filter_by(user_id=user_id).order_by(UserTrack.created_at.desc()).limit(50).all()
+        tracks = [{'id': t.id, 'title': t.title, 'artist': t.artist, 'duration': t.duration} for t in track_rows]
+
     data = {
-        'id':         u.id,
-        'name':       u.name,
-        'username':   u.username,
-        'avatar':     u.avatar,
-        'bio':        u.bio or '',
-        'online':     online,
-        'phone':      u.phone,
-        'created_at': u.created_at.isoformat() if u.created_at else None,
+        'id':           u.id,
+        'name':         u.name,
+        'username':     u.username,
+        'avatar':       u.avatar,
+        'bio':          u.bio or '',
+        'online':       online,
+        'phone':        u.phone,
+        'created_at':   u.created_at.isoformat() if u.created_at else None,
+        'is_verified':  u.is_verified,
+        'verified_type':u.verified_type or '',
+        'i_saved':      i_saved_them,
+        'they_saved':   they_saved_me,
+        'is_mutual':    is_mutual,
+        'tracks':       tracks,
+        'tracks_count': len(tracks),
     }
-    _partner_cache.set(user_id, data)
     resp = make_response(jsonify(data))
     resp.headers['Cache-Control'] = 'no-cache'
     return resp
@@ -1303,82 +1348,53 @@ def get_my_chats():
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
     memberships = GroupMember.query.filter_by(user_id=uid).all()
-    if memberships:
-        group_ids   = [m.group_id for m in memberships]
-        groups      = {g.id: g for g in db.session.query(Group).filter(Group.id.in_(group_ids)).all()}
-        chat_ids_g  = [g.chat_id for g in groups.values() if g.chat_id]
-        chats_g     = {c.id: c for c in db.session.query(Chat).filter(Chat.id.in_(chat_ids_g)).all()}
+    for m in memberships:
+        try:
+            group = db.session.get(Group, m.group_id)
+            if not group:
+                continue
+            chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
+            if not chat:
+                continue
 
-        # Батч: последнее сообщение для каждого группового чата
-        g_last_msgs = {}
-        if chat_ids_g:
-            rows = db.session.execute(text('''
-                SELECT DISTINCT ON (chat_id) chat_id, id, type, content, sender_name, timestamp
-                FROM message WHERE chat_id = ANY(:ids) AND is_deleted = FALSE
-                ORDER BY chat_id, id DESC
-            '''), {'ids': chat_ids_g}).fetchall()
-            for r in rows:
-                g_last_msgs[r.chat_id] = r
+            last_msg = Message.query.filter_by(
+                chat_id=chat.id, is_deleted=False
+            ).order_by(Message.id.desc()).first()
 
-        # Батч: непрочитанные для группових чатов
-        g_unread = {}
-        if chat_ids_g:
-            rows2 = db.session.execute(text('''
-                SELECT chat_id, COUNT(*) as cnt FROM message
-                WHERE chat_id = ANY(:ids) AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE
-                GROUP BY chat_id
-            '''), {'ids': chat_ids_g, 'uid': uid}).fetchall()
-            for r in rows2:
-                g_unread[r.chat_id] = r.cnt
+            unread = db.session.execute(
+                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
+                {'cid': chat.id, 'uid': uid}
+            ).scalar() or 0
 
-        # Батч: количество участников
-        g_member_counts = {}
-        if group_ids:
-            rows3 = db.session.execute(text(
-                'SELECT group_id, COUNT(*) as cnt FROM group_member WHERE group_id = ANY(:ids) GROUP BY group_id'
-            ), {'ids': group_ids}).fetchall()
-            for r in rows3:
-                g_member_counts[r.group_id] = r.cnt
+            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
+            preview  = '👥 Группа создана'
+            sort_ts  = group.created_at or datetime(2000, 1, 1)
 
-        type_map_g = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
+            if last_msg:
+                sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
+                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
+                sort_ts = last_msg.timestamp
 
-        for m in memberships:
-            try:
-                group = groups.get(m.group_id)
-                if not group: continue
-                chat = chats_g.get(group.chat_id) if group.chat_id else None
-                if not chat: continue
-
-                last_msg     = g_last_msgs.get(chat.id)
-                unread       = g_unread.get(chat.id, 0)
-                member_count = g_member_counts.get(group.id, 0)
-                sort_ts      = group.created_at or datetime(2000, 1, 1)
-                preview      = '👥 Группа создана'
-
-                if last_msg:
-                    sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                    preview = sender_prefix + type_map_g.get(last_msg.type, last_msg.content or '...')
-                    sort_ts = last_msg.timestamp
-
-                result.append({
-                    'chat_id':       chat.id,
-                    'group_id':      group.id,
-                    'partner_id':    group.id,
-                    'group_name':    group.name,
-                    'partner_name':  group.name,
-                    'group_avatar':  group.avatar,
-                    'partner_avatar':group.avatar,
-                    'member_count':  member_count,
-                    'online':        False,
-                    'last_message':  preview,
-                    'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
-                    'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                    'unread_count':  unread,
-                    'is_group':      True,
-                    '_sort':         sort_ts,
-                })
-            except Exception as e:
-                app.logger.error(f'Group chat parse error {m.group_id}: {e}')
+            member_count = GroupMember.query.filter_by(group_id=group.id).count()
+            result.append({
+                'chat_id':       chat.id,
+                'group_id':      group.id,
+                'partner_id':    group.id,
+                'group_name':    group.name,
+                'partner_name':  group.name,
+                'group_avatar':  group.avatar,
+                'partner_avatar':group.avatar,
+                'member_count':  member_count,
+                'online':        False,
+                'last_message':  preview,
+                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
+                'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
+                'unread_count':  unread,
+                'is_group':      True,
+                '_sort':         sort_ts,
+            })
+        except Exception as e:
+            app.logger.error(f'Group chat parse error {m.group_id}: {e}')
 
     def sort_key(x):
         s = x.get('_sort')
@@ -1396,9 +1412,7 @@ def get_my_chats():
         r.pop('_sort', None)
 
     _chat_cache.set(uid, result)
-    resp = make_response(jsonify(result))
-    resp.headers['Cache-Control'] = 'private, max-age=10'
-    return resp
+    return jsonify(result)
 
 
 @app.route('/get_chat_id/<int:partner_id>')
@@ -1908,13 +1922,11 @@ def block_user(user_id):
 @app.route('/get_moments')
 @login_required
 def get_moments():
-    cached = _moments_cache.get('all')
-    if cached:
-        return jsonify(cached)
-
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
+
+    # Все моменты за 24 часа
     moments = db.session.query(Moment, User).join(
         User, Moment.user_id == User.id
     ).filter(
@@ -1922,7 +1934,20 @@ def get_moments():
         or_(Moment.expires_at == None, Moment.expires_at > now_utc)
     ).order_by(Moment.timestamp.desc()).all()
 
-    # Батч-запрос для view_count — один SQL вместо N запросов
+    # Контакты текущего пользователя (двусторонние — оба сохранили друг друга)
+    my_saved = {c.contact_id for c in SavedContact.query.filter_by(user_id=uid).all()}
+    saved_me = {c.user_id for c in SavedContact.query.filter_by(contact_id=uid).all()}
+    mutual_contacts = my_saved & saved_me  # взаимные
+
+    # Кто скрыл моменты от меня
+    hidden_from_me = {h.user_id for h in MomentHiddenFrom.query.filter_by(hidden_from_id=uid).all()}
+
+    # Кого я заблокировал / кто меня заблокировал
+    i_blocked  = {b.blocked_id  for b in BlockedUser.query.filter_by(blocker_id=uid).all()}
+    blocked_me = {b.blocker_id  for b in BlockedUser.query.filter_by(blocked_id=uid).all()}
+    blocked_set = i_blocked | blocked_me
+
+    # Батч view_count
     moment_ids = [m.Moment.id for m in moments]
     view_counts = {}
     if moment_ids:
@@ -1932,22 +1957,206 @@ def get_moments():
         ).fetchall()
         view_counts = {r.moment_id: r.cnt for r in vc_rows}
 
-    data = [{
-        'id':            m.Moment.id,
-        'user_id':       m.Moment.user_id,
-        'user_name':     m.User.name,
-        'user_avatar':   m.User.avatar or '',
-        'media_url':     m.Moment.media_url or '',
-        'text':          m.Moment.text or '',
-        'geo_name':      m.Moment.geo_name or '',
-        'timestamp':     to_moscow_str(m.Moment.timestamp),
-        'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
-        'view_count':    view_counts.get(m.Moment.id, 0),
-        'is_mine':       m.Moment.user_id == uid,
-    } for m in moments]
+    data = []
+    for m in moments:
+        author_id  = m.Moment.user_id
+        is_mine    = (author_id == uid)
+        vis        = m.User.moments_visibility or 'contacts'
 
-    _moments_cache.set('all', data)
+        # Свои моменты всегда видны
+        if not is_mine:
+            # Заблокированные — не видны
+            if author_id in blocked_set:
+                continue
+            # Скрыл от меня
+            if author_id in hidden_from_me:
+                continue
+            # Проверяем видимость
+            if vis == 'nobody':
+                continue
+            if vis == 'contacts' and author_id not in mutual_contacts:
+                continue
+            # vis == 'all' — видно всем
+
+        data.append({
+            'id':            m.Moment.id,
+            'user_id':       author_id,
+            'user_name':     m.User.name,
+            'user_avatar':   m.User.avatar or '',
+            'media_url':     m.Moment.media_url or '',
+            'text':          m.Moment.text or '',
+            'geo_name':      m.Moment.geo_name or '',
+            'timestamp':     to_moscow_str(m.Moment.timestamp),
+            'raw_timestamp': m.Moment.timestamp.isoformat() + 'Z' if m.Moment.timestamp else '',
+            'view_count':    view_counts.get(m.Moment.id, 0),
+            'is_mine':       is_mine,
+        })
+
     return jsonify(data)
+
+
+# ══════════════════════════════════════════════════════════
+#  SAVED CONTACTS
+# ══════════════════════════════════════════════════════════
+@app.route('/save_contact/<int:contact_id>', methods=['POST'])
+@login_required
+def save_contact(contact_id):
+    uid = current_user.id
+    if uid == contact_id:
+        return jsonify({'ok': False, 'error': 'Cannot save yourself'})
+    existing = SavedContact.query.filter_by(user_id=uid, contact_id=contact_id).first()
+    if not existing:
+        db.session.add(SavedContact(user_id=uid, contact_id=contact_id))
+        db.session.commit()
+    return jsonify({'ok': True, 'saved': True})
+
+
+@app.route('/unsave_contact/<int:contact_id>', methods=['POST'])
+@login_required
+def unsave_contact(contact_id):
+    uid = current_user.id
+    row = SavedContact.query.filter_by(user_id=uid, contact_id=contact_id).first()
+    if row:
+        db.session.delete(row)
+        db.session.commit()
+    return jsonify({'ok': True, 'saved': False})
+
+
+@app.route('/get_my_saved_contacts')
+@login_required
+def get_my_saved_contacts():
+    uid = current_user.id
+    rows = db.session.query(SavedContact, User).join(
+        User, SavedContact.contact_id == User.id
+    ).filter(SavedContact.user_id == uid).all()
+    saved_me_ids = {c.user_id for c in SavedContact.query.filter_by(contact_id=uid).all()}
+    data = [{
+        'id':       r.User.id,
+        'name':     r.User.name,
+        'username': r.User.username,
+        'avatar':   r.User.avatar or '',
+        'mutual':   r.User.id in saved_me_ids,
+    } for r in rows]
+    return jsonify(data)
+
+
+# ══════════════════════════════════════════════════════════
+#  PRIVACY SETTINGS
+# ══════════════════════════════════════════════════════════
+@app.route('/update_privacy', methods=['POST'])
+@login_required
+def update_privacy():
+    data = request.get_json(silent=True) or {}
+    u = db.session.get(User, current_user.id)
+    if not u:
+        return jsonify({'ok': False}), 404
+    allowed = ('all', 'contacts', 'nobody')
+    if 'moments_visibility' in data and data['moments_visibility'] in allowed:
+        u.moments_visibility = data['moments_visibility']
+    if 'tracks_visibility' in data and data['tracks_visibility'] in allowed:
+        u.tracks_visibility = data['tracks_visibility']
+    db.session.commit()
+    _moments_cache.delete('all')
+    return jsonify({'ok': True})
+
+
+@app.route('/get_privacy')
+@login_required
+def get_privacy():
+    u = db.session.get(User, current_user.id)
+    if not u:
+        return jsonify({}), 404
+    # Люди скрытые от моих моментов
+    hidden = [{'id': h.hidden_from_id} for h in MomentHiddenFrom.query.filter_by(user_id=u.id).all()]
+    return jsonify({
+        'moments_visibility': u.moments_visibility or 'contacts',
+        'tracks_visibility':  u.tracks_visibility  or 'contacts',
+        'hidden_from':        hidden,
+    })
+
+
+@app.route('/hide_moments_from/<int:target_id>', methods=['POST'])
+@login_required
+def hide_moments_from(target_id):
+    uid = current_user.id
+    existing = MomentHiddenFrom.query.filter_by(user_id=uid, hidden_from_id=target_id).first()
+    if not existing:
+        db.session.add(MomentHiddenFrom(user_id=uid, hidden_from_id=target_id))
+        db.session.commit()
+    _moments_cache.delete('all')
+    return jsonify({'ok': True, 'hidden': True})
+
+
+@app.route('/unhide_moments_from/<int:target_id>', methods=['POST'])
+@login_required
+def unhide_moments_from(target_id):
+    uid = current_user.id
+    row = MomentHiddenFrom.query.filter_by(user_id=uid, hidden_from_id=target_id).first()
+    if row:
+        db.session.delete(row)
+        db.session.commit()
+    _moments_cache.delete('all')
+    return jsonify({'ok': True, 'hidden': False})
+
+
+# ══════════════════════════════════════════════════════════
+#  USER TRACKS (public metadata)
+# ══════════════════════════════════════════════════════════
+@app.route('/sync_tracks', methods=['POST'])
+@login_required
+def sync_tracks():
+    """Синхронизирует публичный список треков пользователя"""
+    uid = current_user.id
+    data = request.get_json(silent=True) or {}
+    tracks = data.get('tracks', [])
+    # Удаляем старые
+    UserTrack.query.filter_by(user_id=uid).delete()
+    # Добавляем новые
+    for t in tracks[:100]:  # лимит 100 треков
+        db.session.add(UserTrack(
+            user_id=uid,
+            title=str(t.get('title', ''))[:200],
+            artist=str(t.get('artist', ''))[:200],
+            duration=float(t.get('duration', 0)),
+        ))
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@app.route('/block_user/<int:user_id>', methods=['POST'])
+@login_required
+def block_user_route(user_id):
+    uid = current_user.id
+    existing = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
+    if not existing:
+        db.session.add(BlockedUser(blocker_id=uid, blocked_id=user_id))
+        db.session.commit()
+    _moments_cache.delete('all')
+    return jsonify({'ok': True, 'blocked': True})
+
+
+@app.route('/unblock_user/<int:user_id>', methods=['POST'])
+@login_required
+def unblock_user_route(user_id):
+    uid = current_user.id
+    row = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
+    if row:
+        db.session.delete(row)
+        db.session.commit()
+    return jsonify({'ok': True, 'blocked': False})
+
+
+@app.route('/get_blocked_users')
+@login_required
+def get_blocked_users():
+    uid = current_user.id
+    rows = db.session.query(BlockedUser, User).join(
+        User, BlockedUser.blocked_id == User.id
+    ).filter(BlockedUser.blocker_id == uid).all()
+    return jsonify([{
+        'id': r.User.id, 'name': r.User.name,
+        'username': r.User.username, 'avatar': r.User.avatar or ''
+    } for r in rows])
 
 
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
@@ -2279,116 +2488,6 @@ def handle_reaction(data):
                     emit('message_reaction', reaction_payload, room=f'user_{uid_str}')
 
 
-# ══════════════════════════════════════════════════════════
-#  ГРУППОВЫЕ ЗВОНКИ (WebRTC Mesh, max 5 участников)
-# ══════════════════════════════════════════════════════════
-
-@socketio.on('join_group_call')
-def handle_gc_join(data):
-    if not current_user.is_authenticated:
-        return
-    try:
-        uid   = current_user.id
-        uname = current_user.name
-        uava  = getattr(current_user, 'avatar', '')
-    except Exception:
-        return
-    room      = data.get('room')
-    call_type = data.get('call_type', 'audio')
-    if not room:
-        return
-    join_room(f'gc_{room}')
-    # Уведомляем остальных в комнате
-    emit('gc_user_joined', {
-        'user_id':    uid,
-        'user_name':  uname,
-        'user_avatar': uava,
-        'call_type':  call_type,
-    }, room=f'gc_{room}', include_self=False)
-
-
-@socketio.on('leave_group_call')
-def handle_gc_leave(data):
-    if not current_user.is_authenticated:
-        return
-    try:
-        uid   = current_user.id
-        uname = current_user.name
-    except Exception:
-        return
-    room = data.get('room')
-    if not room:
-        return
-    leave_room(f'gc_{room}')
-    emit('gc_user_left', {
-        'user_id':   uid,
-        'user_name': uname,
-    }, room=f'gc_{room}', include_self=False)
-
-
-@socketio.on('gc_offer')
-def handle_gc_offer(data):
-    if not current_user.is_authenticated:
-        return
-    try:
-        uid = current_user.id
-    except Exception:
-        return
-    to = data.get('to')
-    if not to:
-        return
-    emit('gc_offer', {'from': uid, 'offer': data.get('offer'), 'room': data.get('room')},
-         room=f'user_{to}')
-
-
-@socketio.on('gc_answer')
-def handle_gc_answer(data):
-    if not current_user.is_authenticated:
-        return
-    try:
-        uid = current_user.id
-    except Exception:
-        return
-    to = data.get('to')
-    if not to:
-        return
-    emit('gc_answer', {'from': uid, 'answer': data.get('answer')}, room=f'user_{to}')
-
-
-@socketio.on('gc_ice')
-def handle_gc_ice(data):
-    if not current_user.is_authenticated:
-        return
-    try:
-        uid = current_user.id
-    except Exception:
-        return
-    to = data.get('to')
-    if not to:
-        return
-    emit('gc_ice', {'from': uid, 'candidate': data.get('candidate')}, room=f'user_{to}')
-
-
-@socketio.on('gc_invite')
-def handle_gc_invite(data):
-    if not current_user.is_authenticated:
-        return
-    try:
-        uid   = current_user.id
-        uname = current_user.name
-    except Exception:
-        return
-    to = data.get('to')
-    if not to:
-        return
-    emit('gc_invite', {
-        'from':      uid,
-        'from_name': uname,
-        'room':      data.get('room'),
-        'call_type': data.get('call_type', 'audio'),
-    }, room=f'user_{to}')
-
-
 @socketio.on('delete_message')
 def handle_delete_message(data):
     if not current_user.is_authenticated:
@@ -2666,6 +2765,35 @@ def run_migrations():
         'CREATE INDEX IF NOT EXISTS ix_gmember_user_id  ON group_member(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_user_last_seen   ON "user"(last_seen)',
         'CREATE INDEX IF NOT EXISTS ix_user_is_online   ON "user"(is_online) WHERE is_online = TRUE',
+        # Privacy settings
+        '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'contacts' ''',
+        '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'contacts' ''',
+        # Saved contacts table
+        '''CREATE TABLE IF NOT EXISTS saved_contact (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            contact_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            saved_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(user_id, contact_id)
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_saved_contact_user ON saved_contact(user_id)',
+        # Hidden moments — скрыть моменты от конкретных контактов
+        '''CREATE TABLE IF NOT EXISTS moment_hidden_from (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            hidden_from_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            UNIQUE(user_id, hidden_from_id)
+        )''',
+        # User tracks (public metadata, не blob)
+        '''CREATE TABLE IF NOT EXISTS user_track (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            title VARCHAR(200) DEFAULT '',
+            artist VARCHAR(200) DEFAULT '',
+            duration REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_user_track_user ON user_track(user_id)',
     ]
     for sql in migrations:
         try:
