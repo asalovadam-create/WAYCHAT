@@ -1043,15 +1043,16 @@ body {
                     </button>
                 </div>
 
-                <!-- Громкость -->
-                <div style="display:flex;align-items:center;gap:10px;padding:0 4px;margin-bottom:4px">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:.3"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                    <input id="mpc-volume" type="range" min="0" max="100" value="80" oninput="musicSetVolume(this.value)" style="flex:1;height:4px;accent-color:var(--accent);cursor:pointer">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:.3"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07M19.07 4.93a10 10 0 010 14.14" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+                <!-- EQ кнопка — маленькая, показывает/скрывает секцию -->
+                <div style="display:flex;justify-content:center;padding-bottom:16px">
+                    <button id="mpc-eq-btn" onclick="musicShowEQ()" style="display:flex;align-items:center;gap:6px;padding:7px 16px;background:rgba(255,255,255,.06);border:.5px solid rgba(255,255,255,.1);border-radius:20px;color:rgba(255,255,255,.4);font-size:12px;font-weight:700;letter-spacing:.5px;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;transition:all .2s">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="4" y1="6" x2="20" y2="6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="18" x2="20" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="8" cy="6" r="2" fill="currentColor"/><circle cx="16" cy="12" r="2" fill="currentColor"/><circle cx="10" cy="18" r="2" fill="currentColor"/></svg>
+                        EQ
+                    </button>
                 </div>
             </div>
 
-            <!-- Эквалайзер -->
+            <!-- Эквалайзер — скрыт, открывается по кнопке EQ -->
             <div id="music-eq-section" style="display:none;margin:16px 16px 0;background:rgba(20,20,28,.95);border:.5px solid rgba(255,255,255,.07);border-radius:22px;overflow:hidden">
                 <!-- Заголовок -->
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px 12px">
@@ -7314,7 +7315,6 @@ function _mpKeepAlive() {
 }
 
 function _mpRoutingUpdate() {
-    // Громкость только через gainNode — работает на iOS в фоне
     if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 }
 
@@ -7928,7 +7928,7 @@ function _mpRender(filter) {
         : 'Открыть плеер';
 
     if (player) player.style.display = MP.idx >= 0 ? '' : 'none';
-    if (eq)     eq.style.display     = MP.idx >= 0 ? '' : 'none';
+    // eq-section управляется только через musicShowEQ()
 
     if (!visible.length) {
         list.innerHTML = '';
@@ -8177,7 +8177,7 @@ function _mpUpdateCard() {
     const pc = document.getElementById('music-player-card');
     const eq = document.getElementById('music-eq-section');
     if (pc) pc.style.display = track ? '' : 'none';
-    if (eq) eq.style.display = track ? '' : 'none';
+    // eq-section управляется только через musicShowEQ()
     if (!track) return;
 
     const el = id => document.getElementById(id);
@@ -8314,13 +8314,25 @@ function musicApplyPreset(name) {
     _mpDrawEq();
     showToast(`EQ: ${name}`, 'info');
 }
+function musicShowEQ() {
+    const sec = document.getElementById('music-eq-section');
+    const btn = document.getElementById('mpc-eq-btn');
+    if (!sec) return;
+    const visible = sec.style.display !== 'none';
+    if (visible) {
+        sec.style.display = 'none';
+        if (btn) { btn.style.color = 'rgba(255,255,255,.4)'; btn.style.background = 'rgba(255,255,255,.06)'; btn.style.borderColor = 'rgba(255,255,255,.1)'; }
+    } else {
+        sec.style.display = 'block';
+        if (btn) { btn.style.color = 'var(--accent)'; btn.style.background = 'rgba(16,185,129,.12)'; btn.style.borderColor = 'rgba(16,185,129,.3)'; }
+        _mpInitEqCanvas();
+        setTimeout(() => _mpDrawEq(), 50);
+    }
+}
 function musicToggleEQ() {
     MP.eqEnabled = !MP.eqEnabled;
     if (!MP.ctx && MP.audioEl) _initWebAudio();
     _mpApplyEqToFilters();
-    _mpRoutingUpdate();
-    if (MP.eqEnabled && MP.playing) (void 0);
-    else (void 0);
     _mpEqToggleUI(MP.eqEnabled);
     _mpDrawEq();
     showToast(MP.eqEnabled ? 'Эквалайзер включён' : 'Эквалайзер выключен', 'info');
@@ -8328,8 +8340,6 @@ function musicToggleEQ() {
 function musicDisableEQ() {
     MP.eqEnabled = false;
     _mpApplyEqToFilters();
-    _mpRoutingUpdate();
-    (void 0);
     _mpEqToggleUI(false);
     _mpDrawEq();
 }
