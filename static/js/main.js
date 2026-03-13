@@ -7021,13 +7021,14 @@ const MP = {
     tracks: [], idx: -1, playing: false,
     shuffle: false, repeat: false, eqEnabled: false,
     volume: 0.8, filterQuery: '',
-    audioEl: null,   // <audio> в DOM — воспроизведение
-    eqCtx: null,     // AudioContext — EQ + визуализатор
-    eqSrc: null,     // MediaElementSource(audioEl)
-    eqFilters: [],   // BiquadFilter × 10
+    audioEl:    null, // главный <audio> — НИКОГДА не в AudioContext → фон работает
+    vizAudio:   null, // второй <audio> — подключён к AudioContext для EQ/визуализатора
+    eqCtx:      null, // AudioContext
+    vizSrc:     null, // MediaElementSource(vizAudio)
+    eqFilters:  [],
     analyserNode: null,
-    gainNode: null,
-    vizRAF: null,
+    eqGainNode: null, // gain=volume когда EQ вкл, gain=0 когда выкл
+    vizRAF:     null,
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
     _transitioning: false,
@@ -7178,17 +7179,28 @@ function _initAudioCtx() {
         navigator.mediaSession.setActionHandler('previoustrack', musicPrev);
         navigator.mediaSession.setActionHandler('nexttrack',     musicNext);
         navigator.mediaSession.setActionHandler('seekto', e => {
-            if (MP.audioEl && e.seekTime != null) MP.audioEl.currentTime = e.seekTime;
+            if (MP.audioEl && e.seekTime != null) {
+                MP.audioEl.currentTime = e.seekTime;
+                if (MP.vizAudio) MP.vizAudio.currentTime = e.seekTime;
+            }
         });
     }
 }
 
 // ══ Web Audio ══
-// Архитектура: audioEl → MediaElementSource → eqFilters → analyser → gainNode → destination
-// Фоновое воспроизведение на iOS обеспечивается "silent buffer trick":
-// Запускаем бесконечный тихий AudioBufferSourceNode — iOS думает что AudioContext
-// активно воспроизводит звук и НЕ suspend'ит его в фоне.
-// Это тот же приём что используют Spotify Web Player, YouTube Music PWA.
+// АРХИТЕКТУРА:
+// MP.audioEl — основной элемент, НИКОГДА не подключается к AudioContext
+//              iOS не глушит его в фоне и при блокировке экрана
+// MP.vizAudio — второй элемент, подключён к AudioContext только для
+//               EQ-фильтров и визуализатора, играет синхронно с основным
+//               Этот элемент НЕ слышен (gainNode.gain=0 когда EQ выкл,
+//               muted=true — нет, gain=0 чтобы не было двойного звука)
+//
+// Почему это работает:
+//   audioEl без AudioContext = iOS не может его заглушить
+//   vizAudio через AudioContext = EQ работает
+//   silent buffer = AudioContext не suspend'ится в фоне
+//   При блокировке экрана: audioEl продолжает играть (как звонок/голосовое)
 
 function _initWebAudio() {
     if (MP.eqCtx) return true;
@@ -7197,10 +7209,17 @@ function _initWebAudio() {
         const AC = window.AudioContext || window.webkitAudioContext;
         MP.eqCtx = new AC();
 
-        // ── Silent buffer: держим AudioContext живым в фоне ──
-        _mpStartSilentBuffer();
+        // Второй аудио-элемент для EQ — только для обработки, не для воспроизведения
+        if (!MP.vizAudio) {
+            MP.vizAudio = document.createElement('audio');
+            MP.vizAudio.setAttribute('playsinline', 'true');
+            MP.vizAudio.setAttribute('webkit-playsinline', 'true');
+            MP.vizAudio.preload = 'none';
+            // vizAudio слышен только когда EQ включён (через gainNode)
+            document.body.appendChild(MP.vizAudio);
+        }
 
-        MP.eqSrc = MP.eqCtx.createMediaElementSource(MP.audioEl);
+        MP.vizSrc = MP.eqCtx.createMediaElementSource(MP.vizAudio);
 
         MP.eqFilters = EQ_FREQS.map((freq, i) => {
             const f = MP.eqCtx.createBiquadFilter();
@@ -7214,15 +7233,18 @@ function _initWebAudio() {
         MP.analyserNode = MP.eqCtx.createAnalyser();
         MP.analyserNode.fftSize = 512;
 
-        MP.gainNode = MP.eqCtx.createGain();
-        MP.gainNode.gain.value = MP.volume;
+        // eqGainNode: когда EQ вкл — полная громкость, когда выкл — 0 (тишина)
+        MP.eqGainNode = MP.eqCtx.createGain();
+        MP.eqGainNode.gain.value = 0; // по умолчанию выключен
 
-        // src → eq[0..9] → analyser → gain → destination
-        let prev = MP.eqSrc;
+        let prev = MP.vizSrc;
         MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
         prev.connect(MP.analyserNode);
-        MP.analyserNode.connect(MP.gainNode);
-        MP.gainNode.connect(MP.eqCtx.destination);
+        MP.analyserNode.connect(MP.eqGainNode);
+        MP.eqGainNode.connect(MP.eqCtx.destination);
+
+        // Silent buffer — держит AudioContext живым в фоне
+        _mpStartSilentBuffer();
 
         return true;
     } catch(e) {
@@ -7233,66 +7255,107 @@ function _initWebAudio() {
 }
 function _initVizCtx() { return _initWebAudio(); }
 
-// Silent buffer trick — бесконечный тихий буфер не даёт iOS suspend'ить AudioContext
+// Silent buffer — бесконечный тихий буфер не даёт iOS suspend'ить AudioContext
 let _silentBufferNode = null;
 function _mpStartSilentBuffer() {
     if (!MP.eqCtx) return;
-    if (_silentBufferNode) { try { _silentBufferNode.stop(); } catch(e) {} }
-
-    // 1-секундный тихий буфер, зацикленный
-    const buf = MP.eqCtx.createBuffer(1, MP.eqCtx.sampleRate, MP.eqCtx.sampleRate);
-    // Добавляем минимальный шум (1e-10) — некоторые браузеры оптимизируют полную тишину
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 1e-10;
-
-    _silentBufferNode = MP.eqCtx.createBufferSource();
-    _silentBufferNode.buffer = buf;
-    _silentBufferNode.loop = true;
-    _silentBufferNode.connect(MP.eqCtx.destination);
-    _silentBufferNode.start(0);
+    try {
+        if (_silentBufferNode) { try { _silentBufferNode.stop(); } catch(e) {} }
+        const buf = MP.eqCtx.createBuffer(1, MP.eqCtx.sampleRate, MP.eqCtx.sampleRate);
+        const data = buf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 1e-10;
+        _silentBufferNode = MP.eqCtx.createBufferSource();
+        _silentBufferNode.buffer = buf;
+        _silentBufferNode.loop = true;
+        _silentBufferNode.connect(MP.eqCtx.destination);
+        _silentBufferNode.start(0);
+    } catch(e) {}
 }
 
+// Синхронизация vizAudio с audioEl
+function _mpSyncVizAudio() {
+    if (!MP.vizAudio || !MP.audioEl) return;
+    // Синхронизируем src
+    if (MP.vizAudio.src !== MP.audioEl.src) {
+        MP.vizAudio.src = MP.audioEl.src;
+        MP.vizAudio.load();
+    }
+    // Синхронизируем позицию (допуск 0.3 сек)
+    if (isFinite(MP.audioEl.currentTime)) {
+        const diff = Math.abs(MP.vizAudio.currentTime - MP.audioEl.currentTime);
+        if (diff > 0.3) MP.vizAudio.currentTime = MP.audioEl.currentTime;
+    }
+}
+
+// Routing: управляем что слышно
+// audioEl — всегда играет, volume управляется через audioEl.volume
+// vizAudio — играет параллельно, eqGainNode.gain:
+//   EQ вкл: audioEl.volume=0 (глушим оригинал), eqGainNode.gain=vol (слышим EQ)
+//   EQ выкл: audioEl.volume=vol, eqGainNode.gain=0 (vizAudio в тишине, только анализ)
 function _mpRoutingUpdate() {
-    if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+    if (!MP.audioEl) return;
+    if (MP.eqEnabled && MP.eqCtx && MP.vizAudio) {
+        MP.audioEl.muted = true;             // глушим прямой звук
+        if (MP.eqGainNode) MP.eqGainNode.gain.setTargetAtTime(MP.volume, MP.eqCtx.currentTime, 0.01);
+    } else {
+        MP.audioEl.muted = false;
+        MP.audioEl.volume = MP.volume;
+        if (MP.eqGainNode) MP.eqGainNode.gain.setTargetAtTime(0, MP.eqCtx?.currentTime || 0, 0.01);
+    }
+}
+
+// Запустить vizAudio синхронно с audioEl
+async function _mpVizAudioPlay() {
+    if (!MP.vizAudio || !MP.eqCtx) return;
+    if (MP.eqCtx.state === 'suspended') {
+        await MP.eqCtx.resume().catch(() => {});
+        _mpStartSilentBuffer();
+    }
+    _mpSyncVizAudio();
+    MP.vizAudio.play().catch(() => {});
+}
+
+function _mpVizAudioPause() {
+    if (MP.vizAudio) MP.vizAudio.pause();
 }
 
 // ══ Фоновое воспроизведение ══
+// audioEl НЕ подключён к AudioContext → iOS не глушит его в фоне/при блокировке
+// vizAudio подключён, но мы его паузим при уходе в фон (он не нужен)
 document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
         _mpStopViz();
-        return; // AudioContext остаётся alive благодаря silent buffer
+        _mpVizAudioPause(); // vizAudio не нужен в фоне
+        // audioEl продолжает играть сам!
+        return;
     }
-    // Вернулись — resume если iOS всё же suspend'ил
+    // Вернулись — resume AudioContext для EQ/визуализатора
     if (MP.eqCtx?.state === 'suspended') {
-        try {
-            await MP.eqCtx.resume();
-            _mpStartSilentBuffer(); // перезапускаем silent buffer
-        } catch(e) {}
+        await MP.eqCtx.resume().catch(() => {});
+        _mpStartSilentBuffer();
     }
+    // Восстанавливаем audioEl если iOS его остановил
     if (MP.playing && MP.audioEl?.paused && !MP._transitioning) {
         MP.audioEl.play().catch(() => {});
     }
+    // Возобновляем vizAudio если плеер открыт
     if (MP.playing) {
+        if (MP.eqEnabled) _mpVizAudioPlay();
         const playerOpen = document.getElementById('music-section')?.style.display !== 'none';
         if (playerOpen) _mpStartViz();
     }
 });
 
-// При первом касании (iOS требует user gesture для AudioContext)
+// Разблокировка AudioContext при первом касании (требование iOS Safari)
 function _mpUnlockAudio() {
-    if (!MP.eqCtx) return;
-    if (MP.eqCtx.state === 'suspended') {
+    if (MP.eqCtx?.state === 'suspended') {
         MP.eqCtx.resume().then(() => _mpStartSilentBuffer()).catch(() => {});
-    } else {
-        _mpStartSilentBuffer();
     }
     document.removeEventListener('touchstart', _mpUnlockAudio, true);
     document.removeEventListener('touchend',   _mpUnlockAudio, true);
 }
 document.addEventListener('touchstart', _mpUnlockAudio, { capture: true, passive: true });
 document.addEventListener('touchend',   _mpUnlockAudio, { capture: true, passive: true });
-
-
 
 // ══ Открытие плеера ══
 async function musicTabOpened() {
@@ -7852,7 +7915,6 @@ function _mpApplyEqToFilters() {
     MP.eqGains.forEach((db, i) => {
         if (MP.eqFilters[i]) MP.eqFilters[i].gain.value = MP.eqEnabled ? db : 0;
     });
-    if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 }
 
 // ══ Рендер треков ══
@@ -7981,16 +8043,33 @@ async function musicPlayAt(idx) {
         MP.audioEl.removeAttribute('src');
         if (oldUrl && oldUrl.startsWith('blob:')) URL.revokeObjectURL(oldUrl);
 
+        // Главный элемент — без AudioContext, фон гарантирован
         MP.audioEl.src = newUrl;
         MP.audioEl.load();
+        MP.audioEl.volume = MP.volume;
 
-        // Инициализируем WebAudio если ещё нет, reconnect и resume
+        // Инициализируем WebAudio и загружаем vizAudio
         if (!MP.eqCtx) _initWebAudio();
-        if (MP.eqCtx?.state === 'suspended') MP.eqCtx.resume().catch(() => {});
-        if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+        if (MP.vizAudio && MP.vizAudio.src !== newUrl) {
+            MP.vizAudio.src = newUrl;
+            MP.vizAudio.load();
+        }
+
+        // Применяем EQ и routing
         _mpApplyEqToFilters();
+        _mpRoutingUpdate();
+
+        if (MP.eqCtx?.state === 'suspended') {
+            MP.eqCtx.resume().then(() => _mpStartSilentBuffer()).catch(() => {});
+        }
 
         await MP.audioEl.play();
+
+        // Запускаем vizAudio для EQ/визуализатора
+        if (MP.vizAudio && MP.eqCtx) {
+            MP.vizAudio.currentTime = MP.audioEl.currentTime;
+            MP.vizAudio.play().catch(() => {});
+        }
 
         MP.playing = true;
         MP._transitioning = false;
@@ -8045,11 +8124,17 @@ function musicTogglePlay() {
     } else {
         // ── PLAY ──
         if (!MP.eqCtx) _initWebAudio();
-        if (MP.eqCtx?.state === 'suspended') MP.eqCtx.resume().catch(() => {});
-        if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+        if (MP.eqCtx?.state === 'suspended') {
+            MP.eqCtx.resume().then(() => _mpStartSilentBuffer()).catch(() => {});
+        }
+        _mpRoutingUpdate();
         MP.audioEl.play()
             .then(() => {
                 MP.playing = true;
+                if (MP.vizAudio && MP.eqCtx) {
+                    MP.vizAudio.currentTime = MP.audioEl.currentTime;
+                    MP.vizAudio.play().catch(() => {});
+                }
                 _mpStartViz();
                 _mpUpdateCard();
                 _mpUpdateMiniPlayer();
@@ -8088,15 +8173,14 @@ function musicToggleRepeat() {
 }
 function musicSetVolume(v) {
     MP.volume = v/100;
-    if (MP.audioEl) MP.audioEl.volume = MP.volume;
-    if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+    _mpRoutingUpdate();
 }
 function musicSeek(e, wrap) {
     if (!MP.audioEl || !MP.audioEl.duration) return;
     const r = wrap.getBoundingClientRect();
     const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * MP.audioEl.duration;
     MP.audioEl.currentTime = t;
-
+    if (MP.vizAudio) MP.vizAudio.currentTime = t;
 }
 function musicSearch(q) { MP.filterQuery = q; _mpRender(q); }
 
@@ -8246,24 +8330,31 @@ function _mpEqPresetStyle(btn, active) {
 
 function musicApplyPreset(name) {
     const gains = EQ_PRESETS[name]; if (!gains) return;
-    if (!MP.eqEnabled) { MP.eqEnabled=true; _mpEqToggleUI(true); }
+    if (!MP.eqCtx && MP.audioEl) _initWebAudio();
+    if (!MP.eqEnabled) { MP.eqEnabled = true; _mpEqToggleUI(true); _mpRoutingUpdate(); }
     MP.eqGains = [...gains];
     _mpApplyEqToFilters();
+    if (MP.playing) _mpVizAudioPlay();
     _mpDrawEq();
     showToast(`EQ: ${name}`, 'info');
 }
 function musicToggleEQ() {
     MP.eqEnabled = !MP.eqEnabled;
     if (!MP.eqCtx && MP.audioEl) _initWebAudio();
-    _mpEqToggleUI(MP.eqEnabled);
     _mpApplyEqToFilters();
+    _mpRoutingUpdate();
+    if (MP.eqEnabled && MP.playing) _mpVizAudioPlay();
+    else _mpVizAudioPause();
+    _mpEqToggleUI(MP.eqEnabled);
     _mpDrawEq();
     showToast(MP.eqEnabled ? 'Эквалайзер включён' : 'Эквалайзер выключен', 'info');
 }
 function musicDisableEQ() {
     MP.eqEnabled = false;
-    _mpEqToggleUI(false);
     _mpApplyEqToFilters();
+    _mpRoutingUpdate();
+    _mpVizAudioPause();
+    _mpEqToggleUI(false);
     _mpDrawEq();
 }
 function musicResetEQ() {
