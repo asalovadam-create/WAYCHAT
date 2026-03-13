@@ -7031,7 +7031,6 @@ const MP = {
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
     _transitioning: false,
-    _eqConnected: false, // подключён ли AudioContext к destination
 };
 
 const EQ_FREQS = [32,64,125,250,500,1000,2000,4000,8000,16000];
@@ -7184,18 +7183,22 @@ function _initAudioCtx() {
     }
 }
 
-// ── Web Audio: audioEl → src → eq[0..9] → analyser → gain → destination ──
-// Ключевая механика фонового воспроизведения:
-//   audioEl всегда подключён к AudioContext через srcNode.
-//   В фоне iOS suspend'ит AudioContext, но audioEl продолжает играть
-//   ЕСЛИ мы disconnect'им gainNode от destination.
-//   При возврате reconnect'им и resume().
+// ══ Web Audio ══
+// Архитектура: audioEl → MediaElementSource → eqFilters → analyser → gainNode → destination
+// Фоновое воспроизведение на iOS обеспечивается "silent buffer trick":
+// Запускаем бесконечный тихий AudioBufferSourceNode — iOS думает что AudioContext
+// активно воспроизводит звук и НЕ suspend'ит его в фоне.
+// Это тот же приём что используют Spotify Web Player, YouTube Music PWA.
+
 function _initWebAudio() {
     if (MP.eqCtx) return true;
     if (!MP.audioEl) return false;
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
         MP.eqCtx = new AC();
+
+        // ── Silent buffer: держим AudioContext живым в фоне ──
+        _mpStartSilentBuffer();
 
         MP.eqSrc = MP.eqCtx.createMediaElementSource(MP.audioEl);
 
@@ -7214,13 +7217,12 @@ function _initWebAudio() {
         MP.gainNode = MP.eqCtx.createGain();
         MP.gainNode.gain.value = MP.volume;
 
-        // Цепочка: src → eq[0..9] → analyser → gain → destination
+        // src → eq[0..9] → analyser → gain → destination
         let prev = MP.eqSrc;
         MP.eqFilters.forEach(f => { prev.connect(f); prev = f; });
         prev.connect(MP.analyserNode);
         MP.analyserNode.connect(MP.gainNode);
         MP.gainNode.connect(MP.eqCtx.destination);
-        MP._eqConnected = true;
 
         return true;
     } catch(e) {
@@ -7231,41 +7233,41 @@ function _initWebAudio() {
 }
 function _initVizCtx() { return _initWebAudio(); }
 
-// Отключаем gainNode от destination → audioEl продолжает играть в фоне
-// (AudioContext suspend'd, но HTMLAudioElement независим)
-function _mpEqDisconnect() {
-    if (!MP.gainNode || !MP._eqConnected) return;
-    try { MP.gainNode.disconnect(); } catch(e) {}
-    MP._eqConnected = false;
-}
+// Silent buffer trick — бесконечный тихий буфер не даёт iOS suspend'ить AudioContext
+let _silentBufferNode = null;
+function _mpStartSilentBuffer() {
+    if (!MP.eqCtx) return;
+    if (_silentBufferNode) { try { _silentBufferNode.stop(); } catch(e) {} }
 
-// Подключаем обратно при возврате на передний план
-function _mpEqReconnect() {
-    if (!MP.gainNode || MP._eqConnected) return;
-    try {
-        MP.gainNode.connect(MP.eqCtx.destination);
-        MP._eqConnected = true;
-    } catch(e) {}
+    // 1-секундный тихий буфер, зацикленный
+    const buf = MP.eqCtx.createBuffer(1, MP.eqCtx.sampleRate, MP.eqCtx.sampleRate);
+    // Добавляем минимальный шум (1e-10) — некоторые браузеры оптимизируют полную тишину
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 1e-10;
+
+    _silentBufferNode = MP.eqCtx.createBufferSource();
+    _silentBufferNode.buffer = buf;
+    _silentBufferNode.loop = true;
+    _silentBufferNode.connect(MP.eqCtx.destination);
+    _silentBufferNode.start(0);
 }
 
 function _mpRoutingUpdate() {
-    if (!MP.audioEl) return;
     if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 }
 
 // ══ Фоновое воспроизведение ══
-// При уходе в фон: disconnect gainNode → audioEl продолжает играть без AudioContext
-// При возврате: reconnect + resume ctx
 document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
         _mpStopViz();
-        _mpEqDisconnect(); // отключаем от destination — iOS не глушит audioEl без destination
-        return;
+        return; // AudioContext остаётся alive благодаря silent buffer
     }
-    // Вернулись на передний план
-    _mpEqReconnect();
+    // Вернулись — resume если iOS всё же suspend'ил
     if (MP.eqCtx?.state === 'suspended') {
-        try { await MP.eqCtx.resume(); } catch(e) {}
+        try {
+            await MP.eqCtx.resume();
+            _mpStartSilentBuffer(); // перезапускаем silent buffer
+        } catch(e) {}
     }
     if (MP.playing && MP.audioEl?.paused && !MP._transitioning) {
         MP.audioEl.play().catch(() => {});
@@ -7275,6 +7277,22 @@ document.addEventListener('visibilitychange', async () => {
         if (playerOpen) _mpStartViz();
     }
 });
+
+// При первом касании (iOS требует user gesture для AudioContext)
+function _mpUnlockAudio() {
+    if (!MP.eqCtx) return;
+    if (MP.eqCtx.state === 'suspended') {
+        MP.eqCtx.resume().then(() => _mpStartSilentBuffer()).catch(() => {});
+    } else {
+        _mpStartSilentBuffer();
+    }
+    document.removeEventListener('touchstart', _mpUnlockAudio, true);
+    document.removeEventListener('touchend',   _mpUnlockAudio, true);
+}
+document.addEventListener('touchstart', _mpUnlockAudio, { capture: true, passive: true });
+document.addEventListener('touchend',   _mpUnlockAudio, { capture: true, passive: true });
+
+
 
 // ══ Открытие плеера ══
 async function musicTabOpened() {
@@ -7968,7 +7986,6 @@ async function musicPlayAt(idx) {
 
         // Инициализируем WebAudio если ещё нет, reconnect и resume
         if (!MP.eqCtx) _initWebAudio();
-        _mpEqReconnect();
         if (MP.eqCtx?.state === 'suspended') MP.eqCtx.resume().catch(() => {});
         if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
         _mpApplyEqToFilters();
@@ -8028,7 +8045,6 @@ function musicTogglePlay() {
     } else {
         // ── PLAY ──
         if (!MP.eqCtx) _initWebAudio();
-        _mpEqReconnect();
         if (MP.eqCtx?.state === 'suspended') MP.eqCtx.resume().catch(() => {});
         if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
         MP.audioEl.play()
