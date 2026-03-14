@@ -2303,51 +2303,74 @@ def get_moments():
 @app.route('/debug_moments')
 @login_required
 def debug_moments():
-    uid = current_user.id
+    """Полный debug — показывает ВСЁ"""
+    uid     = current_user.id
     now_utc = datetime.utcnow()
     cutoff  = now_utc - timedelta(hours=24)
 
+    # Что у меня в saved_contact
     my_saved = list(db.session.execute(
         text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'), {'uid': uid}
     ).scalars().all())
 
-    all_moments = db.session.execute(text('''
+    # Все моменты БЕЗ фильтров — смотрим что вообще есть в БД
+    all_m = db.session.execute(text('''
         SELECT m.id, m.user_id, m.timestamp, m.expires_at,
-               u.name, u.moments_visibility
-        FROM moment m JOIN "user" u ON u.id = m.user_id
-        ORDER BY m.timestamp DESC LIMIT 50
+               u.name, u.is_blocked,
+               COALESCE(u.moments_visibility,'all') as vis
+        FROM moment m
+        JOIN "user" u ON u.id = m.user_id
+        ORDER BY m.timestamp DESC
+        LIMIT 100
     '''), {}).fetchall()
 
+    # Что реально вернёт get_moments
+    i_blocked = set(db.session.execute(
+        text('SELECT blocked_id FROM blocked_user WHERE blocker_id = :uid'), {'uid': uid}
+    ).scalars().all())
+    hidden = set(db.session.execute(
+        text('SELECT user_id FROM moment_hidden_from WHERE hidden_from_id = :uid'), {'uid': uid}
+    ).scalars().all())
+
     result = []
-    for m in all_moments:
-        age_h = round((now_utc - m.timestamp).total_seconds() / 3600, 1) if m.timestamp else 99
-        expired = (m.expires_at is not None and m.expires_at < now_utc)
-        too_old = age_h > 24
-        i_saved = m.user_id in my_saved
+    for m in all_m:
+        age_h   = round((now_utc - m.timestamp).total_seconds() / 3600, 2) if m.timestamp else 999
+        expired = m.expires_at is not None and m.expires_at < now_utc
         is_mine = m.user_id == uid
 
-        why_hidden = []
-        if too_old: why_hidden.append(f'TOO_OLD({age_h}h)')
-        if expired: why_hidden.append('EXPIRED')
-        if not is_mine and not i_saved: why_hidden.append('NOT_IN_MY_SAVED')
+        skip_reason = None
+        if not is_mine:
+            if m.user_id in i_blocked: skip_reason = 'I_BLOCKED'
+            elif m.user_id in hidden:  skip_reason = 'HIDDEN_FROM_ME'
+            elif m.vis == 'nobody':   skip_reason = 'VIS_NOBODY'
+            elif age_h > 24:          skip_reason = f'TOO_OLD_{age_h}h'
+            elif expired:             skip_reason = 'EXPIRED'
+        elif age_h > 24: skip_reason = f'TOO_OLD_{age_h}h'
+        elif expired:    skip_reason = 'EXPIRED'
 
         result.append({
-            'moment_id':   m.id,
+            'id':          m.id,
             'author_id':   m.user_id,
-            'author_name': m.name,
-            'vis':         m.moments_visibility,
-            'age_hours':   age_h,
+            'name':        m.name,
+            'vis':         m.vis,
+            'age_h':       age_h,
             'expired':     expired,
+            'expires_at':  m.expires_at.isoformat() if m.expires_at else None,
+            'timestamp':   m.timestamp.isoformat() if m.timestamp else None,
             'is_mine':     is_mine,
-            'i_saved':     i_saved,
-            'VISIBLE':     len(why_hidden) == 0,
-            'why_hidden':  why_hidden,
+            'skip_reason': skip_reason,
+            'SHOWS_UP':    skip_reason is None,
         })
 
     return jsonify({
-        'my_id':     uid,
-        'my_saved':  my_saved,
-        'moments':   result,
+        'MY_ID':        uid,
+        'my_saved_ids': my_saved,
+        'i_blocked':    list(i_blocked),
+        'hidden':       list(hidden),
+        'now_utc':      now_utc.isoformat(),
+        'cutoff':       cutoff.isoformat(),
+        'total_in_db':  len(result),
+        'moments':      result,
     })
 
 
