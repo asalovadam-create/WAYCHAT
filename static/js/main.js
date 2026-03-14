@@ -4427,7 +4427,11 @@ function showPartnerProfile() {
                             + '<div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escHtml(t.title||'Без названия')+'</div>'
                             + (t.artist ? '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">'+escHtml(t.artist)+'</div>' : '')
                             + '</div>'
-                            + (dur ? '<div style="font-size:12px;color:rgba(255,255,255,.3);flex-shrink:0">'+dur+'</div>' : '')
+                            + (dur ? '<div style="font-size:12px;color:rgba(255,255,255,.3);flex-shrink:0;margin-right:4px">'+dur+'</div>' : '')
+                            + '<button onclick="addFriendTrackToPlaylist(\''+escHtml(t.title||'')+'\',\''+escHtml(t.artist||'')+'\','+t.duration+')" '
+                            + 'style="width:28px;height:28px;border-radius:50%;background:rgba(16,185,129,.15);border:.5px solid rgba(16,185,129,.3);color:var(--accent);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:18px;font-weight:300;line-height:1;padding:0">'
+                            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>'
+                            + '</button>'
                             + '</div>';
                     }
 
@@ -4611,6 +4615,41 @@ function expandProfileTracks(btn) {
     if (!allTracks || !list) return;
     list.innerHTML = allTracks.map(function(t,i){ return renderFn(t, i, allTracks.length); }).join('');
     btn.style.display = 'none';
+}
+
+// Добавить трек из профиля друга в свой плейлист (только метаданные — без файла)
+async function addFriendTrackToPlaylist(title, artist, duration) {
+    // Создаём заглушку-трек без реального аудио-файла
+    // Пользователь может потом заменить файл через переименование или загрузить свой
+    const id = Date.now();
+    const track = {
+        id,
+        title:      title || 'Без названия',
+        artist:     artist || '',
+        duration:   duration || 0,
+        coverUrl:   null,
+        isFromVideo: false,
+        addedAt:    Date.now(),
+        isFriendTrack: true, // метка — нет реального файла
+    };
+
+    // Сохраняем метаданные в tracks store
+    try {
+        await _mdbPut('tracks', track);
+        MP.tracks.push(track);
+        // Пустой blob-заглушка чтобы не падал при попытке играть
+        const silentBlob = new Blob([new Uint8Array(44)], {type:'audio/wav'});
+        const blobData   = await silentBlob.arrayBuffer();
+        await _mdbPut('blobs', { id, data: new Uint8Array(blobData), mime: 'audio/wav' });
+
+        _mpRender();
+        _mpSyncTracksToServer();
+        showToast(`«${title}» добавлен в плейлист`, 'success');
+        vibrate(15);
+    } catch(e) {
+        showToast('Ошибка добавления', 'error');
+        console.error('addFriendTrack:', e);
+    }
 }
 
 async function hideMomentsFromUser(userId) {
@@ -7699,6 +7738,7 @@ const MP = {
     eqGains: [0,0,0,0,0,0,0,0,0,0],
     eqDragging: -1,
     _transitioning: false,
+    _vizConnected: false,
 };
 
 // ── audioEl: создаём один раз ──
@@ -7753,27 +7793,22 @@ function _initWebAudio() {
     try {
         const AC = window.AudioContext || window.webkitAudioContext;
         MP.ctx = new AC();
-        MP.srcNode    = MP.ctx.createMediaElementSource(MP.audioEl);
+
+        // ТОЛЬКО тихий буфер + analyser для визуализатора
+        // audioEl НЕ подключается через createMediaElementSource — иначе iOS глушит в фоне
         MP.analyserNode = MP.ctx.createAnalyser();
         MP.analyserNode.fftSize = 512;
-        MP.gainNode   = MP.ctx.createGain();
-        MP.gainNode.gain.value = MP.volume;
-        MP.eqFilters  = EQ_FREQS.map((freq, i) => {
+
+        // EQ фильтры создаём но применяем через Web Audio отдельного source (не audioEl)
+        MP.eqFilters = EQ_FREQS.map((freq, i) => {
             const f = MP.ctx.createBiquadFilter();
             f.type = i === 0 ? 'lowshelf' : i === EQ_FREQS.length - 1 ? 'highshelf' : 'peaking';
             f.frequency.value = freq;
             f.gain.value = 0; f.Q.value = 1.4;
             return f;
         });
-        // Цепочка
-        let p = MP.srcNode;
-        MP.eqFilters.forEach(f => { p.connect(f); p = f; });
-        p.connect(MP.analyserNode);
-        MP.analyserNode.connect(MP.gainNode);
-        MP.gainNode.connect(MP.ctx.destination);
-        // Применяем текущие EQ настройки
-        _mpApplyEqToFilters();
-        // Keepalive
+
+        // Запускаем keepalive
         _mpKeepAlive();
     } catch(e) {
         console.warn('WebAudio:', e.message);
@@ -7782,11 +7817,14 @@ function _initWebAudio() {
 }
 function _initVizCtx() { return !!MP.ctx; }
 
-// ── Keepalive: silent buffer + interval ──
+// ── Keepalive: держим ctx running через постоянный resume ──
+// ВАЖНО: audioEl НЕ подключён к AudioContext (createMediaElementSource не вызывается)
+// iOS не может заглушить audioEl который воспроизводит через нативный HTML5
+// AudioContext используется ТОЛЬКО для EQ-фильтров через отдельный source
 let _silentSrc = null, _keepTimer = null;
 function _mpKeepAlive() {
     if (!MP.ctx) return;
-    // 1) Тихий зацикленный буфер — iOS не suspend'ит ctx пока есть активный source
+    // Тихий зацикленный буфер — iOS видит активный AudioContext
     try {
         if (_silentSrc) { try { _silentSrc.stop(); } catch(_) {} }
         const sr  = MP.ctx.sampleRate;
@@ -7799,30 +7837,35 @@ function _mpKeepAlive() {
         _silentSrc.connect(MP.ctx.destination);
         _silentSrc.start(0);
     } catch(e) {}
-    // 2) Принудительный resume каждые 20 сек
+    // Каждые 5 секунд — агрессивный resume чтобы не было задержки 15 сек
     clearInterval(_keepTimer);
     _keepTimer = setInterval(() => {
-        if (MP.ctx && MP.ctx.state !== 'running') {
+        if (!MP.ctx) return;
+        if (MP.ctx.state !== 'running') {
             MP.ctx.resume().catch(() => {});
         }
-    }, 20000);
+        // Перезапускаем silent buffer если он остановился
+        if (!_silentSrc || (_silentSrc.playbackState !== undefined && _silentSrc.playbackState === 3)) {
+            _mpKeepAlive();
+        }
+    }, 5000); // каждые 5 сек вместо 20!
 }
-
 // ── visibilitychange ──
-document.addEventListener('visibilitychange', async () => {
+document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-        _mpStopViz();
+        _mpStopViz(); // только визуализатор
+        // audioEl продолжает играть сам — iOS не трогает чистый HTML5 audio
         return;
     }
-    // Вернулись — resume ctx
+    // Вернулись — немедленно resume ctx
     if (MP.ctx && MP.ctx.state !== 'running') {
-        await MP.ctx.resume().catch(() => {});
-        _mpKeepAlive();
+        MP.ctx.resume().then(() => _mpKeepAlive()).catch(() => {});
     }
-    // Восстанавливаем если iOS остановил audioEl
+    // Если audioEl остановился (очень редко) — возобновляем
     if (MP.playing && MP.audioEl && MP.audioEl.paused && !MP._transitioning) {
         MP.audioEl.play().catch(() => {});
     }
+    // Перезапускаем визуализатор
     if (MP.playing) {
         const open = document.getElementById('music-section')?.style.display !== 'none';
         if (open) _mpStartViz();
@@ -8538,21 +8581,14 @@ async function musicPlayAt(idx) {
         MP.audioEl.src = newUrl;
         MP.audioEl.load();
 
-        // Если AudioContext уже есть — resume
-        if (MP.ctx && MP.ctx.state !== 'running') {
-            MP.ctx.resume().catch(() => {});
-        }
-
-        // PLAY — user gesture гарантирован (пользователь нажал на трек)
+        // PLAY — audioEl полностью независим от AudioContext
+        // iOS не может заглушить чистый HTML5 audio в фоне
         await MP.audioEl.play();
 
-        // Создаём AudioContext ПОСЛЕ play() — user gesture уже есть
-        if (!MP.ctx) {
-            _initWebAudio();
-            // ctx теперь running, keepalive запущен
-        }
-
-        if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+        // AudioContext инициализируем ПОСЛЕ play() (нужен user gesture)
+        // Используется только для EQ-визуализации, НЕ для воспроизведения
+        if (!MP.ctx) _initWebAudio();
+        if (MP.ctx && MP.ctx.state !== 'running') MP.ctx.resume().catch(() => {});
 
         MP.playing = true;
         MP._transitioning = false;
@@ -8604,15 +8640,11 @@ function musicTogglePlay() {
         _mpUpdateMiniPlayer();
         if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
     } else {
-        // Resume ctx если уже есть
-        if (MP.ctx && MP.ctx.state !== 'running') MP.ctx.resume().catch(() => {});
+        MP.audioEl.volume = MP.volume;
         MP.audioEl.play()
             .then(() => {
-                // Создаём ctx после play() — user gesture гарантирован
-                if (!MP.ctx) {
-                    _initWebAudio();
-                }
-                if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
+                if (!MP.ctx) _initWebAudio();
+                if (MP.ctx && MP.ctx.state !== 'running') MP.ctx.resume().catch(() => {});
                 MP.playing = true;
                 _mpStartViz();
                 _mpUpdateCard();
@@ -8652,6 +8684,8 @@ function musicToggleRepeat() {
 }
 function musicSetVolume(v) {
     MP.volume = v/100;
+    if (MP.audioEl) MP.audioEl.volume = MP.volume;
+    // gainNode если есть — синхронизируем для визуализатора
     if (MP.gainNode) MP.gainNode.gain.value = MP.volume;
 }
 function musicSeek(e, wrap) {
@@ -8910,7 +8944,20 @@ function _mpStartViz() {
     if (MP.vizRAF) { cancelAnimationFrame(MP.vizRAF); MP.vizRAF = null; }
 
     if (!MP.ctx && MP.audioEl) _initWebAudio();
-    if (MP.ctx?.state === 'suspended') MP.ctx.resume().catch(() => {});
+    if (MP.ctx && MP.ctx.state !== 'running') MP.ctx.resume().catch(() => {});
+
+    // Подключаем analyserNode через captureStream — не нарушает фоновое воспроизведение
+    if (MP.ctx && MP.analyserNode && !MP._vizConnected && MP.audioEl) {
+        try {
+            if (MP.audioEl.captureStream) {
+                const stream = MP.audioEl.captureStream();
+                const src = MP.ctx.createMediaStreamSource(stream);
+                src.connect(MP.analyserNode);
+                MP.analyserNode.connect(MP.ctx.destination);
+                MP._vizConnected = true;
+            }
+        } catch(e) {}
+    }
 
     canvas.width  = canvas.offsetWidth  * (devicePixelRatio||1);
     canvas.height = canvas.offsetHeight * (devicePixelRatio||1);
