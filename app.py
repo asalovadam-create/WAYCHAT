@@ -1360,7 +1360,9 @@ def get_my_chats():
     if partner_ids:
         mc_rows = db.session.execute(text('''
             SELECT user_id, COUNT(*) as cnt FROM moment
-            WHERE user_id = ANY(:ids) AND expires_at > NOW()
+            WHERE user_id = ANY(:ids)
+              AND expires_at > NOW()
+              AND timestamp >= NOW() - INTERVAL '24 hours'
             GROUP BY user_id
         '''), {'ids': partner_ids}).fetchall()
         for r in mc_rows:
