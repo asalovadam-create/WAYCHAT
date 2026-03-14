@@ -223,7 +223,7 @@ def _run_early_migrations():
     Использует IF NOT EXISTS — безопасно запускать многократно."""
     early_sqls = [
         "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'contacts'",
-        "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'contacts'",
+        "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'all'",
         '''CREATE TABLE IF NOT EXISTS saved_contact (
             id SERIAL PRIMARY KEY,
             user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
@@ -493,7 +493,7 @@ class User(UserMixin, db.Model):
     last_ip            = db.Column(db.String(64),   default='')      # последний IP
     reg_ip             = db.Column(db.String(64),   default='')      # IP при регистрации
     moments_visibility = db.Column(db.String(20),   default='contacts')  # all/contacts/nobody
-    tracks_visibility  = db.Column(db.String(20),   default='contacts')  # all/contacts/nobody
+    tracks_visibility  = db.Column(db.String(20),   default='all')  # all/contacts/nobody
 
     @property
     def online_status(self):
@@ -1260,7 +1260,7 @@ def get_user_profile(user_id):
 
     # Треки пользователя — видны если разрешено
     tracks = []
-    vis = u.tracks_visibility or 'contacts'
+    vis = u.tracks_visibility or 'all'
     can_see_tracks = (uid == user_id) or (vis == 'all') or (vis == 'contacts' and is_mutual)
     if can_see_tracks:
         track_rows = UserTrack.query.filter_by(user_id=user_id).order_by(UserTrack.created_at.desc()).limit(50).all()
@@ -2132,7 +2132,7 @@ def get_privacy():
     hidden = [{'id': h.hidden_from_id} for h in MomentHiddenFrom.query.filter_by(user_id=u.id).all()]
     return jsonify({
         'moments_visibility': u.moments_visibility or 'contacts',
-        'tracks_visibility':  u.tracks_visibility  or 'contacts',
+        'tracks_visibility':  u.tracks_visibility  or 'all',
         'hidden_from':        hidden,
     })
 
@@ -2531,9 +2531,16 @@ def handle_reaction(data):
     except Exception:
         return
 
-    existing = MessageReaction.query.filter_by(msg_id=msg_id, user_id=uid, emoji=emoji).first()
-    if existing:
-        db.session.delete(existing)
+    # Одна реакция на пользователя — удаляем все предыдущие
+    old_reactions = MessageReaction.query.filter_by(msg_id=msg_id, user_id=uid).all()
+    existing_same = None
+    for r in old_reactions:
+        if r.emoji == emoji:
+            existing_same = r
+        else:
+            db.session.delete(r)
+    if existing_same:
+        db.session.delete(existing_same)
     else:
         db.session.add(MessageReaction(msg_id=msg_id, user_id=uid, emoji=emoji))
     db.session.commit()
@@ -2829,7 +2836,7 @@ def run_migrations():
         'CREATE INDEX IF NOT EXISTS ix_user_is_online   ON "user"(is_online) WHERE is_online = TRUE',
         # Privacy settings
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'contacts' ''',
-        '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'contacts' ''',
+        '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'all' ''',
         # Saved contacts table
         '''CREATE TABLE IF NOT EXISTS saved_contact (
             id SERIAL PRIMARY KEY,
