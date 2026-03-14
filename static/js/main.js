@@ -2488,16 +2488,25 @@ async function openChat(id, name, avatar) {
         }
     }
 
-    // Показываем кэшированные сообщения МГНОВЕННО если есть
+    // 5: Показываем кэш МГНОВЕННО: память → IndexedDB → пусто
     const cached = messagesByChatCache[`p_${id}`];
     if (cached && cached.messages.length > 0) {
         msgs.innerHTML = '';
         renderMessagesFromCache(cached.messages);
         scrollDown(false);
-        // Показываем индикатор что обновляем
         document.getElementById('chat-status').textContent = 'обновление...';
     } else {
-        msgs.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:14px">Загрузка...</div></div>`;
+        // Пробуем IndexedDB
+        msgs.innerHTML = '<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:14px">Загрузка...</div></div>';
+        _mdbGet('chats', 'p_' + id).then(function(idbData) {
+            if (idbData && idbData.msgs && idbData.msgs.length && !messagesByChatCache['p_' + id]) {
+                msgs.innerHTML = '';
+                renderMessagesFromCache(idbData.msgs);
+                scrollDown(false);
+                document.getElementById('chat-status').textContent = 'обновление...';
+                messagesByChatCache['p_' + id] = { messages: idbData.msgs, lastFetch: idbData.ts };
+            }
+        }).catch(() => {});
     }
 
     try {
@@ -2577,7 +2586,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 // ══════════════════════════════════════════════════════════
 //  ЗАГРУЗКА СООБЩЕНИЙ — КЭШ + ПАГИНАЦИЯ (30-40 за раз)
 // ══════════════════════════════════════════════════════════
-const MESSAGES_PER_PAGE = 35;
+const MESSAGES_PER_PAGE = 30; // 3/6: загружаем по 30
 
 async function loadMessages(initial = false) {
     if (!currentChatId || loadingMessages || (!initial && !hasMoreMessages)) return;
@@ -2607,12 +2616,14 @@ async function loadMessages(initial = false) {
         if (msgs.length < MESSAGES_PER_PAGE) hasMoreMessages = false;
 
         if (initial) {
-            // Обновляем кэш
+            // 5: Обновляем кэш + сохраняем в IndexedDB
             if (!messagesByChatCache[cacheKey]) {
                 messagesByChatCache[cacheKey] = { messages: [], loadedAll: false };
             }
             messagesByChatCache[cacheKey].messages = msgs;
             messagesByChatCache[cacheKey].lastFetch = Date.now();
+            // Persist to IndexedDB (фоново, не блокируем UI)
+            _mdbPut('chats', { id: cacheKey, msgs: msgs.slice(-100), ts: Date.now() }).catch(() => {});
 
             container.innerHTML = '';
             if (!msgs.length) {
@@ -2620,6 +2631,7 @@ async function loadMessages(initial = false) {
                 return;
             }
             renderMessagesFromCache(msgs);
+            _trimOldMessages(); // 7: виртуальный скролл — держим DOM лёгким
             scrollDown(false);
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
@@ -2639,6 +2651,20 @@ async function loadMessages(initial = false) {
         currentPage++;
     } catch(e) { console.error('loadMessages:', e); }
     finally { loadingMessages = false; }
+}
+
+// ─── 7: Virtual scroll helper ───
+// Если в DOM > MAX_DOM_MSGS — удаляем старые из начала
+const MAX_DOM_MSGS = 80;
+function _trimOldMessages() {
+    const c = document.getElementById('messages');
+    if (!c) return;
+    const rows = c.querySelectorAll('[data-msg-id]');
+    if (rows.length > MAX_DOM_MSGS) {
+        const toRemove = rows.length - MAX_DOM_MSGS;
+        for (let i = 0; i < toRemove; i++) rows[i].remove();
+        hasMoreMessages = true; // разрешаем загрузку старых
+    }
 }
 
 function renderMessagesFromCache(msgs) {
