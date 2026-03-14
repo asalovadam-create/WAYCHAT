@@ -4982,6 +4982,11 @@ async function addFriendTrackToPlaylist(title, artist, duration, serverTrackId) 
         const data = await r.json();
 
         // Сохраняем в локальный плейлист с audio_url
+        // Делаем URL абсолютным — audio элемент не шлёт credentials для относительных путей
+        let trackUrl = data.audio_url || '';
+        if (trackUrl && trackUrl.startsWith('/')) {
+            trackUrl = window.location.origin + trackUrl;
+        }
         const localId = Date.now();
         const track = {
             id:            localId,
@@ -4989,7 +4994,7 @@ async function addFriendTrackToPlaylist(title, artist, duration, serverTrackId) 
             artist:        data.artist   || artist   || '',
             duration:      data.duration || duration || 0,
             coverUrl:      data.cover_url || null,
-            audio_url:     data.audio_url,       // ← URL для стриминга
+            audio_url:     trackUrl,             // ← абсолютный URL для стриминга
             serverTrackId: data.track_id,        // ← ID на сервере
             isFromVideo:   false,
             isFriendTrack: false,                // есть URL — полноценный трек
@@ -8272,6 +8277,12 @@ async function _mpSyncTracksToServer() {
 async function _mpLoadTracks() {
     try {
         const raw = await _mdbGetAll('tracks');
+        // Нормализуем relative URLs в абсолютные (старые треки могли сохраниться с /stream_track/...)
+        raw.forEach(function(t) {
+            if (t.audio_url && t.audio_url.startsWith('/')) {
+                t.audio_url = window.location.origin + t.audio_url;
+            }
+        });
         MP.tracks = raw.sort((a,b) => (a.title||'').localeCompare(b.title||''));
         _mpRender();
     } catch(e) { console.error('music load:', e); showToast('Ошибка загрузки', 'error'); }
@@ -8367,7 +8378,10 @@ async function _mpUploadTrackToServer(id, file, track) {
         const data = await r.json();
         if (!data.ok || !data.url) return;
         // Обновляем трек в IndexedDB
-        const updated = { ...track, id, audio_url: data.url, serverTrackId: data.track_id };
+        // Абсолютный URL для audio элемента
+        let absUrl = data.url || '';
+        if (absUrl && absUrl.startsWith('/')) absUrl = window.location.origin + absUrl;
+        const updated = { ...track, id, audio_url: absUrl, serverTrackId: data.track_id };
         await _mdbPut('tracks', updated);
         // Обновляем в MP.tracks
         const t = MP.tracks.find(t => t.id === id);
@@ -8974,28 +8988,31 @@ async function musicPlayAt(idx) {
         // Определяем источник: локальный blob или online URL
         let playUrl = null;
 
+        // Хелпер: делаем URL абсолютным
+        const _absUrl = u => (u && u.startsWith('/')) ? window.location.origin + u : u;
+
         if (track.audio_url) {
-            // Приоритет — онлайн URL (и для своих и для чужих треков)
-            // Проверяем есть ли локальный blob (быстрее если есть)
+            // Приоритет — онлайн URL
             const rec = await _mdbGet('blobs', track.id).catch(() => null);
             if (rec?.data && !track.isFriendTrack) {
                 playUrl = URL.createObjectURL(new Blob([rec.data], { type: rec.mime || 'audio/mpeg' }));
             } else {
-                playUrl = track.audio_url; // стримим онлайн
+                playUrl = _absUrl(track.audio_url);
             }
-        } else if (track.isFriendTrack) {
-            // Нет URL — пробуем получить с сервера
+        } else if (track.isFriendTrack || track.serverTrackId) {
+            // Нет URL — получаем с сервера
             try {
                 const r = await apiFetch('/get_track_url/' + track.serverTrackId);
                 if (r?.ok) {
                     const d = await r.json();
-                    if (d.url) {
-                        track.audio_url = d.url;
+                    const u = d.url || d.audio_url || '';
+                    if (u) {
+                        track.audio_url = _absUrl(u);
                         await _mdbPut('tracks', track).catch(() => {});
-                        playUrl = d.url;
+                        playUrl = track.audio_url;
                     }
                 }
-            } catch(e) {}
+            } catch(e) { console.warn('get_track_url error:', e); }
             if (!playUrl) {
                 MP._transitioning = false;
                 showToast('Трек недоступен онлайн', 'error');
