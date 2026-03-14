@@ -1530,71 +1530,68 @@ function _toggleStoriesExpand() {
 function renderMiniStories() {
     const wrap = document.getElementById('stories-mini');
     if (!wrap) return;
-    const moments = momentsCache || [];
-    const meId    = currentUser ? currentUser.id : null;
+    const moments  = momentsCache || [];
+    const meId     = currentUser ? currentUser.id : null;
 
-    // Собираем уникальных авторов
+    // byUser — только те у кого ЕСТЬ момент
+    const byUser = new Map();
+    moments.forEach(function(m) {
+        if (!byUser.has(m.user_id)) byUser.set(m.user_id, m);
+    });
+
+    // Список авторов: я первый (только если у меня есть момент), остальные по порядку
     const seen = new Set(), uids = [];
-    if (meId) { seen.add(meId); uids.push(meId); }
+    if (meId && byUser.has(meId)) { seen.add(meId); uids.push(meId); }
     moments.forEach(function(m) {
         if (!seen.has(m.user_id)) { seen.add(m.user_id); uids.push(m.user_id); }
     });
 
-    wrap.innerHTML = '';
-    if (!uids.length && !meId) {
-        // Совсем нет — скрываем бар
-        const bar = document.getElementById('stories-mini-bar');
+    // Скрываем бар если нет ни одного момента
+    const bar = document.getElementById('stories-mini-bar');
+    if (!uids.length) {
         if (bar) bar.style.display = 'none';
         return;
     }
-    const bar = document.getElementById('stories-mini-bar');
     if (bar) bar.style.display = '';
 
-    const byUser = new Map();
-    moments.forEach(function(m) { if (!byUser.has(m.user_id)) byUser.set(m.user_id, m); });
+    wrap.innerHTML = '';
 
-    const MAX = 5;
+    const MAX = 3; // максимум 3 кружка
     uids.slice(0, MAX).forEach(function(uid, i) {
         const m      = byUser.get(uid) || {};
         const isMe   = uid === meId;
         const ava    = isMe ? (currentUser.avatar || '') : (m.user_avatar || '');
         const viewed = !isMe && _viewedMomentUsers && _viewedMomentUsers.has(uid);
-        const hasMom = byUser.has(uid);
 
         const ring = document.createElement('div');
         ring.style.cssText = 'width:32px;height:32px;border-radius:50%;flex-shrink:0;'
             + 'margin-left:' + (i === 0 ? '0' : '-8px') + ';'
             + 'box-shadow:0 0 0 2.5px var(--bg);'
-            + 'background:' + (hasMom && !viewed ? 'conic-gradient(var(--accent) 0deg 300deg,rgba(255,255,255,.1) 300deg)' : 'rgba(255,255,255,.12)') + ';'
-            + 'padding:2px;position:relative;z-index:' + (MAX - i) + ';'
-            + 'transition:transform .15s';
+            + 'background:' + (!viewed ? 'conic-gradient(var(--accent) 0deg 300deg,rgba(255,255,255,.1) 300deg)' : 'rgba(255,255,255,.18)') + ';'
+            + 'padding:2px;position:relative;z-index:' + (MAX - i) + ';transition:transform .15s';
 
-        // Inner
         const inner = document.createElement('div');
         inner.style.cssText = 'width:100%;height:100%;border-radius:50%;background:var(--bg);overflow:hidden;display:flex;align-items:center;justify-content:center';
 
         if (ava && ava.startsWith('emoji:')) {
             inner.style.fontSize = '16px';
             inner.textContent = ava.slice(6);
-        } else if (ava && !ava.includes('default') && !ava.startsWith('/static/default')) {
+        } else if (ava && !ava.includes('default_avatar') && ava.startsWith('http')) {
             const img = document.createElement('img');
             img.src = ava;
             img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+            const nm = isMe ? (currentUser.name||'?') : (m.user_name||'?');
             img.onerror = function() {
-                inner.style.background = 'var(--accent)';
-                inner.textContent = (isMe ? (currentUser.name||'?') : (m.user_name||'?')).charAt(0).toUpperCase();
-                inner.style.fontSize = '13px';
-                inner.style.fontWeight = '700';
-                inner.style.color = '#000';
+                inner.removeChild(img);
+                inner.style.background = _nameColor(nm);
+                inner.style.fontSize = '13px'; inner.style.fontWeight = '700'; inner.style.color = '#fff';
+                inner.textContent = nm.charAt(0).toUpperCase();
             };
             inner.appendChild(img);
         } else {
-            // Инициалы вместо вопросительного знака
-            const nm = isMe ? (currentUser.name || '?') : (m.user_name || '?');
+            const nm = isMe ? (currentUser.name||'?') : (m.user_name||'?');
             inner.style.background = _nameColor(nm);
-            inner.style.fontSize = '13px';
-            inner.style.fontWeight = '700';
-            inner.style.color = '#fff';
+            inner.style.fontSize = '13px'; inner.style.fontWeight = '700'; inner.style.color = '#fff';
             inner.textContent = nm.charAt(0).toUpperCase();
         }
 
@@ -1602,16 +1599,15 @@ function renderMiniStories() {
         wrap.appendChild(ring);
     });
 
-    // Счётчик
-    const old = document.getElementById('stories-mini-count');
-    if (old) old.remove();
-    if (uids.length) {
-        const lbl = document.createElement('span');
-        lbl.id = 'stories-mini-count';
-        lbl.style.cssText = 'font-size:12px;font-weight:600;color:rgba(255,255,255,.5);margin-left:8px;white-space:nowrap';
-        lbl.textContent = uids.length > 1 ? uids.length + ' моментов' : '1 момент';
-        wrap.appendChild(lbl);
-    }
+    // Счётчик — показывает общее число людей с моментами
+    const oldLbl = document.getElementById('stories-mini-count');
+    if (oldLbl) oldLbl.remove();
+    const total = uids.length;
+    const lbl = document.createElement('span');
+    lbl.id = 'stories-mini-count';
+    lbl.style.cssText = 'font-size:12px;font-weight:600;color:rgba(255,255,255,.55);margin-left:9px;white-space:nowrap';
+    lbl.textContent = total === 1 ? '1 момент' : total + ' момента';
+    wrap.appendChild(lbl);
 }
 
 // Цвет из имени (для инициалов)
@@ -1748,6 +1744,21 @@ function switchTab(tab) {
         const chatList = document.getElementById('chat-list');
         if (!chatList?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
         else renderChatList(recentChats);
+        // Обновляем кэш моментов для мини-кружков (фоново, не блокируя)
+        if (!momentsCache || (Date.now() - momentsLastLoad) > 30000) {
+            fetch('/get_moments', { credentials: 'include' })
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(d) {
+                    if (Array.isArray(d)) {
+                        momentsCache = d;
+                        momentsLastLoad = Date.now();
+                        currentMoments = d;
+                        renderMiniStories();
+                        // Обновляем кольца на аватарках в чате
+                        if (d.length > 0) loadChats(true);
+                    }
+                }).catch(function(){});
+        }
     }
     if (tab === 'moments') {
         if (!momentsCache || (Date.now() - momentsLastLoad) > 60000) loadMoments();
