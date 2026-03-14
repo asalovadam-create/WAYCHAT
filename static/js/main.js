@@ -747,32 +747,41 @@ body {
 .nav-badge { position:absolute;top:-2px;right:8px;background:var(--accent);color:#000;font-size:9px;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid #000; }
 
 /* ПОИСК */
-.search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:16px;padding:11px 14px;transition:border-color 0.2s,background 0.2s; }
-.search-box:focus-within { border-color:var(--accent-30);background:rgba(255,255,255,0.08); }
+.search-box {
+    display:flex;align-items:center;gap:10px;
+    background:rgba(255,255,255,0.07);
+    border:1px solid rgba(255,255,255,0.09);
+    border-radius:14px;padding:11px 14px;
+    transition:border-color 0.2s,background 0.2s;
+}
+.search-box:focus-within { border-color:rgba(255,255,255,0.18);background:rgba(255,255,255,0.1); }
 
-/* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
+/* ФАБ — iOS 26 glass pill */
 .fab-plus {
     width:28px;height:28px;border-radius:50%;
-    background:white;
-    border:none;cursor:pointer;
+    background:white;border:none;cursor:pointer;
     display:flex;align-items:center;justify-content:center;
     box-shadow:0 2px 10px rgba(255,255,255,0.25);
-    transition:transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s;
-    position:relative;
+    transition:transform 0.18s cubic-bezier(0.34,1.56,0.64,1);
 }
-.fab-plus:active { transform:scale(0.88); }
+.fab-plus:active { transform:scale(0.85); }
 
-/* ЧАТЫ */
+/* ЧАТЫ — iOS 26 style */
 .chat-item {
-    display:flex;align-items:center;gap:14px;padding:10px 12px;border-radius:18px;
-    transition:background 0.15s;cursor:pointer;position:relative;
+    display:flex;align-items:center;gap:13px;padding:10px 14px;
+    border-radius:0;transition:background 0.12s;cursor:pointer;position:relative;
 }
-.chat-item:active { background:rgba(255,255,255,0.06); }
+.chat-item:active { background:rgba(255,255,255,0.05); }
 .chat-item-divider {
-    height:0.5px;
-    background:linear-gradient(to right, transparent, var(--divider) 15%, var(--divider) 85%, transparent);
-    margin:0 14px;
+    height:0.5px;margin-left:72px;
+    background:rgba(255,255,255,0.07);
 }
+/* Channel item */
+.channel-item {
+    display:flex;align-items:center;gap:13px;padding:10px 14px;
+    transition:background 0.12s;cursor:pointer;
+}
+.channel-item:active { background:rgba(255,255,255,0.05); }
 .online-dot { position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid #000;border-radius:50%;box-shadow:0 0 6px var(--accent); }
 
 /* ЧАТ ОКНО */
@@ -957,12 +966,13 @@ body {
             <div class="px-5 pt-2 pb-3">
                 <div class="section-header-row">
                     <h1 class="section-title">Чаты</h1>
-                    <div style="position:absolute;right:20px;top:50%;transform:translateY(-50%);display:flex;gap:8px;align-items:center">
-                        <button onclick="openCreateGroupModal()" title="Создать группу" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.7)">
-                            ${ICONS.group}
-                        </button>
-                        <button onclick="openNewContactModal()" class="fab-plus" title="Добавить контакт">
-                            ${ICONS.plus}
+                    <div style="position:absolute;right:16px;top:50%;transform:translateY(-50%)">
+                        <button onclick="openNewChatSheet()" class="fab-plus" title="Новый чат"
+                            style="width:32px;height:32px">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                                <line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
+                                <line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
+                            </svg>
                         </button>
                     </div>
                 </div>
@@ -1747,6 +1757,70 @@ function _refreshStoriesIfNeeded() {
 
 
 // ══════════════════════════════════════════════════════════
+//  КАНАЛЫ В СПИСКЕ ЧАТОВ
+// ══════════════════════════════════════════════════════════
+let _channelsListCache = [];
+
+async function loadChannelsForList() {
+    try {
+        const r = await apiFetch('/api/channels/my');
+        if (!r?.ok) return;
+        const chs = await r.json();
+        if (!Array.isArray(chs) || !chs.length) return;
+        _channelsListCache = chs;
+        renderChannelsList(chs);
+    } catch(e) {}
+}
+
+function renderChannelsList(channels) {
+    const container = document.getElementById('chat-list');
+    if (!container) return;
+
+    // Remove old channel items
+    container.querySelectorAll('[data-channel-item]').forEach(el => el.remove());
+    const oldDivider = container.querySelector('[data-channels-divider]');
+    if (oldDivider) oldDivider.remove();
+
+    if (!channels.length) return;
+
+    // Divider
+    const divider = document.createElement('div');
+    divider.dataset.channelsDivider = '1';
+    divider.style.cssText = 'padding:8px 16px 4px;display:flex;align-items:center;gap:8px';
+    divider.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 8.5c0 4.7-4.5 8.5-10 8.5-1.4 0-2.7-.2-3.9-.7L2 18l1.3-4.2C2.5 12.5 2 11 2 9.5 2 4.8 6.5 1 12 1s10 3.8 10 7.5z" stroke="rgba(255,255,255,.35)" stroke-width="2"/></svg>'
+        + '<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,.35);letter-spacing:0.4px;text-transform:uppercase">Каналы</span>';
+    container.appendChild(divider);
+
+    channels.forEach(function(ch) {
+        const item = document.createElement('div');
+        item.className = 'channel-item';
+        item.dataset.channelItem = '1';
+        item.dataset.channelId = String(ch.id);
+        item.onclick = function() { openChannelById(ch.id); };
+
+        const avaHtml = ch.avatar
+            ? '<img src="'+ch.avatar+'" style="width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0">'
+            : '<div style="width:52px;height:52px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:black;flex-shrink:0">' + (ch.name.charAt(0).toUpperCase()) + '</div>';
+
+        const subsText = ch.subscribers === 1 ? '1 подп.' : (ch.subscribers || 0) + ' подп.';
+        const ownerBadge = ch.is_owner ? '<span style="font-size:10px;background:var(--accent);color:black;border-radius:6px;padding:1px 5px;font-weight:700;margin-left:4px">Мой</span>' : '';
+
+        item.innerHTML = avaHtml
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+            + '<div style="font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(ch.name) + ownerBadge + '</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,.4);flex-shrink:0">' + (ch.last_post_time || '') + '</div>'
+            + '</div>'
+            + '<div style="font-size:13px;color:rgba(255,255,255,.45);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+            + (ch.last_post_text || ('<span style="opacity:.5">@' + escHtml(ch.username) + ' · ' + subsText + '</span>'))
+            + '</div>'
+            + '</div>';
+
+        container.appendChild(item);
+    });
+}
+
+// ══════════════════════════════════════════════════════════
 //  ВКЛАДКИ
 // ══════════════════════════════════════════════════════════
 function switchTab(tab) {
@@ -1761,7 +1835,7 @@ function switchTab(tab) {
     if (tab === 'chats') {
         const chatList = document.getElementById('chat-list');
         if (!chatList?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
-        else renderChatList(recentChats);
+        else { renderChatList(recentChats); loadChannelsForList(); }
         // Всегда рендерим мини-кружки из кэша сразу
         renderMiniStories();
         // Обновляем моменты если кэш старый (>30 сек)
@@ -1839,6 +1913,7 @@ async function loadChats(force = false) {
         recentChats = chats;
         _lastChatsLoad = Date.now();
         renderChatList(chats);
+        loadChannelsForList();  // подгружаем каналы под чатами
         updatePageTitle();
         try { localStorage.setItem('waychat_chats_cache', JSON.stringify(chats)); } catch(e) {}
         chats.slice(0, 5).forEach(c => {
@@ -4446,6 +4521,390 @@ async function createGroup() {
 // ══════════════════════════════════════════════════════════
 //  ДОБАВЛЕНИЕ КОНТАКТА
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+//  ACTION SHEET — кнопка "+" (новый чат / группа / канал)
+// ══════════════════════════════════════════════════════════
+function openNewChatSheet() {
+    vibrate(8);
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;flex-direction:column;justify-content:flex-end;animation:fadeIn 0.2s ease';
+    ov.onclick = e => { if (e.target===ov) ov.remove(); };
+
+    ov.innerHTML = `
+    <div style="background:#1c1c1e;border-radius:18px 18px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),20px);animation:slideUp 0.28s cubic-bezier(0.25,1,0.5,1)">
+        <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 16px"></div>
+        <div style="padding:0 16px 8px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.35);letter-spacing:0.5px;text-transform:uppercase">Новый</div>
+
+        <button onclick="document.querySelector('[style*=z-index:9000]')?.remove();openNewContactModal()" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit">
+            <div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7" r="4" stroke="white" stroke-width="2"/></svg>
+            </div>
+            <div style="text-align:left">
+                <div style="font-size:16px;font-weight:600">Личное сообщение</div>
+                <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:1px">Найти контакт</div>
+            </div>
+        </button>
+
+        <button onclick="document.querySelector('[style*=z-index:9000]')?.remove();openCreateGroupModal()" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit">
+            <div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:justify-content:center;flex-shrink:0;display:flex;align-items:center;justify-content:center">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="white" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="text-align:left">
+                <div style="font-size:16px;font-weight:600">Новая группа</div>
+                <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:1px">Чат для нескольких людей</div>
+            </div>
+        </button>
+
+        <button onclick="document.querySelector('[style*=z-index:9000]')?.remove();openCreateChannelModal()" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit">
+            <div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M22 8.5c0 4.7-4.5 8.5-10 8.5-1.4 0-2.7-.2-3.9-.7L2 18l1.3-4.2C2.5 12.5 2 11 2 9.5 2 4.8 6.5 1 12 1s10 3.8 10 7.5z" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="8" y1="9" x2="16" y2="9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="13" x2="13" y2="13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <div style="text-align:left">
+                <div style="font-size:16px;font-weight:600">Новый канал</div>
+                <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:1px">Публикуй для подписчиков</div>
+            </div>
+        </button>
+    </div>`;
+
+    document.body.appendChild(ov);
+}
+
+// ══════════════════════════════════════════════════════════
+//  КАНАЛЫ — создание, просмотр, посты
+// ══════════════════════════════════════════════════════════
+let _channelsCache = [];
+let _currentChannel = null;
+
+function openCreateChannelModal() {
+    vibrate(8);
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);display:flex;flex-direction:column;animation:fadeIn 0.2s';
+    ov.innerHTML = `
+    <div style="position:sticky;top:0;padding:max(env(safe-area-inset-top),52px) 16px 12px;display:flex;align-items:center;gap:12px;background:rgba(10,10,14,.95);border-bottom:.5px solid rgba(255,255,255,.08)">
+        <button onclick="this.closest('[style*=z-index:8500]').remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+        <h2 style="flex:1;font-size:18px;font-weight:800;margin:0">Новый канал</h2>
+        <button id="ch-create-btn" onclick="submitCreateChannel(this)" style="background:var(--accent);color:black;border:none;border-radius:12px;padding:8px 18px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Создать</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:20px 16px">
+        <!-- Аватар канала -->
+        <div style="display:flex;justify-content:center;margin-bottom:24px">
+            <div id="ch-ava-wrap" onclick="triggerChannelAva()" style="width:88px;height:88px;border-radius:50%;background:rgba(255,255,255,.08);border:2px dashed rgba(255,255,255,.2);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;position:relative">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="rgba(255,255,255,.4)" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="13" r="4" stroke="rgba(255,255,255,.4)" stroke-width="2"/></svg>
+                <span style="font-size:10px;color:rgba(255,255,255,.3);margin-top:4px">Фото</span>
+                <input id="ch-ava-inp" type="file" accept="image/*" style="display:none" onchange="previewChannelAva(this)">
+            </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,.05);border-radius:16px;overflow:hidden;margin-bottom:12px">
+            <input id="ch-name" placeholder="Название канала" maxlength="120"
+                style="width:100%;padding:16px;background:none;border:none;border-bottom:.5px solid rgba(255,255,255,.07);color:white;font-size:16px;font-family:inherit;outline:none;box-sizing:border-box">
+            <div style="display:flex;align-items:center;padding:0 16px">
+                <span style="color:rgba(255,255,255,.3);font-size:15px;padding:16px 0">@</span>
+                <input id="ch-username" placeholder="username" maxlength="64"
+                    style="flex:1;padding:16px 0 16px 2px;background:none;border:none;color:white;font-size:15px;font-family:inherit;outline:none">
+            </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,.05);border-radius:16px;margin-bottom:12px">
+            <textarea id="ch-desc" placeholder="Описание (необязательно)" maxlength="500" rows="3"
+                style="width:100%;padding:16px;background:none;border:none;color:white;font-size:15px;font-family:inherit;outline:none;resize:none;box-sizing:border-box"></textarea>
+        </div>
+
+        <div style="background:rgba(255,255,255,.05);border-radius:16px;padding:4px 0">
+            <label style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;cursor:pointer">
+                <div>
+                    <div style="font-size:15px;font-weight:500">Приватный канал</div>
+                    <div style="font-size:13px;color:rgba(255,255,255,.4);margin-top:2px">Только по ссылке-приглашению</div>
+                </div>
+                <input id="ch-private" type="checkbox" style="width:20px;height:20px;accent-color:var(--accent)">
+            </label>
+        </div>
+    </div>`;
+    document.body.appendChild(ov);
+}
+
+function triggerChannelAva() {
+    document.getElementById('ch-ava-inp')?.click();
+}
+
+function previewChannelAva(inp) {
+    const file = inp.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const wrap = document.getElementById('ch-ava-wrap');
+    wrap.innerHTML = '<img src="' + url + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%"><input id="ch-ava-inp" type="file" accept="image/*" style="display:none" onchange="previewChannelAva(this)">';
+}
+
+async function submitCreateChannel(btn) {
+    const name  = document.getElementById('ch-name')?.value.trim();
+    const uname = document.getElementById('ch-username')?.value.trim().toLowerCase();
+    const desc  = document.getElementById('ch-desc')?.value.trim();
+    const priv  = document.getElementById('ch-private')?.checked;
+    if (!name || !uname) { showToast('Введите название и @username', 'error'); return; }
+    btn.disabled = true; btn.textContent = '...';
+    try {
+        const r = await apiFetch('/api/channels/create', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name, username:uname, description:desc, is_private:priv})
+        });
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error||'Ошибка', 'error'); btn.disabled=false; btn.textContent='Создать'; return; }
+
+        // Upload avatar if chosen
+        const avaInp = document.getElementById('ch-ava-inp');
+        if (avaInp?.files[0]) {
+            const fd = new FormData(); fd.append('file', avaInp.files[0]);
+            await apiFetch('/api/channels/' + d.channel_id + '/upload_avatar', {method:'POST', body:fd});
+        }
+
+        document.querySelector('[style*=z-index:8500]')?.remove();
+        showToast('Канал @' + uname + ' создан!', 'success');
+        vibrate(15);
+        setTimeout(() => openChannelById(d.channel_id), 300);
+    } catch(e) { showToast('Ошибка', 'error'); btn.disabled=false; btn.textContent='Создать'; }
+}
+
+async function openChannelById(chId) {
+    try {
+        const r = await apiFetch('/api/channels/' + chId + '/posts');
+        if (!r?.ok) { showToast('Не удалось открыть канал', 'error'); return; }
+        const data = await r.json();
+        if (data.error) { showToast(data.error, 'error'); return; }
+        _currentChannel = data.channel;
+        renderChannelView(data.channel, data.posts);
+    } catch(e) { showToast('Ошибка загрузки', 'error'); }
+}
+
+function renderChannelView(ch, posts) {
+    vibrate(8);
+    const ov = document.createElement('div');
+    ov.id = 'channel-view';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#000;display:flex;flex-direction:column;animation:slideUp 0.28s cubic-bezier(0.25,1,0.5,1)';
+
+    const subsText = ch.subscribers === 1 ? '1 подписчик' : ch.subscribers + ' подписчиков';
+    const isOwner  = ch.is_owner;
+    const isSub    = ch.is_subscribed;
+
+    ov.innerHTML = `
+    <!-- Шапка -->
+    <div style="position:sticky;top:0;z-index:10;background:rgba(0,0,0,.92);backdrop-filter:blur(20px);padding:max(env(safe-area-inset-top),48px) 16px 12px;border-bottom:.5px solid rgba(255,255,255,.07)">
+        <div style="display:flex;align-items:center;gap:12px">
+            <button onclick="document.getElementById('channel-view')?.remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            <div style="flex:1;display:flex;align-items:center;gap:10px">
+                <div style="width:38px;height:38px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:black">
+                    ${ch.avatar ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover">' : (ch.name.charAt(0).toUpperCase())}
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:700;line-height:1.1">${escHtml(ch.name)}</div>
+                    <div style="font-size:12px;color:rgba(255,255,255,.45)">@${escHtml(ch.username)} · ${subsText}</div>
+                </div>
+            </div>
+            ${isOwner
+                ? '<button onclick="openNewPostModal('+ch.id+')" style="background:var(--accent);color:black;border:none;border-radius:12px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg> Пост</button>'
+                : '<button id="sub-btn-'+ch.id+'" onclick="toggleChannelSub('+ch.id+',this)" style="background:'+(isSub?'rgba(255,255,255,.1)':'var(--accent)')+';color:'+(isSub?'white':'black')+';border:none;border-radius:12px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">'+(isSub?'Отписаться':'Подписаться')+'</button>'
+            }
+        </div>
+        ${ch.description ? '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-top:10px;line-height:1.4">'+escHtml(ch.description)+'</div>' : ''}
+    </div>
+
+    <!-- Посты -->
+    <div id="channel-posts-list" style="flex:1;overflow-y:auto;padding:8px 0">
+        ${posts.length === 0
+            ? '<div style="text-align:center;opacity:.25;padding:60px 20px;font-size:15px">'+(isOwner?'Создайте первый пост →':'Постов пока нет')+'</div>'
+            : posts.map(p => renderChannelPost(p, isOwner, ch.id)).join('')
+        }
+    </div>`;
+
+    document.body.appendChild(ov);
+}
+
+function renderChannelPost(p, isOwner, chId) {
+    const reacts = (p.reactions||[]).map(function(r) {
+        const active = p.my_reaction === r.emoji;
+        return '<button onclick="reactChannelPost('+chId+','+p.id+',\'' + r.emoji + '\')" style="display:inline-flex;align-items:center;gap:4px;background:'+(active?'rgba(16,185,129,.25)':'rgba(255,255,255,.07)')+';border:1px solid '+(active?'var(--accent)':'rgba(255,255,255,.1)')+';border-radius:20px;padding:4px 10px;font-size:13px;cursor:pointer;color:white;margin:2px">'+r.emoji+' <span style="font-size:11px;opacity:.7">'+r.count+'</span></button>';
+    }).join('');
+
+    return '<div style="padding:12px 16px;border-bottom:.5px solid rgba(255,255,255,.05)">'
+        + (p.media_url
+            ? (p.media_url.match(/\.(mp4|mov|webm)/i)
+                ? '<video src="'+p.media_url+'" controls style="width:100%;border-radius:14px;margin-bottom:8px;max-height:360px"></video>'
+                : '<img src="'+p.media_url+'" style="width:100%;border-radius:14px;margin-bottom:8px;max-height:420px;object-fit:cover" loading="lazy">')
+            : '')
+        + (p.text ? '<div style="font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word">'+escHtml(p.text)+'</div>' : '')
+        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">'
+        + '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'
+        + '<button onclick="openReactPicker('+chId+','+p.id+')" style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:4px 10px;font-size:14px;cursor:pointer;color:white;margin:2px">+</button>'
+        + reacts
+        + '</div>'
+        + '<div style="display:flex;align-items:center;gap:10px">'
+        + '<span style="font-size:11px;color:rgba(255,255,255,.3);display:flex;align-items:center;gap:3px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.4)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.4)" stroke-width="2"/></svg>'+p.views+'</span>'
+        + '<span style="font-size:11px;color:rgba(255,255,255,.3)">'+p.created_at+'</span>'
+        + (isOwner ? '<button onclick="deleteChannelPost('+chId+','+p.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.3);padding:2px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>' : '')
+        + '</div></div>'
+        + '</div>';
+}
+
+function openReactPicker(chId, postId) {
+    const emojis = ['❤️','🔥','👍','😂','😮','😢','🎉','💯'];
+    const picker = document.createElement('div');
+    picker.style.cssText = 'position:fixed;inset:0;z-index:9500;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,.4)';
+    picker.onclick = e => { if(e.target===picker) picker.remove(); };
+    picker.innerHTML = '<div style="background:#1c1c1e;border-radius:20px 20px 0 0;padding:16px 20px max(env(safe-area-inset-bottom),16px);display:flex;gap:8px;animation:slideUp .2s ease">'
+        + emojis.map(function(e) {
+            return '<button onclick="reactChannelPost('+chId+','+postId+',\''+e+'\');this.closest(\'[style*=z-index\\:9500]\')?.remove()" style="font-size:28px;background:none;border:none;cursor:pointer;width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center">'+e+'</button>';
+        }).join('')
+        + '</div>';
+    document.body.appendChild(picker);
+}
+
+async function reactChannelPost(chId, postId, emoji) {
+    vibrate(8);
+    try {
+        await apiFetch('/api/channels/'+chId+'/react/'+postId, {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({emoji})
+        });
+        // Refresh
+        const r = await apiFetch('/api/channels/'+chId+'/posts');
+        const d = await r.json();
+        if (d.channel && d.posts) {
+            const list = document.getElementById('channel-posts-list');
+            if (list) list.innerHTML = d.posts.length ? d.posts.map(p=>renderChannelPost(p,d.channel.is_owner,chId)).join('') : '<div style="text-align:center;opacity:.25;padding:60px 20px">Постов пока нет</div>';
+        }
+    } catch(e) {}
+}
+
+async function toggleChannelSub(chId, btn) {
+    vibrate(8);
+    btn.disabled = true;
+    try {
+        const r = await apiFetch('/api/channels/'+chId+'/subscribe', {method:'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            const isSub = d.subscribed;
+            btn.textContent = isSub ? 'Отписаться' : 'Подписаться';
+            btn.style.background = isSub ? 'rgba(255,255,255,.1)' : 'var(--accent)';
+            btn.style.color = isSub ? 'white' : 'black';
+        }
+    } catch(e) {}
+    btn.disabled = false;
+}
+
+function openNewPostModal(chId) {
+    vibrate(8);
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8600;background:rgba(0,0,0,.7);backdrop-filter:blur(20px);display:flex;flex-direction:column;animation:fadeIn .2s';
+    ov.innerHTML = `
+    <div style="position:sticky;top:0;padding:max(env(safe-area-inset-top),50px) 16px 12px;display:flex;align-items:center;gap:12px;background:rgba(10,10,14,.95);border-bottom:.5px solid rgba(255,255,255,.08)">
+        <button onclick="this.closest('[style*=z-index:8600]').remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+        <h2 style="flex:1;font-size:18px;font-weight:800;margin:0">Новый пост</h2>
+        <button onclick="submitChannelPost(${chId},this)" style="background:var(--accent);color:black;border:none;border-radius:12px;padding:8px 18px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Опубликовать</button>
+    </div>
+    <div style="flex:1;overflow-y:auto;padding:16px">
+        <div id="post-media-preview" style="margin-bottom:12px"></div>
+        <textarea id="post-text" placeholder="Напишите пост..." rows="6"
+            style="width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:16px;color:white;font-size:16px;font-family:inherit;resize:none;outline:none;box-sizing:border-box;line-height:1.5"></textarea>
+        <button onclick="pickPostMedia(${chId})" style="display:flex;align-items:center;gap:8px;margin-top:12px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 16px;color:rgba(255,255,255,.7);font-size:14px;font-weight:500;cursor:pointer;font-family:inherit;width:100%;justify-content:center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="13" r="4" stroke="currentColor" stroke-width="2"/></svg>
+            Прикрепить фото / видео
+        </button>
+        <input id="post-media-inp" type="file" accept="image/*,video/*" style="display:none" onchange="handlePostMedia(this)">
+    </div>`;
+    document.body.appendChild(ov);
+}
+
+let _postMediaFile = null;
+let _postMediaUrl  = '';
+let _postMediaType = '';
+
+function pickPostMedia(chId) {
+    document.getElementById('post-media-inp')?.click();
+}
+
+async function handlePostMedia(inp) {
+    const file = inp.files[0];
+    if (!file) return;
+    _postMediaFile = file;
+    const url = URL.createObjectURL(file);
+    const preview = document.getElementById('post-media-preview');
+    if (preview) {
+        if (file.type.startsWith('video/')) {
+            preview.innerHTML = '<video src="'+url+'" controls style="width:100%;border-radius:14px;max-height:300px"></video>';
+        } else {
+            preview.innerHTML = '<img src="'+url+'" style="width:100%;border-radius:14px;max-height:300px;object-fit:cover">';
+        }
+    }
+}
+
+async function submitChannelPost(chId, btn) {
+    const text = document.getElementById('post-text')?.value.trim();
+    let media_url = '', media_type = '';
+
+    btn.disabled = true; btn.textContent = '...';
+
+    try {
+        // Upload media if any
+        if (_postMediaFile) {
+            const fd = new FormData(); fd.append('file', _postMediaFile);
+            const mr = await apiFetch('/upload_media', {method:'POST', body:fd});
+            if (mr?.ok) {
+                const md = await mr.json();
+                if (md.success) { media_url = md.url; media_type = md.type; }
+            }
+        }
+
+        if (!text && !media_url) { showToast('Пустой пост', 'error'); btn.disabled=false; btn.textContent='Опубликовать'; return; }
+
+        const r = await apiFetch('/api/channels/'+chId+'/post', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({text, media_url, media_type})
+        });
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error||'Ошибка', 'error'); btn.disabled=false; btn.textContent='Опубликовать'; return; }
+
+        _postMediaFile = null;
+        document.querySelector('[style*=z-index:8600]')?.remove();
+        showToast('Пост опубликован!', 'success');
+        vibrate(15);
+
+        // Refresh channel view
+        const cr = await apiFetch('/api/channels/'+chId+'/posts');
+        const cd = await cr.json();
+        if (cd.channel && cd.posts) {
+            const list = document.getElementById('channel-posts-list');
+            if (list) list.innerHTML = cd.posts.length ? cd.posts.map(p=>renderChannelPost(p,true,chId)).join('') : '<div style="text-align:center;opacity:.25;padding:60px">Постов пока нет</div>';
+        }
+    } catch(e) { showToast('Ошибка публикации', 'error'); btn.disabled=false; btn.textContent='Опубликовать'; }
+}
+
+async function deleteChannelPost(chId, postId) {
+    if (!confirm('Удалить пост?')) return;
+    try {
+        await apiFetch('/api/channels/'+chId+'/post/'+postId, {method:'DELETE'});
+        const r = await apiFetch('/api/channels/'+chId+'/posts');
+        const d = await r.json();
+        if (d.posts) {
+            const list = document.getElementById('channel-posts-list');
+            if (list) list.innerHTML = d.posts.length ? d.posts.map(p=>renderChannelPost(p,true,chId)).join('') : '<div style="text-align:center;opacity:.25;padding:60px">Постов пока нет</div>';
+        }
+    } catch(e) {}
+}
+
+// Поиск каналов в поиске чатов
+async function searchChannelsInline(q) {
+    if (!q || q.length < 1) return [];
+    try {
+        const r = await apiFetch('/api/channels/search?q=' + encodeURIComponent(q));
+        return r?.ok ? await r.json() : [];
+    } catch(e) { return []; }
+}
+
 function openNewContactModal() {
     vibrate(8);
     const overlay = document.createElement('div');
