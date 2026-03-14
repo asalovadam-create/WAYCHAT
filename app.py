@@ -251,6 +251,43 @@ def _run_early_migrations():
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS cover_url VARCHAR(500) DEFAULT ''",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_data BYTEA",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50) DEFAULT 'audio/mpeg'",
+        # Channels
+        '''CREATE TABLE IF NOT EXISTS channel (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(64) UNIQUE NOT NULL,
+            name VARCHAR(120) NOT NULL,
+            description TEXT DEFAULT '',
+            avatar VARCHAR(300) DEFAULT '',
+            owner_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            is_private BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+        '''CREATE TABLE IF NOT EXISTS channel_subscriber (
+            id SERIAL PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            joined_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(channel_id, user_id)
+        )''',
+        '''CREATE TABLE IF NOT EXISTS channel_post (
+            id SERIAL PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+            text TEXT DEFAULT '',
+            media_url VARCHAR(500) DEFAULT '',
+            media_type VARCHAR(20) DEFAULT '',
+            views INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+        '''CREATE TABLE IF NOT EXISTS channel_post_reaction (
+            id SERIAL PRIMARY KEY,
+            post_id INTEGER NOT NULL REFERENCES channel_post(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            emoji VARCHAR(10) NOT NULL,
+            UNIQUE(post_id, user_id)
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_channel_username ON channel(username)',
+        'CREATE INDEX IF NOT EXISTS ix_channel_sub ON channel_subscriber(channel_id)',
+        'CREATE INDEX IF NOT EXISTS ix_channel_post ON channel_post(channel_id, created_at)',
     ]
     for sql in early_sqls:
         try:
@@ -616,6 +653,49 @@ class GroupMember(db.Model):
     is_admin  = db.Column(db.Boolean, default=False)
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='uq_group_member'),)
+
+
+
+class Channel(db.Model):
+    """Канал — публичный или приватный, только владелец постит"""
+    __tablename__ = 'channel'
+    id          = db.Column(db.Integer,     primary_key=True)
+    username    = db.Column(db.String(64),  unique=True, nullable=False, index=True)  # @username
+    name        = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.Text,        default='')
+    avatar      = db.Column(db.String(300), default='')
+    owner_id    = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
+    is_private  = db.Column(db.Boolean,     default=False)
+    created_at  = db.Column(db.DateTime,    default=datetime.utcnow)
+
+
+class ChannelSubscriber(db.Model):
+    __tablename__ = 'channel_subscriber'
+    id         = db.Column(db.Integer, primary_key=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channel.id'), nullable=False, index=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'),    nullable=False)
+    joined_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('channel_id', 'user_id', name='uq_channel_sub'),)
+
+
+class ChannelPost(db.Model):
+    __tablename__ = 'channel_post'
+    id         = db.Column(db.Integer, primary_key=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channel.id'), nullable=False, index=True)
+    text       = db.Column(db.Text,    default='')
+    media_url  = db.Column(db.String(500), default='')
+    media_type = db.Column(db.String(20),  default='')   # image/video/audio
+    views      = db.Column(db.Integer,     default=0)
+    created_at = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
+
+
+class ChannelPostReaction(db.Model):
+    __tablename__ = 'channel_post_reaction'
+    id      = db.Column(db.Integer,    primary_key=True)
+    post_id = db.Column(db.Integer,    db.ForeignKey('channel_post.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer,    db.ForeignKey('user.id'),         nullable=False)
+    emoji   = db.Column(db.String(10), nullable=False)
+    __table_args__ = (db.UniqueConstraint('post_id', 'user_id', name='uq_ch_reaction'),)
 
 
 class MomentView(db.Model):
@@ -3516,6 +3596,210 @@ def report_user():
     db.session.add(UserReport(reporter_id=uid, target_id=target_id, reason=reason, comment=comment))
     db.session.commit()
     return jsonify({'success': True})
+
+
+
+# ══════════════════════════════════════════════════════════
+#  КАНАЛЫ
+# ══════════════════════════════════════════════════════════
+
+@app.route('/api/channels/create', methods=['POST'])
+@login_required
+def create_channel():
+    data  = request.get_json() or {}
+    uname = (data.get('username') or '').strip().lstrip('@').lower()
+    name  = (data.get('name') or '').strip()[:120]
+    desc  = (data.get('description') or '').strip()[:500]
+    priv  = bool(data.get('is_private', False))
+    if not uname or not name:
+        return jsonify({'ok': False, 'error': 'Заполните название и @username'}), 400
+    if not uname.replace('_','').replace('.','').isalnum():
+        return jsonify({'ok': False, 'error': 'Username: только буквы, цифры, _ и .'}), 400
+    if Channel.query.filter_by(username=uname).first():
+        return jsonify({'ok': False, 'error': 'Этот @username уже занят'}), 400
+    ch = Channel(username=uname, name=name, description=desc,
+                 owner_id=current_user.id, is_private=priv)
+    db.session.add(ch)
+    db.session.flush()
+    db.session.add(ChannelSubscriber(channel_id=ch.id, user_id=current_user.id))
+    db.session.commit()
+    return jsonify({'ok': True, 'channel_id': ch.id, 'username': ch.username})
+
+
+@app.route('/api/channels/my')
+@login_required
+def my_channels():
+    uid   = current_user.id
+    owned = Channel.query.filter_by(owner_id=uid).all()
+    sub_rows = db.session.execute(
+        text('''SELECT c.id,c.username,c.name,c.avatar,c.description,c.owner_id,c.is_private,c.created_at
+                FROM channel c
+                JOIN channel_subscriber cs ON cs.channel_id=c.id
+                WHERE cs.user_id=:uid AND c.owner_id!=:uid'''), {'uid': uid}
+    ).fetchall()
+
+    def sub_cnt(cid): return ChannelSubscriber.query.filter_by(channel_id=cid).count()
+    def last_p(cid):  return ChannelPost.query.filter_by(channel_id=cid).order_by(ChannelPost.created_at.desc()).first()
+
+    result = []
+    for c in owned:
+        lp = last_p(c.id)
+        result.append({'id':c.id,'username':c.username,'name':c.name,'avatar':c.avatar or '',
+            'description':c.description or '','is_owner':True,'subscribers':sub_cnt(c.id),
+            'last_post_time': to_moscow_str(lp.created_at) if lp else '',
+            'last_post_text': (lp.text or '')[:60] if lp else ''})
+    for r in sub_rows:
+        lp = last_p(r.id)
+        result.append({'id':r.id,'username':r.username,'name':r.name,'avatar':r.avatar or '',
+            'description':r.description or '','is_owner':False,'subscribers':sub_cnt(r.id),
+            'last_post_time': to_moscow_str(lp.created_at) if lp else '',
+            'last_post_text': (lp.text or '')[:60] if lp else ''})
+    return jsonify(result)
+
+
+@app.route('/api/channels/search')
+@login_required
+def search_channels():
+    q = (request.args.get('q') or '').strip().lower()
+    if len(q) < 1: return jsonify([])
+    chs = Channel.query.filter(
+        or_(func.lower(Channel.username).like(f'%{q}%'),
+            func.lower(Channel.name).like(f'%{q}%'))
+    ).limit(20).all()
+    uid = current_user.id
+    return jsonify([{
+        'id':c.id,'username':c.username,'name':c.name,'avatar':c.avatar or '',
+        'subscribers': ChannelSubscriber.query.filter_by(channel_id=c.id).count(),
+        'is_subscribed': bool(ChannelSubscriber.query.filter_by(channel_id=c.id,user_id=uid).first()),
+        'is_owner': c.owner_id == uid,
+    } for c in chs])
+
+
+@app.route('/api/channels/<int:ch_id>/subscribe', methods=['POST'])
+@login_required
+def subscribe_channel(ch_id):
+    uid = current_user.id
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'ok':False}), 404
+    ex = ChannelSubscriber.query.filter_by(channel_id=ch_id, user_id=uid).first()
+    if ex:
+        db.session.delete(ex); db.session.commit()
+        return jsonify({'ok':True,'subscribed':False})
+    db.session.add(ChannelSubscriber(channel_id=ch_id, user_id=uid))
+    db.session.commit()
+    return jsonify({'ok':True,'subscribed':True})
+
+
+@app.route('/api/channels/<int:ch_id>')
+@login_required
+def channel_info(ch_id):
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error':'Not found'}), 404
+    uid = current_user.id
+    return jsonify({
+        'id':ch.id,'username':ch.username,'name':ch.name,'avatar':ch.avatar or '',
+        'description':ch.description or '',
+        'subscribers': ChannelSubscriber.query.filter_by(channel_id=ch_id).count(),
+        'is_owner': ch.owner_id == uid,
+        'is_subscribed': bool(ChannelSubscriber.query.filter_by(channel_id=ch_id,user_id=uid).first()),
+        'is_private': ch.is_private,
+    })
+
+
+@app.route('/api/channels/<int:ch_id>/posts')
+@login_required
+def channel_posts(ch_id):
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error':'Not found'}), 404
+    uid      = current_user.id
+    is_owner = ch.owner_id == uid
+    is_sub   = bool(ChannelSubscriber.query.filter_by(channel_id=ch_id,user_id=uid).first())
+    if not is_owner and not is_sub and ch.is_private:
+        return jsonify({'error':'Private'}), 403
+    posts = ChannelPost.query.filter_by(channel_id=ch_id).order_by(ChannelPost.created_at.desc()).limit(100).all()
+    sub_cnt = ChannelSubscriber.query.filter_by(channel_id=ch_id).count()
+    result  = []
+    for p in posts:
+        if not is_owner: p.views = (p.views or 0) + 1
+        reacts = db.session.execute(
+            text('SELECT emoji,COUNT(*) as cnt FROM channel_post_reaction WHERE post_id=:pid GROUP BY emoji'),
+            {'pid':p.id}).fetchall()
+        my_r = db.session.execute(
+            text('SELECT emoji FROM channel_post_reaction WHERE post_id=:pid AND user_id=:uid'),
+            {'pid':p.id,'uid':uid}).scalar()
+        result.append({'id':p.id,'text':p.text or '','media_url':p.media_url or '',
+            'media_type':p.media_type or '','views':p.views or 0,
+            'created_at':to_moscow_str(p.created_at),
+            'reactions':[{'emoji':r.emoji,'count':r.cnt} for r in reacts],
+            'my_reaction':my_r or ''})
+    db.session.commit()
+    return jsonify({
+        'channel':{'id':ch.id,'username':ch.username,'name':ch.name,'avatar':ch.avatar or '',
+            'description':ch.description or '','subscribers':sub_cnt,
+            'is_owner':is_owner,'is_subscribed':is_sub},
+        'posts':result,
+    })
+
+
+@app.route('/api/channels/<int:ch_id>/post', methods=['POST'])
+@login_required
+def channel_post_create(ch_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id:
+        return jsonify({'ok':False,'error':'Forbidden'}), 403
+    data = request.get_json() or {}
+    txt  = (data.get('text') or '').strip()[:4000]
+    murl = (data.get('media_url') or '').strip()
+    mtype= (data.get('media_type') or '').strip()
+    if not txt and not murl:
+        return jsonify({'ok':False,'error':'Пустой пост'}), 400
+    post = ChannelPost(channel_id=ch_id, text=txt, media_url=murl, media_type=mtype)
+    db.session.add(post); db.session.commit()
+    sub_cnt = ChannelSubscriber.query.filter_by(channel_id=ch_id).count()
+    socketio.emit('channel_new_post', {
+        'channel_id':ch_id,'channel_name':ch.name,'channel_username':ch.username,
+        'post_id':post.id,'text':txt[:100],'sub_count':sub_cnt,
+    })
+    return jsonify({'ok':True,'post_id':post.id})
+
+
+@app.route('/api/channels/<int:ch_id>/post/<int:post_id>', methods=['DELETE'])
+@login_required
+def channel_post_delete(ch_id, post_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id: return jsonify({'ok':False}), 403
+    p = db.session.get(ChannelPost, post_id)
+    if p and p.channel_id == ch_id:
+        db.session.delete(p); db.session.commit()
+    return jsonify({'ok':True})
+
+
+@app.route('/api/channels/<int:ch_id>/react/<int:post_id>', methods=['POST'])
+@login_required
+def channel_react(ch_id, post_id):
+    uid   = current_user.id
+    emoji = (request.get_json() or {}).get('emoji','').strip()
+    if not emoji: return jsonify({'ok':False}), 400
+    ex = ChannelPostReaction.query.filter_by(post_id=post_id, user_id=uid).first()
+    if ex:
+        if ex.emoji == emoji: db.session.delete(ex)
+        else: ex.emoji = emoji
+    else:
+        db.session.add(ChannelPostReaction(post_id=post_id, user_id=uid, emoji=emoji))
+    db.session.commit()
+    return jsonify({'ok':True})
+
+
+@app.route('/api/channels/<int:ch_id>/upload_avatar', methods=['POST'])
+@login_required
+def channel_upload_avatar(ch_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id: return jsonify({'ok':False}), 403
+    if 'file' not in request.files: return jsonify({'ok':False}), 400
+    url = upload_to_cloudinary(request.files['file'], folder='waychat/channels')
+    if not url: return jsonify({'ok':False,'error':'Upload failed'}), 500
+    ch.avatar = url; db.session.commit()
+    return jsonify({'ok':True,'avatar':url})
 
 
 
