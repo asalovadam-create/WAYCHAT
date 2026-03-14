@@ -492,7 +492,25 @@ async function init() {
     updateAllAvatarUI();
     setupGlobalGestures();
     setTimeout(_initStoriesPullToRefresh, 300); // Инициализируем pull-to-refresh для stories
-    setTimeout(() => { if (momentsCache === null) fetch("/get_moments",{credentials:"include"}).then(r=>r.json()).then(d=>{if(Array.isArray(d)){momentsCache=d;currentMoments=d;}}).catch(()=>{}); }, 1500); // Pre-load moments
+    // Загружаем моменты сразу — нужно для мини-кружков на iOS
+    (function() {
+        function _loadMomentsForBar() {
+            fetch('/get_moments', { credentials: 'include' })
+                .then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(d) {
+                    if (Array.isArray(d)) {
+                        momentsCache = d;
+                        momentsLastLoad = Date.now();
+                        currentMoments = d;
+                        renderMiniStories();
+                    }
+                }).catch(function(){});
+        }
+        // Сразу при старте
+        setTimeout(_loadMomentsForBar, 300);
+        // И повторно через 3 сек если не загрузилось (iOS бывает медленный)
+        setTimeout(function() { if (!momentsCache || !momentsCache.length) _loadMomentsForBar(); }, 3000);
+    })();
 
     // ── 2. INSTANT: чаты из localStorage — рендерим ДО fetch (нет сети — уже виден список) ──
     try {
@@ -950,16 +968,20 @@ body {
                 </div>
             </div>
 
-            <!-- ══ STORIES: мини-кружки (всегда видны) ══ -->
-            <div id="stories-mini-bar" style="display:flex;align-items:center;gap:0;padding:0 16px 8px;min-height:36px;cursor:pointer;-webkit-tap-highlight-color:transparent" onclick="_toggleStoriesExpand()">
-                <div id="stories-mini" style="display:flex;align-items:center;flex-shrink:0">
-                    <!-- заполняется renderMiniStories() -->
+            <!-- ══ STORIES: мини-кружки ВСЕГДА видны слева ══ -->
+            <div id="stories-mini-bar" style="display:flex;align-items:center;gap:0;padding:0 16px 10px;cursor:pointer;-webkit-tap-highlight-color:transparent;min-height:48px" onclick="_toggleStoriesExpand()">
+                <div id="stories-mini" style="display:flex;align-items:center;flex-shrink:0;gap:0">
+                    <!-- скелетон пока грузится -->
+                    <div class="stories-skel" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08)"></div>
+                    <div class="stories-skel" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.06);margin-left:-8px"></div>
+                    <div class="stories-skel" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.04);margin-left:-8px"></div>
                 </div>
+                <span id="stories-mini-count" style="font-size:12px;font-weight:600;color:rgba(255,255,255,.3);margin-left:9px">Моменты</span>
             </div>
 
             <!-- ══ ПОЛНАЯ ПОЛОСКА STORIES (pull-to-expand) ══ -->
             <div id="stories-pull-wrapper" style="overflow:hidden;height:0">
-                <div id="stories-row" style="display:flex;gap:14px;padding:2px 14px 14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch">
+                <div id="stories-row" style="display:flex;gap:14px;padding:2px 14px 14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;-webkit-overflow-scrolling:touch">
                 </div>
             </div>
 
@@ -1529,85 +1551,81 @@ function _toggleStoriesExpand() {
 // ── Мини-кружки (всегда видны, маленькие, слева) ──
 function renderMiniStories() {
     const wrap = document.getElementById('stories-mini');
+    const lbl  = document.getElementById('stories-mini-count');
     if (!wrap) return;
-    const moments  = momentsCache || [];
-    const meId     = currentUser ? currentUser.id : null;
 
-    // byUser — только те у кого ЕСТЬ момент
+    const moments = momentsCache || [];
+    const meId    = currentUser ? currentUser.id : null;
+
+    // Только авторы у которых есть момент
     const byUser = new Map();
     moments.forEach(function(m) {
         if (!byUser.has(m.user_id)) byUser.set(m.user_id, m);
     });
 
-    // Список авторов: я первый (только если у меня есть момент), остальные по порядку
     const seen = new Set(), uids = [];
     if (meId && byUser.has(meId)) { seen.add(meId); uids.push(meId); }
     moments.forEach(function(m) {
         if (!seen.has(m.user_id)) { seen.add(m.user_id); uids.push(m.user_id); }
     });
 
-    // Скрываем бар если нет ни одного момента
-    const bar = document.getElementById('stories-mini-bar');
+    // Если нет моментов — показываем скелетон и текст "Моменты"
     if (!uids.length) {
-        if (bar) bar.style.display = 'none';
+        wrap.innerHTML = [0,1,2].map(function(i) {
+            return '<div style="width:32px;height:32px;border-radius:50%;flex-shrink:0;margin-left:' + (i?'-8px':'0') + ';background:rgba(255,255,255,' + (.08 - i*.02) + ');box-shadow:0 0 0 2px var(--bg)"></div>';
+        }).join('');
+        if (lbl) { lbl.textContent = 'Моменты'; lbl.style.color = 'rgba(255,255,255,.25)'; }
         return;
     }
-    if (bar) bar.style.display = '';
 
+    // Убираем скелетоны, рисуем реальные кружки
     wrap.innerHTML = '';
-
-    const MAX = 3; // максимум 3 кружка
+    const MAX = 3;
     uids.slice(0, MAX).forEach(function(uid, i) {
         const m      = byUser.get(uid) || {};
         const isMe   = uid === meId;
         const ava    = isMe ? (currentUser.avatar || '') : (m.user_avatar || '');
+        const nm     = isMe ? (currentUser.name || '') : (m.user_name || '');
         const viewed = !isMe && _viewedMomentUsers && _viewedMomentUsers.has(uid);
 
         const ring = document.createElement('div');
-        ring.style.cssText = 'width:32px;height:32px;border-radius:50%;flex-shrink:0;'
-            + 'margin-left:' + (i === 0 ? '0' : '-8px') + ';'
+        ring.style.cssText = 'width:32px;height:32px;border-radius:50%;flex-shrink:0;padding:2px;'
+            + 'margin-left:' + (i ? '-8px' : '0') + ';'
             + 'box-shadow:0 0 0 2.5px var(--bg);'
-            + 'background:' + (!viewed ? 'conic-gradient(var(--accent) 0deg 300deg,rgba(255,255,255,.1) 300deg)' : 'rgba(255,255,255,.18)') + ';'
-            + 'padding:2px;position:relative;z-index:' + (MAX - i) + ';transition:transform .15s';
+            + 'z-index:' + (MAX - i) + ';position:relative;'
+            + 'background:' + (viewed ? 'rgba(255,255,255,.18)' : 'conic-gradient(var(--accent) 0deg 300deg,rgba(255,255,255,.08) 300deg)');
 
         const inner = document.createElement('div');
-        inner.style.cssText = 'width:100%;height:100%;border-radius:50%;background:var(--bg);overflow:hidden;display:flex;align-items:center;justify-content:center';
+        inner.style.cssText = 'width:100%;height:100%;border-radius:50%;background:var(--bg);overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff';
 
         if (ava && ava.startsWith('emoji:')) {
             inner.style.fontSize = '16px';
             inner.textContent = ava.slice(6);
-        } else if (ava && !ava.includes('default_avatar') && ava.startsWith('http')) {
+        } else if (ava && (ava.startsWith('http') || ava.startsWith('/'))) {
             const img = document.createElement('img');
             img.src = ava;
-            img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
-            const nm = isMe ? (currentUser.name||'?') : (m.user_name||'?');
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%;display:block';
             img.onerror = function() {
-                inner.removeChild(img);
+                inner.innerHTML = '';
                 inner.style.background = _nameColor(nm);
-                inner.style.fontSize = '13px'; inner.style.fontWeight = '700'; inner.style.color = '#fff';
-                inner.textContent = nm.charAt(0).toUpperCase();
+                inner.textContent = (nm || '?').charAt(0).toUpperCase();
             };
             inner.appendChild(img);
         } else {
-            const nm = isMe ? (currentUser.name||'?') : (m.user_name||'?');
             inner.style.background = _nameColor(nm);
-            inner.style.fontSize = '13px'; inner.style.fontWeight = '700'; inner.style.color = '#fff';
-            inner.textContent = nm.charAt(0).toUpperCase();
+            inner.textContent = (nm || '?').charAt(0).toUpperCase();
         }
 
         ring.appendChild(inner);
         wrap.appendChild(ring);
     });
 
-    // Счётчик — показывает общее число людей с моментами
-    const oldLbl = document.getElementById('stories-mini-count');
-    if (oldLbl) oldLbl.remove();
-    const total = uids.length;
-    const lbl = document.createElement('span');
-    lbl.id = 'stories-mini-count';
-    lbl.style.cssText = 'font-size:12px;font-weight:600;color:rgba(255,255,255,.55);margin-left:9px;white-space:nowrap';
-    lbl.textContent = total === 1 ? '1 момент' : total + ' момента';
-    wrap.appendChild(lbl);
+    // Счётчик
+    if (lbl) {
+        const extra = uids.length > MAX ? ' (+' + (uids.length - MAX) + ')' : '';
+        lbl.textContent = uids.length + ' момент' + (uids.length > 1 ? 'а' : '') + extra;
+        lbl.style.color = 'rgba(255,255,255,.55)';
+    }
 }
 
 // Цвет из имени (для инициалов)
@@ -1744,7 +1762,9 @@ function switchTab(tab) {
         const chatList = document.getElementById('chat-list');
         if (!chatList?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
         else renderChatList(recentChats);
-        // Обновляем кэш моментов для мини-кружков (фоново, не блокируя)
+        // Всегда рендерим мини-кружки из кэша сразу
+        renderMiniStories();
+        // Обновляем моменты если кэш старый (>30 сек)
         if (!momentsCache || (Date.now() - momentsLastLoad) > 30000) {
             fetch('/get_moments', { credentials: 'include' })
                 .then(function(r) { return r.ok ? r.json() : null; })
@@ -1754,7 +1774,6 @@ function switchTab(tab) {
                         momentsLastLoad = Date.now();
                         currentMoments = d;
                         renderMiniStories();
-                        // Обновляем кольца на аватарках в чате
                         if (d.length > 0) loadChats(true);
                     }
                 }).catch(function(){});
