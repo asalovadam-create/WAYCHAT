@@ -514,6 +514,15 @@ async function init() {
     setTimeout(syncProfileData, 500);
     setTimeout(_updatePermsSummary, 1000);
     setTimeout(initPushNotifications, 800);
+    // БАГ 5: Если запустили как PWA — сразу запрашиваем уведомления
+    const _isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    if (_isPWA && 'Notification' in window && Notification.permission === 'default') {
+        setTimeout(() => {
+            Notification.requestPermission().then(p => {
+                if (p === 'granted') initPushNotifications();
+            });
+        }, 1500); // небольшая задержка чтобы UI загрузился
+    }
 
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
@@ -985,9 +994,8 @@ body {
                         <h2 style="font-size:20px;font-weight:800;letter-spacing:-.3px;margin:0">Музыка</h2>
                         <div id="music-track-count" style="font-size:12px;color:rgba(255,255,255,.35);margin-top:1px">0 треков</div>
                     </div>
-                    <button onclick="musicPickFiles()" style="display:flex;align-items:center;gap:6px;padding:9px 18px;background:var(--accent);border:none;border-radius:22px;color:#000;font-size:13px;font-weight:800;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;flex-shrink:0">
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="3" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="3" stroke-linecap="round"/></svg>
-                        Добавить
+                    <button onclick="musicPickFiles()" title="Добавить музыку" style="width:40px;height:40px;background:var(--accent);border:none;border-radius:50%;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent;flex-shrink:0;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 16px rgba(16,185,129,.4);transition:transform .1s" onpointerdown="this.style.transform='scale(.9)'" onpointerup="this.style.transform=''">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>
                     </button>
                 </div>
                 <!-- Поиск -->
@@ -1009,14 +1017,20 @@ body {
                         <div id="mpc-title" style="font-size:20px;font-weight:900;letter-spacing:-.3px;text-shadow:0 2px 12px rgba(0,0,0,.5)">—</div>
                         <div id="mpc-artist" style="font-size:14px;color:rgba(255,255,255,.55);margin-top:4px">—</div>
                     </div>
-                    <!-- Бейдж источника (audio extracted from video) -->
-                    <div id="mpc-source-badge" style="display:none;position:absolute;top:12px;right:12px;padding:4px 10px;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);border-radius:20px;font-size:10px;font-weight:700;color:rgba(255,255,255,.6)">🎬 из видео</div>
+                    <!-- Бейдж источника скрыт -->
+                    <div id="mpc-source-badge" style="display:none"></div>
                 </div>
 
                 <!-- Прогресс -->
                 <div style="padding:0 4px;margin-bottom:12px">
-                    <div id="mpc-prog-wrap" onclick="musicSeek(event,this)" style="height:4px;background:rgba(255,255,255,.12);border-radius:2px;cursor:pointer;position:relative;margin-bottom:6px">
-                        <div id="mpc-prog-bar" style="height:100%;background:var(--accent);border-radius:2px;width:0%;pointer-events:none;transition:width .4s linear"></div>
+                    <div id="mpc-prog-wrap" style="height:28px;display:flex;align-items:center;cursor:pointer;position:relative;margin-bottom:2px;touch-action:none"
+                         onclick="musicSeek(event,this)"
+                         ontouchstart="_mpSeekStart(event,this)" ontouchmove="_mpSeekMove(event,this)" ontouchend="_mpSeekEnd(event,this)">
+                        <div style="width:100%;height:4px;background:rgba(255,255,255,.12);border-radius:4px;position:relative;overflow:visible">
+                            <div id="mpc-prog-bar" style="height:100%;background:var(--accent);border-radius:4px;width:0%;pointer-events:none;transition:width .3s linear;position:relative">
+                                <div style="position:absolute;right:-5px;top:-4px;width:12px;height:12px;background:white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,.4)"></div>
+                            </div>
+                        </div>
                     </div>
                     <div style="display:flex;justify-content:space-between">
                         <span id="mpc-cur" style="font-size:11px;color:rgba(255,255,255,.35)">0:00</span>
@@ -2363,16 +2377,27 @@ function buildMessageRow(msg, animate = true) {
           </div>
           ${_callbackBtn}
         </div>`;
+    } else if (type === 'image' || type === 'photo') {
+        // iOS26 стиль — фото без рамки, на весь пузырь, с zoom
+        contentHtml = `<div class="img-bubble" style="overflow:hidden;border-radius:18px;max-width:280px;cursor:zoom-in" onclick="openImgZoom(this.querySelector('img').src)">
+            <img src="${msg.file_url}" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover" loading="lazy"
+                 onerror="this.style.display='none';this.parentElement.innerHTML='<div style=padding:16px;color:rgba(255,255,255,.4);font-size:13px>Не удалось загрузить</div>'">
+        </div>`;
     } else if (type === 'video') {
-        contentHtml = `<video src="${msg.file_url}" class="img-bubble" controls playsinline style="max-width:260px;width:100%"></video>`;
+        // Видео без рамки
+        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px">
+            <video src="${msg.file_url}" controls playsinline style="display:block;width:100%;max-height:380px;object-fit:cover"></video>
+        </div>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
         const text = msg.content || msg.text || '';
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const linkedColor = isMe ? 'rgba(255,255,255,0.85)' : 'var(--accent)';
-        const linked = safe.replace(/(https?:\/\/[^\s<]+)/g, `<a href="$1" target="_blank" rel="noopener" style="color:${linkedColor};text-decoration:underline">$1</a>`);
-        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word">${linked}</div>`;
+        const linkedColor = isMe ? 'rgba(255,255,255,0.92)' : '#60a5fa';
+        const linked = safe.replace(/(https?:\/\/[^\s<]+)/g,
+            `<a href="$1" target="_blank" rel="noopener noreferrer"
+                style="color:${linkedColor};text-decoration:none;border-bottom:1px solid ${linkedColor}40;word-break:break-all;font-weight:500">$1</a>`);
+        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}</div>`;
     }
 
     // Аватар — кэшированный, для групп берём по sender_id
@@ -2588,6 +2613,32 @@ function showMsgContextMenu(row, msg) {
     const actWrap = document.createElement('div');
     actWrap.style.cssText = 'padding:6px 0 0';
 
+    // Переслать сообщение
+    actWrap.appendChild(mkRow(
+        `<svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+          <polyline points="15 10 20 5 15 0" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(0,7)"/>
+          <path d="M4 12v-2a6 6 0 016-6h10" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>`,
+        'rgba(52,211,153,0.14)', 'Переслать', '#34d399', null,
+        () => _forwardMessage(msg)
+    ));
+    const dFwd = document.createElement('div');
+    dFwd.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.06);margin:2px 16px';
+    actWrap.appendChild(dFwd);
+
+    // Выбрать (мультиселект)
+    actWrap.appendChild(mkRow(
+        `<svg width="17" height="17" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="18" height="18" rx="4" stroke="#a78bfa" stroke-width="2"/>
+          <polyline points="8,12 11,15 16,9" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>`,
+        'rgba(167,139,250,0.14)', 'Выбрать', '#a78bfa', 'Выделить несколько сообщений',
+        () => _startMultiSelect(msg.id)
+    ));
+    const dSel = document.createElement('div');
+    dSel.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.06);margin:2px 16px';
+    actWrap.appendChild(dSel);
+
     // Копировать (только текст)
     if (text) {
         actWrap.appendChild(mkRow(
@@ -2638,6 +2689,23 @@ function showMsgContextMenu(row, msg) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
+function openImgZoom(src) {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;touch-action:pinch-zoom;cursor:zoom-out';
+    ov.onclick = () => ov.remove();
+    const img = document.createElement('img');
+    img.src = src;
+    img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;border-radius:4px';
+    // Кнопка скачать
+    const dl = document.createElement('a');
+    dl.href = src; dl.download = 'photo.jpg';
+    dl.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top),20px);right:20px;width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(10px)';
+    dl.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    dl.onclick = e => e.stopPropagation();
+    ov.appendChild(img); ov.appendChild(dl);
+    document.body.appendChild(ov);
+}
+
 function copyMessage(text) {
     navigator.clipboard?.writeText(text).catch(() => {
         const ta = document.createElement('textarea');
@@ -2645,6 +2713,106 @@ function copyMessage(text) {
         document.execCommand('copy'); ta.remove();
     });
     showToast('Скопировано', 'success'); vibrate(15);
+}
+
+// ═══ МУЛЬТИСЕЛЕКТ СООБЩЕНИЙ ═══
+let _multiSelectActive = false;
+let _selectedMsgIds    = new Set();
+
+function _startMultiSelect(firstMsgId) {
+    _multiSelectActive = true;
+    _selectedMsgIds.clear();
+    _toggleMsgSelect(firstMsgId, true);
+    _showMultiSelectBar();
+    // Включаем tap-to-select на всех строках
+    document.querySelectorAll('.msg-row').forEach(r => {
+        r.style.cursor = 'pointer';
+        r._origLpTimer = r._origLpTimer || null;
+    });
+}
+
+function _toggleMsgSelect(msgId, forceOn) {
+    const row = document.querySelector(`[data-msg-id="${msgId}"]`);
+    if (!row) return;
+    if (forceOn || !_selectedMsgIds.has(msgId)) {
+        _selectedMsgIds.add(msgId);
+        row.style.background = 'rgba(167,139,250,0.15)';
+        row.style.borderRadius = '12px';
+        // Добавляем чекбокс
+        if (!row.querySelector('._sel_check')) {
+            const chk = document.createElement('div');
+            chk.className = '_sel_check';
+            chk.style.cssText = 'width:22px;height:22px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;flex-shrink:0;order:-1;margin-right:4px';
+            chk.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            row.style.display = 'flex'; row.style.alignItems = 'center';
+            row.insertBefore(chk, row.firstChild);
+        }
+    } else {
+        _selectedMsgIds.delete(msgId);
+        row.style.background = '';
+        row.style.borderRadius = '';
+        row.querySelector('._sel_check')?.remove();
+    }
+    // Обновляем счётчик
+    const bar = document.getElementById('_multiselect_bar');
+    if (bar) {
+        bar.querySelector('#_ms_count').textContent = `Выбрано: ${_selectedMsgIds.size}`;
+        bar.querySelector('#_ms_del').style.opacity = _selectedMsgIds.size ? '1' : '0.4';
+    }
+}
+
+function _showMultiSelectBar() {
+    document.getElementById('_multiselect_bar')?.remove();
+    const bar = document.createElement('div');
+    bar.id = '_multiselect_bar';
+    bar.style.cssText = [
+        'position:fixed;bottom:0;left:0;right:0;z-index:8000',
+        'background:rgba(22,22,28,0.97);backdrop-filter:blur(20px)',
+        'border-top:0.5px solid rgba(255,255,255,0.1)',
+        'padding:12px 16px;padding-bottom:max(env(safe-area-inset-bottom),12px)',
+        'display:flex;align-items:center;gap:12px',
+    ].join(';');
+    bar.innerHTML = `
+        <button onclick="_cancelMultiSelect()" style="padding:9px 14px;background:rgba(255,255,255,.08);border:none;border-radius:12px;color:#fff;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">Отмена</button>
+        <span id="_ms_count" style="flex:1;font-size:14px;color:rgba(255,255,255,.6);text-align:center">Выбрано: 1</span>
+        <button id="_ms_del" onclick="_deleteSelected()" style="padding:9px 16px;background:rgba(255,69,58,.15);border:none;border-radius:12px;color:#ff453a;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Удалить</button>`;
+    document.body.appendChild(bar);
+
+    // Клик по сообщению = выбор/снятие
+    document.querySelectorAll('.msg-row').forEach(row => {
+        row._msHandler = (e) => {
+            if (!_multiSelectActive) return;
+            e.stopPropagation();
+            const id = row.getAttribute('data-msg-id');
+            if (id) _toggleMsgSelect(id);
+        };
+        row.addEventListener('click', row._msHandler);
+    });
+}
+
+function _cancelMultiSelect() {
+    _multiSelectActive = false;
+    _selectedMsgIds.forEach(id => {
+        const row = document.querySelector(`[data-msg-id="${id}"]`);
+        if (row) { row.style.background=''; row.style.borderRadius=''; row.querySelector('._sel_check')?.remove(); }
+    });
+    _selectedMsgIds.clear();
+    document.getElementById('_multiselect_bar')?.remove();
+    document.querySelectorAll('.msg-row').forEach(r => {
+        if (r._msHandler) r.removeEventListener('click', r._msHandler);
+        r.style.cursor = '';
+    });
+}
+
+async function _deleteSelected() {
+    if (!_selectedMsgIds.size) return;
+    const ids = [..._selectedMsgIds];
+    // Анимируем удаление
+    ids.forEach(id => _animDeleteMsgRow(id));
+    // Отправляем удаление
+    ids.forEach(id => socket.emit('delete_message_for_me', { msg_id: parseInt(id), chat_id: currentChatId }));
+    showToast(`Удалено: ${ids.length}`, 'success');
+    _cancelMultiSelect();
 }
 
 // ── Анимация схлопывания строки сообщения ──
@@ -2891,35 +3059,50 @@ function hideReactionPicker() {
 
 function addReactionToMsg(msgId, emoji, isMe) {
     const bar = document.getElementById(`reactions-${msgId}`);
-    if (!bar) { console.warn('no reactions bar for', msgId); return; }
+    if (!bar) return;
+
+    // БАГ 1 FIX: Один пользователь — одна реакция
+    // Если это моя реакция — снимаем предыдущую мою
+    if (isMe) {
+        bar.querySelectorAll('.reaction-chip.mine').forEach(prev => {
+            if (prev.dataset.emoji !== emoji) {
+                // Уменьшаем счётчик или удаляем
+                const cnt = prev.querySelector('.rcnt');
+                const n = parseInt(cnt?.textContent || '1') - 1;
+                if (n <= 0) prev.remove();
+                else { if (cnt) cnt.textContent = n; prev.classList.remove('mine'); }
+            }
+        });
+    }
+
     const existing = bar.querySelector(`[data-emoji="${CSS.escape(emoji)}"]`);
     if (existing) {
-        // Увеличиваем счётчик
         const cnt = existing.querySelector('.rcnt');
+        // Если уже моя — это toggle (сервер удалит)
+        if (isMe && existing.classList.contains('mine')) {
+            const n = parseInt(cnt?.textContent || '1') - 1;
+            if (n <= 0) existing.remove();
+            else { if (cnt) cnt.textContent = n; existing.classList.remove('mine'); }
+            return;
+        }
         const newCount = parseInt(cnt?.textContent || '1') + 1;
         if (cnt) cnt.textContent = newCount;
         if (isMe) existing.classList.add('mine');
-        // Анимация
         existing.style.transform = 'scale(1.3)';
         setTimeout(() => { existing.style.transform = ''; }, 200);
     } else {
         const chip = document.createElement('div');
         chip.className = `reaction-chip${isMe ? ' mine' : ''}`;
         chip.dataset.emoji = emoji;
-        chip.style.cssText += ';animation:reactionIn .25s cubic-bezier(.34,1.56,.64,1)';
+        chip.style.animation = 'reactionIn .25s cubic-bezier(.34,1.56,.64,1)';
         const span = document.createElement('span'); span.textContent = emoji;
-        const cnt  = document.createElement('span'); cnt.className='rcnt'; cnt.textContent='1';
+        const cnt  = document.createElement('span'); cnt.className = 'rcnt'; cnt.textContent = '1';
         chip.appendChild(span); chip.appendChild(cnt);
-        chip.addEventListener('click', () => {
-            activeReactionMsgId = msgId;
-            sendReaction(emoji);
-        });
+        chip.addEventListener('click', () => { activeReactionMsgId = msgId; sendReaction(emoji); });
         bar.appendChild(chip);
     }
-
-    // Убедимся что CSS анимации есть
     if (!document.getElementById('reaction-anim-style')) {
-        const st = document.createElement('style'); st.id='reaction-anim-style';
+        const st = document.createElement('style'); st.id = 'reaction-anim-style';
         st.textContent = '@keyframes reactionIn{from{opacity:0;transform:scale(0.5)}to{opacity:1;transform:scale(1)}}';
         document.head.appendChild(st);
     }
@@ -4117,7 +4300,7 @@ function showPartnerProfile() {
 
         // Аватар + имя по центру внизу шапки
         + '<div style="position:absolute;bottom:0;left:0;right:0;display:flex;flex-direction:column;align-items:center;padding-bottom:20px;z-index:2">'
-        + '<div style="width:100px;height:100px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6);margin-bottom:14px">'
+        + '<div style="width:120px;height:120px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6);margin-bottom:14px">'
         + (avatarSrc ? '<img src="' + (avatarSrc.replace(/"/g,'&quot;')) + '" style="width:100%;height:100%;object-fit:cover">' : getInitialAvatar(name,'w-full h-full',currentPartnerId))
         + '</div>'
         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
@@ -4304,6 +4487,121 @@ async function toggleContactSave(id, name) {
                 : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="var(--accent,#10b981)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/><line x1="22" y1="11" x2="16" y2="11" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/></svg>Сохранить';
         }
     } catch(e) { showToast('Ошибка','error'); }
+}
+
+// ═══ ПЕРЕСЫЛКА МОМЕНТОВ ═══
+function _forwardMoment(moment) {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target === ov) ov.remove(); };
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.style.cssText = 'max-height:80vh;overflow-y:auto';
+
+    const chats = recentChats || [];
+    sh.innerHTML = `<div class="modal-handle"></div>
+        <div style="font-size:17px;font-weight:700;margin-bottom:14px">Переслать момент</div>
+        <div style="background:rgba(255,255,255,.04);border-radius:16px;overflow:hidden">
+            ${chats.slice(0,20).map((c,i) => {
+                const pid  = c.partner_id || c.id;
+                const name = c.partner_name || c.name || 'Чат';
+                const ava  = c.partner_avatar || '';
+                return `<div data-chatid="${c.chat_id||c.id}" data-name="${escHtml(name)}"
+                    onclick="_doForwardMoment(this,${JSON.stringify(moment).replace(/"/g,'&quot;')})"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;${i<chats.length-1?'border-bottom:.5px solid rgba(255,255,255,.06)':''}">
+                    ${ava ? `<img src="${ava}" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0">` :
+                            `<div style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;flex-shrink:0">${escHtml(name[0]||'?')}</div>`}
+                    <span style="font-size:15px;font-weight:600">${escHtml(name)}</span>
+                </div>`;
+            }).join('')}
+        </div>`;
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    window._momentFwdOv = ov;
+}
+
+function _doForwardMoment(el, moment) {
+    const chatId = parseInt(el.dataset.chatid);
+    const name   = el.dataset.name;
+    if (!chatId) return;
+    const isVideo = moment.media_url && /\.(mp4|mov|webm)/i.test(moment.media_url);
+    socket.emit('send_message', {
+        chat_id:   chatId,
+        type_msg:  isVideo ? 'video' : (moment.media_url ? 'image' : 'text'),
+        file_url:  moment.media_url || null,
+        content:   `↪ Момент от ${moment.user_name}${moment.text ? ':\n'+moment.text : ''}`,
+        sender_id: currentUser.id,
+    });
+    showToast(`Переслано → ${name}`, 'success');
+    window._momentFwdOv?.remove();
+}
+
+// ═══ ПЕРЕСЫЛКА СООБЩЕНИЙ ═══
+function _forwardMessage(msg) {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target === ov) ov.remove(); };
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.style.cssText = 'max-height:80vh;overflow-y:auto';
+
+    const chats = recentChats || [];
+    sh.innerHTML = `<div class="modal-handle"></div>
+        <div style="font-size:17px;font-weight:700;margin-bottom:14px">Переслать в чат</div>
+        <div style="background:rgba(255,255,255,.04);border-radius:16px;overflow:hidden">
+            ${chats.slice(0,20).map((c,i) => {
+                const pid  = c.partner_id || c.id;
+                const name = c.partner_name || c.name || 'Чат';
+                const ava  = c.partner_avatar || '';
+                return `<div onclick="doForwardMsg(this)" data-pid="${pid}" data-name="${escHtml(name)}"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;${i<chats.length-1?'border-bottom:.5px solid rgba(255,255,255,.06)':''}">
+                    ${ava ? `<img src="${ava}" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0">` :
+                            `<div style="width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;flex-shrink:0">${escHtml(name[0]||'?')}</div>`}
+                    <div style="font-size:15px;font-weight:600">${escHtml(name)}</div>
+                </div>`;
+            }).join('')}
+        </div>`;
+
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+
+    // Сохраняем сообщение для пересылки
+    window._fwdMsg = msg;
+    window._fwdOv  = ov;
+}
+
+function doForwardMsg(el) {
+    const msg  = window._fwdMsg;
+    const ov   = window._fwdOv;
+    const pid  = parseInt(el.dataset.pid);
+    const name = el.dataset.name;
+    if (!msg || !pid) return;
+
+    // Определяем chat_id для этого партнёра
+    const chat = (recentChats||[]).find(c => c.partner_id === pid || c.id === pid);
+    const targetChatId = chat?.chat_id || chat?.id;
+    if (!targetChatId) { showToast('Сначала напиши этому человеку', 'info'); ov?.remove(); return; }
+
+    // Формируем пересланное сообщение
+    const isText = !msg.type || msg.type === 'text';
+    const fwdSender = msg.sender_name || (msg.sender_id === currentUser.id ? currentUser.name : '');
+    const content  = isText
+        ? `↪ ${fwdSender}:
+${msg.content || msg.text || ''}`
+        : null;
+    const type_msg = isText ? 'text' : (msg.type || msg.type_msg || 'text');
+
+    socket.emit('send_message', {
+        chat_id:    targetChatId,
+        type_msg:   type_msg,
+        content:    content,
+        file_url:   isText ? null : msg.file_url,
+        sender_id:  currentUser.id,
+        forwarded_from: fwdSender,
+    });
+
+    showToast(`Переслано → ${name}`, 'success');
+    ov?.remove();
 }
 
 function expandProfileTracks(btn) {
@@ -5543,6 +5841,15 @@ function _runMomentsViewer(list, startIdx) {
             + '<div style="font-size:12px;color:rgba(255,255,255,0.65);margin-top:2px">' + m.timestamp + (m.geo_name ? ' · 📍' + escHtml(m.geo_name) : '') + '</div>';
         btm.appendChild(it);
 
+        // Кнопка "Переслать" — для чужих моментов
+        if (!isMe) {
+            const fwdBtn = document.createElement('button');
+            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
+            fwdBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><polyline points="15 17 20 12 15 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12v-2a6 6 0 016-6h10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Переслать';
+            fwdBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _forwardMoment(m); };
+            btm.appendChild(fwdBtn);
+        }
+
         if (isMe) {
             const acts = document.createElement('div');
             acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
@@ -5567,19 +5874,38 @@ function _runMomentsViewer(list, startIdx) {
         }
         ov.appendChild(btm);
 
-        // Тап по половинам
+        // Тап по половинам экрана
         ov.onclick = e => {
             if (e.target.closest('button')) return;
             clearTimeout(autoTimer);
             if (e.clientX < window.innerWidth/2) prev(); else next();
         };
 
-        // Свайп вверх — закрыть
-        let touchStartY = 0;
-        ov.addEventListener('touchstart', e => { touchStartY = e.touches[0].clientY; }, {passive:true});
+        // Свайп (горизонтальный — след/пред момент, вертикальный — закрыть)
+        let _tsX = 0, _tsY = 0, _swipeDx = 0;
+        ov.addEventListener('touchstart', e => {
+            _tsX = e.touches[0].clientX;
+            _tsY = e.touches[0].clientY;
+            _swipeDx = 0;
+        }, {passive:true});
+        ov.addEventListener('touchmove', e => {
+            _swipeDx = e.touches[0].clientX - _tsX;
+            const dy = e.touches[0].clientY - _tsY;
+            // Анимируем слайд
+            if (Math.abs(_swipeDx) > Math.abs(dy) && Math.abs(_swipeDx) > 10) {
+                ov.style.transform = `translateX(${_swipeDx * 0.3}px)`;
+            }
+        }, {passive:true});
         ov.addEventListener('touchend', e => {
-            if (e.changedTouches[0].clientY - touchStartY > 80) {
+            ov.style.transform = '';
+            const dy = e.changedTouches[0].clientY - _tsY;
+            if (Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(_swipeDx)) {
+                // Вертикальный свайп вниз — закрыть
                 clearTimeout(autoTimer); ov.remove();
+            } else if (_swipeDx < -60) {
+                clearTimeout(autoTimer); next();
+            } else if (_swipeDx > 60) {
+                clearTimeout(autoTimer); prev();
             }
         }, {passive:true});
     }
@@ -8124,14 +8450,16 @@ function _mpRender(filter) {
 
         const cov = document.createElement('div');
         cov.style.cssText = 'width:50px;height:50px;border-radius:13px;flex-shrink:0;overflow:hidden;position:relative;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center';
-        if (track.isFromVideo) {
-            cov.innerHTML = '<span style="font-size:22px">🎬</span>';
-        } else if (track.coverUrl) {
+        if (track.coverUrl) {
             cov.innerHTML = `<img src="${track.coverUrl}" style="width:100%;height:100%;object-fit:cover" loading="lazy">`;
         } else {
-            const letter = (track.title||'?')[0].toUpperCase();
-            const hue = letter.charCodeAt(0) * 41 % 360;
-            cov.innerHTML = `<span style="font-size:19px;font-weight:900;color:hsl(${hue},65%,65%)">${letter}</span>`;
+            const hue = ((track.title||'?').charCodeAt(0) * 41) % 360;
+            cov.style.background = `linear-gradient(135deg,hsl(${hue},60%,22%),hsl(${hue+40},60%,18%))`;
+            cov.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                <path d="M9 18V5l12-2v13" stroke="hsl(${hue},70%,70%)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="6" cy="18" r="3" stroke="hsl(${hue},70%,70%)" stroke-width="1.8"/>
+                <circle cx="18" cy="16" r="3" stroke="hsl(${hue},70%,70%)" stroke-width="1.8"/>
+            </svg>`;
         }
         if (isCur && MP.playing) {
             const bars = document.createElement('div');
@@ -8159,9 +8487,9 @@ function _mpRender(filter) {
             right.appendChild(span);
         }
         const del = document.createElement('button');
-        del.style.cssText = 'width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.05);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.28);-webkit-tap-highlight-color:transparent';
-        del.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        del.onclick = e => { e.stopPropagation(); musicDeleteTrack(track.id); };
+        del.style.cssText = 'width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,.05);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.35);-webkit-tap-highlight-color:transparent';
+        del.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg>';
+        del.onclick = e => { e.stopPropagation(); showTrackMenu(track); };
         right.appendChild(del);
 
         row.appendChild(cov); row.appendChild(info); row.appendChild(right);
@@ -8331,8 +8659,173 @@ function musicSeek(e, wrap) {
     const r = wrap.getBoundingClientRect();
     const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * MP.audioEl.duration;
     MP.audioEl.currentTime = t;
-    }
+}
+let _seekDragging = false;
+function _mpSeekStart(e, wrap) { e.preventDefault(); _seekDragging=true; _mpSeekApply(e.touches[0], wrap); }
+function _mpSeekMove(e, wrap)  { if (!_seekDragging) return; e.preventDefault(); _mpSeekApply(e.touches[0], wrap); }
+function _mpSeekEnd()          { _seekDragging = false; }
+function _mpSeekApply(touch, wrap) {
+    if (!MP.audioEl?.duration) return;
+    const r = wrap.getBoundingClientRect();
+    const t = Math.max(0, Math.min(1, (touch.clientX - r.left) / r.width)) * MP.audioEl.duration;
+    MP.audioEl.currentTime = t;
+    const bar = document.getElementById('mpc-prog-bar');
+    if (bar) bar.style.width = ((t / MP.audioEl.duration) * 100) + '%';
+}
 function musicSearch(q) { MP.filterQuery = q; _mpRender(q); }
+
+function showTrackMenu(track) {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target===ov) ov.remove(); };
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.innerHTML = `<div class="modal-handle"></div>
+        <div style="padding:4px 0 12px;font-size:13px;font-weight:700;color:rgba(255,255,255,.4);letter-spacing:.5px;text-align:center">
+            ${escHtml(track.title||'Трек')}
+        </div>
+        <div style="background:rgba(255,255,255,.05);border-radius:18px;overflow:hidden;margin-bottom:10px">
+            <div onclick="renameTrack(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
+                <div style="width:36px;height:36px;border-radius:10px;background:rgba(99,102,241,.2);display:flex;align-items:center;justify-content:center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="#818cf8" stroke-width="2" stroke-linecap="round"/></svg>
+                </div>
+                <span style="font-size:16px;font-weight:500">Переименовать</span>
+            </div>
+            <div onclick="_sendTrackToChat(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
+                <div style="width:36px;height:36px;border-radius:10px;background:rgba(52,211,153,.15);display:flex;align-items:center;justify-content:center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </div>
+                <span style="font-size:16px;font-weight:500;color:#34d399">Отправить в чат</span>
+            </div>
+            <div onclick="musicDeleteTrack(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer">
+                <div style="width:36px;height:36px;border-radius:10px;background:rgba(239,68,68,.15);display:flex;align-items:center;justify-content:center">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>
+                </div>
+                <span style="font-size:16px;font-weight:500;color:#ef4444">Удалить</span>
+            </div>
+        </div>`;
+    ov.appendChild(sh); document.body.appendChild(ov);
+}
+
+function _sendTrackToChat(trackId) {
+    const track = MP.tracks.find(t => t.id === trackId);
+    if (!track) return;
+
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target === ov) ov.remove(); };
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.style.cssText = 'max-height:80vh;overflow-y:auto';
+
+    const chats = recentChats || [];
+    sh.innerHTML = `<div class="modal-handle"></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            <div style="width:44px;height:44px;border-radius:12px;background:rgba(124,58,237,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round"/><circle cx="6" cy="18" r="3" stroke="#a78bfa" stroke-width="1.8"/><circle cx="18" cy="16" r="3" stroke="#a78bfa" stroke-width="1.8"/></svg>
+            </div>
+            <div>
+                <div style="font-size:15px;font-weight:700">${escHtml(track.title||'Трек')}</div>
+                <div style="font-size:12px;color:rgba(255,255,255,.4)">${escHtml(track.artist||'')}</div>
+            </div>
+        </div>
+        <div style="font-size:13px;color:rgba(255,255,255,.4);margin-bottom:10px">Выбери чат для отправки:</div>
+        <div style="background:rgba(255,255,255,.04);border-radius:16px;overflow:hidden">
+            ${chats.slice(0,20).map((c,i) => {
+                const pid  = c.partner_id || c.id;
+                const name = c.partner_name || c.name || 'Чат';
+                const ava  = c.partner_avatar || '';
+                return `<div data-track="${trackId}" data-chatid="${c.chat_id||c.id}" data-name="${escHtml(name)}"
+                    onclick="_doSendTrack(this)"
+                    style="display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;${i<chats.length-1?'border-bottom:.5px solid rgba(255,255,255,.06)':''}">
+                    ${ava ? `<img src="${ava}" style="width:40px;height:40px;border-radius:50%;object-fit:cover;flex-shrink:0">` :
+                            `<div style="width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;flex-shrink:0">${escHtml(name[0]||'?')}</div>`}
+                    <span style="font-size:15px;font-weight:600">${escHtml(name)}</span>
+                </div>`;
+            }).join('')}
+        </div>`;
+
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    window._trackSendOv = ov;
+}
+
+async function _doSendTrack(el) {
+    const trackId = parseInt(el.dataset.track);
+    const chatId  = parseInt(el.dataset.chatid);
+    const name    = el.dataset.name;
+    const track   = MP.tracks.find(t => t.id === trackId);
+    if (!track || !chatId) return;
+
+    // Получаем blob из IndexedDB и загружаем на сервер
+    try {
+        const rec = await _mdbGet('blobs', track.id);
+        if (!rec?.data) { showToast('Файл не найден', 'error'); return; }
+        const blob = new Blob([rec.data], { type: rec.mime || 'audio/mpeg' });
+        const file = new File([blob], (track.title||'track')+'.mp3', { type: blob.type });
+
+        window._trackSendOv?.remove();
+        showToast('Загружаю...', 'info');
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('chat_id', chatId);
+
+        const r = await apiFetch('/upload_file', { method:'POST', body: fd });
+        if (!r?.ok) throw new Error('upload failed');
+        const data = await r.json();
+
+        socket.emit('send_message', {
+            chat_id:   chatId,
+            type_msg:  'audio',
+            file_url:  data.url,
+            content:   `🎵 ${track.title||'Трек'}${track.artist ? ' — '+track.artist : ''}`,
+            sender_id: currentUser.id,
+        });
+        showToast(`Отправлено → ${name} 🎵`, 'success');
+    } catch(e) {
+        showToast('Ошибка отправки', 'error');
+        console.error('sendTrack:', e);
+    }
+}
+
+async function renameTrack(id) {
+    const track = MP.tracks.find(t => t.id === id);
+    if (!track) return;
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target===ov) ov.remove(); };
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.innerHTML = `<div class="modal-handle"></div>
+        <div style="font-size:17px;font-weight:700;margin-bottom:16px">Переименовать трек</div>
+        <div style="margin-bottom:10px">
+            <div style="font-size:12px;color:rgba(255,255,255,.4);margin-bottom:6px">Название</div>
+            <input id="_rename_title" value="${escHtml(track.title||'')}" style="width:100%;padding:13px 14px;background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.12);border-radius:14px;color:#fff;font-size:15px;font-family:inherit;outline:none;box-sizing:border-box">
+        </div>
+        <div style="margin-bottom:20px">
+            <div style="font-size:12px;color:rgba(255,255,255,.4);margin-bottom:6px">Исполнитель</div>
+            <input id="_rename_artist" value="${escHtml(track.artist||'')}" style="width:100%;padding:13px 14px;background:rgba(255,255,255,.07);border:.5px solid rgba(255,255,255,.12);border-radius:14px;color:#fff;font-size:15px;font-family:inherit;outline:none;box-sizing:border-box">
+        </div>
+        <button id="_rename_save" style="width:100%;padding:15px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">Сохранить</button>`;
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    sh.querySelector('#_rename_title').focus();
+    sh.querySelector('#_rename_save').onclick = async () => {
+        const newTitle  = sh.querySelector('#_rename_title').value.trim();
+        const newArtist = sh.querySelector('#_rename_artist').value.trim();
+        if (!newTitle) return;
+        track.title  = newTitle;
+        track.artist = newArtist;
+        // Обновляем в IndexedDB
+        await _mdbPut('tracks', track).catch(() => {});
+        _mpRender();
+        _mpUpdateCard();
+        _mpSyncTracksToServer();
+        showToast('Название сохранено', 'success');
+        ov.remove();
+    };
+}
 
 async function musicDeleteTrack(id) {
     vibrate(30);
@@ -8585,12 +9078,14 @@ function _mpUpdateMiniPlayer() {
     if (covEl) {
         if (track.coverUrl) {
             covEl.innerHTML = `<img src="${track.coverUrl}" style="width:100%;height:100%;object-fit:cover">`;
-        } else if (track.isFromVideo) {
-            covEl.innerHTML = '<span style="font-size:18px">🎬</span>';
         } else {
-            const letter = (track.title||'?')[0].toUpperCase();
-            const hue = letter.charCodeAt(0)*41%360;
-            covEl.innerHTML = `<span style="font-size:16px;font-weight:900;color:hsl(${hue},65%,65%)">${letter}</span>`;
+            const hue = ((track.title||'?').charCodeAt(0)*41)%360;
+            covEl.style.background = `linear-gradient(135deg,hsl(${hue},60%,22%),hsl(${hue+40},60%,18%))`;
+            covEl.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path d="M9 18V5l12-2v13" stroke="hsl(${hue},70%,70%)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <circle cx="6" cy="18" r="3" stroke="hsl(${hue},70%,70%)" stroke-width="1.8"/>
+                <circle cx="18" cy="16" r="3" stroke="hsl(${hue},70%,70%)" stroke-width="1.8"/>
+            </svg>`;
         }
     }
 
