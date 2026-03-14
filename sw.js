@@ -1,12 +1,11 @@
-// WayChat Service Worker v4 — optimized for speed
+// WayChat Service Worker v5 — optimized for speed + offline
 const CACHE_NAME   = 'waychat-v5';
 const STATIC_CACHE = 'waychat-static-v5';
 const MEDIA_CACHE  = 'waychat-media-v5';
+const MAX_MEDIA    = 150;
 
-// main.css не существует — убран из precache
 const PRECACHE = ['/static/js/main.js'];
 
-// ── Install ──
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(STATIC_CACHE)
@@ -15,7 +14,6 @@ self.addEventListener('install', e => {
   );
 });
 
-// ── Activate ──
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
@@ -27,12 +25,10 @@ self.addEventListener('activate', e => {
   );
 });
 
-// ── Push уведомления ──
 self.addEventListener('push', e => {
   if (!e.data) return;
   let data = {};
   try { data = e.data.json(); } catch { data = { title: 'WayChat', body: e.data.text() }; }
-
   const options = {
     body:  data.body  || '',
     icon:  data.icon  || '/static/img/icon-192.png',
@@ -44,24 +40,18 @@ self.addEventListener('push', e => {
   e.waitUntil(self.registration.showNotification(data.title || 'WayChat', options));
 });
 
-// ── Клик по уведомлению ──
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = e.notification.data?.url || '/';
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
       const wc = list.find(c => c.url.includes(self.location.origin));
-      if (wc) {
-        wc.focus();
-        wc.postMessage({ type: 'open_chat', chat_id: e.notification.data?.chat_id });
-      } else {
-        clients.openWindow(url);
-      }
+      if (wc) { wc.focus(); wc.postMessage({ type: 'open_chat', chat_id: e.notification.data?.chat_id }); }
+      else clients.openWindow(url);
     })
   );
 });
 
-// ── Обновление подписки ──
 self.addEventListener('pushsubscriptionchange', e => {
   e.waitUntil(
     self.registration.pushManager.subscribe(e.oldSubscription.options)
@@ -77,27 +67,38 @@ self.addEventListener('pushsubscriptionchange', e => {
   );
 });
 
-// ── Fetch ──
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET') return;
+  if (url.pathname.includes('/socket.io')) return;
+  if (url.pathname.startsWith('/admin')) return;
 
-  // Cloudinary — cache-first 7 дней
-  if (url.hostname.includes('cloudinary.com')) {
+  // Cloudinary — 7 дней
+  if (url.hostname.includes('cloudinary.com') || url.hostname.includes('res.cloudinary.com')) {
     e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 7 * 86400));
     return;
   }
-  // Статика — cache-first 24ч
+  // stream_track аудио — 24ч
+  if (url.pathname.startsWith('/stream_track/')) {
+    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 86400));
+    return;
+  }
+  // Медиа загрузки — 24ч
+  if (url.pathname.startsWith('/static/uploads/')) {
+    e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 86400));
+    return;
+  }
+  // JS/CSS/статика — 24ч
   if (url.pathname.startsWith('/static/')) {
     e.respondWith(cacheFirst(e.request, STATIC_CACHE, 86400));
     return;
   }
-  // API чатов/моментов — network-first 30с timeout
-  if (['/get_my_chats', '/get_moments', '/get_user_profile'].some(p => url.pathname.startsWith(p))) {
+  // API — network-first 30с
+  if (['/get_my_chats', '/get_moments', '/get_user_profile', '/api/channels'].some(p => url.pathname.startsWith(p))) {
     e.respondWith(networkFirst(e.request, CACHE_NAME, 30));
     return;
   }
-  // Изображения — cache-first 24ч
+  // Изображения — 24ч
   if (/\.(jpg|jpeg|png|webp|gif|svg)(\?|$)/i.test(url.pathname)) {
     e.respondWith(cacheFirst(e.request, MEDIA_CACHE, 86400));
     return;
@@ -111,14 +112,21 @@ async function cacheFirst(req, cacheName, maxAge) {
   const cached = await cache.match(req);
   if (cached) {
     const ts = cached.headers.get('sw-ts');
-    if (!ts || Date.now() - +ts < maxAge * 1000) return cached;
+    if (!ts || Date.now() - +ts < maxAge * 1000) {
+      // Stale-while-revalidate: обновляем в фоне после 75% TTL
+      if (ts && Date.now() - +ts > maxAge * 750) {
+        fetch(req).then(r => { if (r && r.ok) _putWithTs(cache, req, r); }).catch(() => {});
+      }
+      return cached;
+    }
   }
   try {
     const resp = await fetch(req);
-    if (resp.ok) {
-      const h = new Headers(resp.headers);
-      h.set('sw-ts', Date.now().toString());
-      cache.put(req, new Response(await resp.clone().blob(), { status: resp.status, headers: h }));
+    if (resp && resp.ok) {
+      if (cacheName === MEDIA_CACHE) {
+        cache.keys().then(keys => { if (keys.length >= MAX_MEDIA) cache.delete(keys[0]); });
+      }
+      _putWithTs(cache, req, resp.clone());
     }
     return resp;
   } catch { return cached || new Response('', { status: 503 }); }
@@ -131,14 +139,20 @@ async function networkFirst(req, cacheName, timeoutSec) {
       fetch(req),
       new Promise((_, r) => setTimeout(() => r(new Error('timeout')), timeoutSec * 1000))
     ]);
-    if (resp.ok) {
-      const h = new Headers(resp.headers);
-      h.set('sw-ts', Date.now().toString());
-      cache.put(req, new Response(await resp.clone().blob(), { status: resp.status, headers: h }));
-    }
+    if (resp && resp.ok) _putWithTs(cache, req, resp.clone());
     return resp;
   } catch {
-    return (await cache.match(req))
-      || new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    return new Response(JSON.stringify([]), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
+}
+
+async function _putWithTs(cache, req, resp) {
+  try {
+    const h = new Headers(resp.headers);
+    h.set('sw-ts', Date.now().toString());
+    const body = await resp.blob();
+    cache.put(req, new Response(body, { status: resp.status, statusText: resp.statusText, headers: h }));
+  } catch {}
 }
