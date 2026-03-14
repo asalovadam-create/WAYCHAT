@@ -222,7 +222,7 @@ def _run_early_migrations():
     """Добавляем новые колонки в существующие таблицы.
     Использует IF NOT EXISTS — безопасно запускать многократно."""
     early_sqls = [
-        "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'contacts'",
+        "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'all'",
         "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'all'",
         '''CREATE TABLE IF NOT EXISTS saved_contact (
             id SERIAL PRIMARY KEY,
@@ -258,6 +258,14 @@ def _run_early_migrations():
                 conn.execute(text(sql))
         except Exception as e:
             print(f'early migration skip: {e}')
+
+    # Обновляем старых юзеров: меняем 'contacts' -> 'all' для moments_visibility
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text("UPDATE \"user\" SET moments_visibility = 'all' WHERE moments_visibility = 'contacts' OR moments_visibility IS NULL"))
+        print('✅ moments_visibility updated to all')
+    except Exception as e:
+        print(f'moments_visibility update skip: {e}')
 
 with app.app_context():
     try:
@@ -496,7 +504,7 @@ class User(UserMixin, db.Model):
     ban_reason         = db.Column(db.String(500),  default='')      # причина
     last_ip            = db.Column(db.String(64),   default='')      # последний IP
     reg_ip             = db.Column(db.String(64),   default='')      # IP при регистрации
-    moments_visibility = db.Column(db.String(20),   default='contacts')  # all/contacts/nobody
+    moments_visibility = db.Column(db.String(20),   default='all')  # all/contacts/nobody
     tracks_visibility  = db.Column(db.String(20),   default='all')  # all/contacts/nobody
 
     @property
@@ -2248,7 +2256,7 @@ def get_moments():
     for m in moments:
         author_id  = m.Moment.user_id
         is_mine    = (author_id == uid)
-        vis        = m.User.moments_visibility or 'contacts'
+        vis        = m.User.moments_visibility or 'all'
 
         # Свои моменты всегда видны
         if not is_mine:
@@ -2356,7 +2364,7 @@ def get_privacy():
     # Люди скрытые от моих моментов
     hidden = [{'id': h.hidden_from_id} for h in MomentHiddenFrom.query.filter_by(user_id=u.id).all()]
     return jsonify({
-        'moments_visibility': u.moments_visibility or 'contacts',
+        'moments_visibility': u.moments_visibility or 'all',
         'tracks_visibility':  u.tracks_visibility  or 'all',
         'hidden_from':        hidden,
     })
