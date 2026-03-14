@@ -4618,33 +4618,62 @@ function expandProfileTracks(btn) {
 }
 
 // Добавить трек из профиля друга в свой плейлист (только метаданные — без файла)
+// Показываем объяснение для треков добавленных из профиля друга
+function _mpShowFriendTrackHelp(track) {
+    // Убираем трек из активного (нечего играть) — не меняем idx
+    MP._transitioning = false;
+
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.85);backdrop-filter:blur(20px);display:flex;align-items:center;justify-content:center;padding:24px';
+    ov.innerHTML = `
+        <div style="background:rgba(25,25,35,.98);border-radius:26px;padding:28px 24px;max-width:340px;width:100%;border:.5px solid rgba(255,255,255,.1);text-align:center">
+            <div style="width:64px;height:64px;border-radius:18px;background:rgba(124,58,237,.2);display:flex;align-items:center;justify-content:center;margin:0 auto 18px">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none">
+                    <path d="M9 18V5l12-2v13" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="6" cy="18" r="3" stroke="#a78bfa" stroke-width="1.8"/>
+                    <circle cx="18" cy="16" r="3" stroke="#a78bfa" stroke-width="1.8"/>
+                </svg>
+            </div>
+            <div style="font-size:18px;font-weight:800;margin-bottom:10px">${escHtml(track.title||'Трек')}</div>
+            <div style="font-size:14px;color:rgba(255,255,255,.5);line-height:1.6;margin-bottom:24px">
+                Этот трек добавлен из профиля друга.<br>
+                Чтобы слушать — загрузи аудиофайл<br>
+                с тем же названием.
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+                <button onclick="this.closest('[style*=fixed]').remove();musicPickFiles()"
+                    style="padding:14px;background:var(--accent);border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">
+                    Загрузить файл
+                </button>
+                <button onclick="this.closest('[style*=fixed]').remove()"
+                    style="padding:14px;background:rgba(255,255,255,.07);border:none;border-radius:14px;color:rgba(255,255,255,.6);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit">
+                    Закрыть
+                </button>
+            </div>
+        </div>`;
+    document.body.appendChild(ov);
+}
+
 async function addFriendTrackToPlaylist(title, artist, duration) {
-    // Создаём заглушку-трек без реального аудио-файла
-    // Пользователь может потом заменить файл через переименование или загрузить свой
     const id = Date.now();
     const track = {
         id,
-        title:      title || 'Без названия',
-        artist:     artist || '',
-        duration:   duration || 0,
-        coverUrl:   null,
-        isFromVideo: false,
-        addedAt:    Date.now(),
-        isFriendTrack: true, // метка — нет реального файла
+        title:         title    || 'Без названия',
+        artist:        artist   || '',
+        duration:      duration || 0,
+        coverUrl:      null,
+        isFromVideo:   false,
+        isFriendTrack: true, // нет аудиофайла — только метаданные
+        addedAt:       Date.now(),
     };
 
-    // Сохраняем метаданные в tracks store
     try {
+        // Сохраняем только метаданные (без blob) — blob не нужен пока нет файла
         await _mdbPut('tracks', track);
         MP.tracks.push(track);
-        // Пустой blob-заглушка чтобы не падал при попытке играть
-        const silentBlob = new Blob([new Uint8Array(44)], {type:'audio/wav'});
-        const blobData   = await silentBlob.arrayBuffer();
-        await _mdbPut('blobs', { id, data: new Uint8Array(blobData), mime: 'audio/wav' });
-
         _mpRender();
         _mpSyncTracksToServer();
-        showToast(`«${title}» добавлен в плейлист`, 'success');
+        showToast(`«${title}» добавлен в плейлист ✓`, 'success');
         vibrate(15);
     } catch(e) {
         showToast('Ошибка добавления', 'error');
@@ -8495,6 +8524,14 @@ function _mpRender(filter) {
         cov.style.cssText = 'width:50px;height:50px;border-radius:13px;flex-shrink:0;overflow:hidden;position:relative;background:rgba(255,255,255,.06);display:flex;align-items:center;justify-content:center';
         if (track.coverUrl) {
             cov.innerHTML = `<img src="${track.coverUrl}" style="width:100%;height:100%;object-fit:cover" loading="lazy">`;
+        } else if (track.isFriendTrack) {
+            // Чужой трек без файла — иконка загрузки
+            cov.style.background = 'rgba(16,185,129,.1)';
+            cov.innerHTML = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <polyline points="7 10 12 15 17 10" stroke="#10b981" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                <line x1="12" y1="15" x2="12" y2="3" stroke="#10b981" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>`;
         } else {
             const hue = ((track.title||'?').charCodeAt(0) * 41) % 360;
             cov.style.background = `linear-gradient(135deg,hsl(${hue},60%,22%),hsl(${hue+40},60%,18%))`;
@@ -8517,9 +8554,12 @@ function _mpRender(filter) {
 
         const info = document.createElement('div');
         info.style.cssText = 'flex:1;min-width:0';
+        const subtitleText = track.isFriendTrack
+            ? '<span style="color:rgba(16,185,129,.7)">↓ Нажми ⋮ чтобы загрузить файл</span>'
+            : escHtml(track.artist||'');
         info.innerHTML = `
             <div style="font-size:14px;font-weight:${isCur?'800':'600'};color:${isCur?'var(--accent)':'#fff'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3">${escHtml(track.title||'Без названия')}</div>
-            <div style="font-size:12px;color:rgba(255,255,255,.38);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(track.artist||'')}</div>`;
+            <div style="font-size:12px;color:rgba(255,255,255,.38);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${subtitleText}</div>`;
 
         const right = document.createElement('div');
         right.style.cssText = 'display:flex;align-items:center;gap:6px;flex-shrink:0';
@@ -8564,6 +8604,13 @@ async function musicPlayAt(idx) {
     MP.idx = idx;
     const track = MP.tracks[idx];
     try {
+        // Чужой трек без файла — показываем подсказку
+        if (track.isFriendTrack) {
+            MP._transitioning = false;
+            _mpShowFriendTrackHelp(track);
+            return;
+        }
+
         const rec = await _mdbGet('blobs', track.id);
         if (!rec || !rec.data) {
             showToast('Файл не найден', 'error');
@@ -8714,23 +8761,38 @@ function showTrackMenu(track) {
     ov.onclick = e => { if (e.target===ov) ov.remove(); };
     const sh = document.createElement('div');
     sh.className = 'modal-sheet';
+
+    // Для чужих треков (без файла) — специальное меню
+    const friendRows = track.isFriendTrack ? `
+        <div onclick="ov.remove();musicPickFiles()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
+            <div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.15);display:flex;align-items:center;justify-content:center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div>
+                <span style="font-size:16px;font-weight:500;color:#10b981">Загрузить файл</span>
+                <div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:2px">Загрузи MP3 чтобы слушать</div>
+            </div>
+        </div>` : `
+        <div onclick="renameTrack(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
+            <div style="width:36px;height:36px;border-radius:10px;background:rgba(99,102,241,.2);display:flex;align-items:center;justify-content:center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="#818cf8" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            <span style="font-size:16px;font-weight:500">Переименовать</span>
+        </div>
+        <div onclick="_sendTrackToChat(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
+            <div style="width:36px;height:36px;border-radius:10px;background:rgba(52,211,153,.15);display:flex;align-items:center;justify-content:center">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <span style="font-size:16px;font-weight:500;color:#34d399">Отправить в чат</span>
+        </div>`;
+
     sh.innerHTML = `<div class="modal-handle"></div>
         <div style="padding:4px 0 12px;font-size:13px;font-weight:700;color:rgba(255,255,255,.4);letter-spacing:.5px;text-align:center">
             ${escHtml(track.title||'Трек')}
+            ${track.isFriendTrack ? '<span style="font-size:10px;background:rgba(16,185,129,.15);color:#10b981;padding:2px 8px;border-radius:20px;margin-left:6px;font-weight:600">из профиля</span>' : ''}
         </div>
         <div style="background:rgba(255,255,255,.05);border-radius:18px;overflow:hidden;margin-bottom:10px">
-            <div onclick="renameTrack(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(99,102,241,.2);display:flex;align-items:center;justify-content:center">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="#818cf8" stroke-width="2" stroke-linecap="round"/></svg>
-                </div>
-                <span style="font-size:16px;font-weight:500">Переименовать</span>
-            </div>
-            <div onclick="_sendTrackToChat(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer;border-bottom:.5px solid rgba(255,255,255,.07)">
-                <div style="width:36px;height:36px;border-radius:10px;background:rgba(52,211,153,.15);display:flex;align-items:center;justify-content:center">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                </div>
-                <span style="font-size:16px;font-weight:500;color:#34d399">Отправить в чат</span>
-            </div>
+            ${friendRows}
             <div onclick="musicDeleteTrack(${track.id});this.closest('.modal-overlay').remove()" style="display:flex;align-items:center;gap:14px;padding:15px 18px;cursor:pointer">
                 <div style="width:36px;height:36px;border-radius:10px;background:rgba(239,68,68,.15);display:flex;align-items:center;justify-content:center">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>
@@ -8794,7 +8856,10 @@ async function _doSendTrack(el) {
     // Получаем blob из IndexedDB и загружаем на сервер
     try {
         const rec = await _mdbGet('blobs', track.id);
-        if (!rec?.data) { showToast('Файл не найден', 'error'); return; }
+        if (!rec?.data || track.isFriendTrack) {
+            showToast('Нет файла — загрузи MP3 чтобы отправить', 'error');
+            return;
+        }
         const blob = new Blob([rec.data], { type: rec.mime || 'audio/mpeg' });
         const file = new File([blob], (track.title||'track')+'.mp3', { type: blob.type });
 
@@ -8805,7 +8870,7 @@ async function _doSendTrack(el) {
         fd.append('file', file);
         fd.append('chat_id', chatId);
 
-        const r = await apiFetch('/upload_file', { method:'POST', body: fd });
+        const r = await apiFetch('/upload_media', { method:'POST', body: fd });
         if (!r?.ok) throw new Error('upload failed');
         const data = await r.json();
 
