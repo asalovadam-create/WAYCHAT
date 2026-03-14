@@ -491,6 +491,8 @@ async function init() {
     applyTheme(activeTheme);
     updateAllAvatarUI();
     setupGlobalGestures();
+    setTimeout(_initStoriesPullToRefresh, 300); // Инициализируем pull-to-refresh для stories
+    setTimeout(() => { if (momentsCache === null) fetch("/get_moments",{credentials:"include"}).then(r=>r.json()).then(d=>{if(Array.isArray(d)){momentsCache=d;currentMoments=d;}}).catch(()=>{}); }, 1500); // Pre-load moments
 
     // ── 2. INSTANT: чаты из localStorage — рендерим ДО fetch (нет сети — уже виден список) ──
     try {
@@ -916,6 +918,15 @@ body {
 
 /* АНИМАЦИИ */
 @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
+@keyframes storiesBubbleIn { from{opacity:0;transform:scale(0.6) translateY(-8px);} to{opacity:1;transform:scale(1) translateY(0);} }
+#stories-row::-webkit-scrollbar { display:none; }
+.story-bubble { display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;animation:storiesBubbleIn 0.32s cubic-bezier(0.34,1.56,0.64,1) both; }
+.story-ring { width:58px;height:58px;border-radius:50%;padding:2.5px;background:conic-gradient(var(--accent) 0deg,var(--accent) 280deg,rgba(255,255,255,0.12) 280deg);flex-shrink:0;transition:transform 0.15s; }
+.story-ring.viewed { background:conic-gradient(rgba(255,255,255,0.18) 0deg,rgba(255,255,255,0.18) 360deg); }
+.story-ring:active { transform:scale(0.91); }
+.story-ring-inner { width:100%;height:100%;border-radius:50%;background:var(--bg);padding:2px;display:flex;align-items:center;justify-content:center;overflow:hidden; }
+.story-ring-inner img,.story-ring-inner .ava-inner { width:100%;height:100%;border-radius:50%;object-fit:cover; }
+.story-name { font-size:10.5px;font-weight:500;color:rgba(255,255,255,0.75);max-width:62px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
 @keyframes slideUp { from{opacity:0;transform:translateY(12px);} to{opacity:1;transform:translateY(0);} }
 @keyframes msgIn { from{opacity:0;transform:translateY(8px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
@@ -933,7 +944,6 @@ body {
             <div class="px-5 pt-2 pb-3">
                 <div class="section-header-row">
                     <h1 class="section-title">Чаты</h1>
-                    <!-- Плюс — меньше, белый фон, черный крест -->
                     <div style="position:absolute;right:20px;top:50%;transform:translateY(-50%);display:flex;gap:8px;align-items:center">
                         <button onclick="openCreateGroupModal()" title="Создать группу" style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.15);cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.7)">
                             ${ICONS.group}
@@ -944,6 +954,14 @@ body {
                     </div>
                 </div>
             </div>
+
+            <!-- ══ STORIES ROW (pull-to-reveal, как в TG) ══ -->
+            <div id="stories-pull-wrapper" style="overflow:hidden;max-height:0;transition:max-height 0.38s cubic-bezier(0.34,1.56,0.64,1),opacity 0.28s ease;opacity:0">
+                <div id="stories-row" style="display:flex;gap:12px;padding:2px 16px 14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch">
+                    <!-- заполняется renderStoriesRow() -->
+                </div>
+            </div>
+
             <div class="px-5 mb-4">
                 <div class="search-box">
                     <span style="flex-shrink:0">${ICONS.search}</span>
@@ -1418,6 +1436,168 @@ body {
 </div>
 <div class="swipe-indicator" id="swipe-indicator"></div>
 `;
+}
+
+// ══════════════════════════════════════════════════════════
+//  STORIES (моменты в шапке чатов) + PULL-TO-REFRESH
+// ══════════════════════════════════════════════════════════
+let _storiesVisible = false;
+let _pullStartY = 0;
+let _pullActive = false;
+let _pullTriggered = false;
+const PULL_THRESHOLD = 72; // px тяга вниз для открытия
+
+function _initStoriesPullToRefresh() {
+    const mc = document.getElementById('main-content');
+    if (!mc) return;
+
+    mc.addEventListener('touchstart', (e) => {
+        if (currentTab !== 'chats') return;
+        if (mc.scrollTop > 4) return; // только если в самом верху
+        _pullStartY = e.touches[0].clientY;
+        _pullActive = true;
+        _pullTriggered = false;
+    }, { passive: true });
+
+    mc.addEventListener('touchmove', (e) => {
+        if (!_pullActive) return;
+        const dy = e.touches[0].clientY - _pullStartY;
+        if (dy < 8) return;
+        const wrap = document.getElementById('stories-pull-wrapper');
+        if (!wrap) return;
+        if (!_storiesVisible) {
+            // Показываем с упругой анимацией при тяге
+            const progress = Math.min(dy / PULL_THRESHOLD, 1);
+            const h = Math.round(progress * 92);
+            wrap.style.transition = 'none';
+            wrap.style.maxHeight = h + 'px';
+            wrap.style.opacity   = String(Math.min(progress * 1.4, 1));
+        }
+        if (dy >= PULL_THRESHOLD && !_pullTriggered) {
+            _pullTriggered = true;
+            vibrate && vibrate(12);
+        }
+    }, { passive: true });
+
+    mc.addEventListener('touchend', () => {
+        if (!_pullActive) return;
+        _pullActive = false;
+        const wrap = document.getElementById('stories-pull-wrapper');
+        if (!wrap) return;
+        wrap.style.transition = '';
+        if (_pullTriggered && !_storiesVisible) {
+            // Открываем stories
+            _showStoriesRow();
+        } else if (!_storiesVisible) {
+            // Не дотянули — прячем обратно
+            wrap.style.maxHeight = '0';
+            wrap.style.opacity   = '0';
+        }
+    }, { passive: true });
+}
+
+function _showStoriesRow() {
+    _storiesVisible = true;
+    const wrap = document.getElementById('stories-pull-wrapper');
+    if (wrap) {
+        wrap.style.maxHeight = '92px';
+        wrap.style.opacity   = '1';
+    }
+    renderStoriesRow();
+    // Автоскрыть через 8 секунд если пользователь не взаимодействовал
+    clearTimeout(window._storiesHideTimer);
+    window._storiesHideTimer = setTimeout(_hideStoriesRow, 8000);
+}
+
+function _hideStoriesRow() {
+    _storiesVisible = false;
+    const wrap = document.getElementById('stories-pull-wrapper');
+    if (wrap) {
+        wrap.style.maxHeight = '0';
+        wrap.style.opacity   = '0';
+    }
+}
+
+function renderStoriesRow() {
+    const row = document.getElementById('stories-row');
+    if (!row) return;
+    const moments = momentsCache || [];
+
+    // Группируем по юзеру (как в TG)
+    const byUser = new Map();
+    const order  = [];
+    moments.forEach(m => {
+        if (!byUser.has(m.user_id)) { byUser.set(m.user_id, m); order.push(m.user_id); }
+    });
+
+    // Мой кружок первым
+    const meFirst = [];
+    const meId = currentUser?.id;
+    if (meId) {
+        meFirst.push(meId);
+        order.forEach(uid => { if (uid !== meId) meFirst.push(uid); });
+    } else {
+        meFirst.push(...order);
+    }
+
+    // Убираем дубликаты
+    const seen = new Set();
+    const deduped = meFirst.filter(uid => { if (seen.has(uid)) return false; seen.add(uid); return true; });
+
+    row.innerHTML = '';
+
+    deduped.forEach((uid, i) => {
+        const m     = byUser.get(uid) || {};
+        const isMe  = uid === meId;
+        const name  = isMe ? 'Я' : (m.user_name || m.username || 'Пользователь');
+        const ava   = m.user_avatar || '/static/default_avatar.png';
+        const viewed = !isMe && _viewedMomentUsers?.has(uid);
+
+        const bubble = document.createElement('div');
+        bubble.className = 'story-bubble';
+        bubble.style.animationDelay = (i * 0.04) + 's';
+        bubble.onclick = () => {
+            _hideStoriesRow();
+            openUserMomentsViewer(uid);
+        };
+
+        // Если это я и нет моментов — кнопка добавить
+        if (isMe && !byUser.has(uid)) {
+            bubble.innerHTML = \`
+            <div class="story-ring" style="background:rgba(255,255,255,0.1)">
+                <div class="story-ring-inner" style="background:var(--surface2)">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>
+                </div>
+            </div>
+            <span class="story-name">Добавить</span>\`;
+            bubble.onclick = () => { _hideStoriesRow(); pickMedia('moment'); };
+        } else {
+            const avaHtml = ava.startsWith('emoji:')
+                ? \`<div class="ava-inner" style="display:flex;align-items:center;justify-content:center;font-size:24px;">\${ava.slice(6)}</div>\`
+                : \`<img src="\${ava}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.src='/static/default_avatar.png'">\`;
+            bubble.innerHTML = \`
+            <div class="story-ring \${viewed ? 'viewed' : ''}">
+                <div class="story-ring-inner">\${avaHtml}</div>
+            </div>
+            <span class="story-name">\${escHtml(name)}</span>\`;
+        }
+        row.appendChild(bubble);
+    });
+
+    // Если нет моментов — показываем только кнопку "добавить"
+    if (!deduped.length || (deduped.length === 0)) {
+        const bubble = document.createElement('div');
+        bubble.className = 'story-bubble';
+        bubble.innerHTML = \`
+        <div class="story-ring" style="background:rgba(255,255,255,0.1)">
+            <div class="story-ring-inner" style="background:var(--surface2)">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </div>
+        </div>
+        <span class="story-name">Добавить</span>\`;
+        bubble.onclick = () => { _hideStoriesRow(); pickMedia('moment'); };
+        row.appendChild(bubble);
+    }
 }
 
 // ══════════════════════════════════════════════════════════
