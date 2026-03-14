@@ -165,8 +165,8 @@ try:
         'text/html', 'text/css', 'application/json',
         'application/javascript', 'text/javascript'
     ]
-    app.config['COMPRESS_LEVEL'] = 6
-    app.config['COMPRESS_MIN_SIZE'] = 500
+    app.config['COMPRESS_LEVEL'] = 9  # 9: max compression
+    app.config['COMPRESS_MIN_SIZE'] = 256  # 9: compress more
 except ImportError:
     pass
 
@@ -205,12 +205,12 @@ socketio = SocketIO(
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 30,
-    ping_interval         = 25,
+    ping_timeout          = 60000,   # 8: уменьшает reconnect storm на Render free
+    ping_interval         = 25000,   # 8: стандарт для мобильных сетей
     max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
-    compression_threshold = 1024,
+    compression_threshold = 512,     # 9: сжимаем всё > 512 байт
 )
 
 # ══════════════════════════════════════════════════════════
@@ -1225,19 +1225,52 @@ def vapid_public_key():
     return jsonify({'publicKey': pub or ''})
 
 
+
+_INLINE_SW = """
+const CACHE='wc-v3';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/static/main.js']).catch(()=>{})).then(()=>self.skipWaiting()))});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||e.request.url.includes('/socket.io'))return;
+  if(e.request.url.match(/[.](js|css|png|jpg|webp|gif|woff2)$/)){
+    e.respondWith(caches.match(e.request).then(r=>r||(fetch(e.request).then(resp=>{if(resp.ok)caches.open(CACHE).then(c=>c.put(e.request,resp.clone()));return resp}))));
+  }
+});
+self.addEventListener('push',e=>{if(!e.data)return;try{const d=e.data.json();e.waitUntil(self.registration.showNotification(d.title||'WayChat',{body:d.body||'',icon:d.icon||'/static/icon-192.png',data:d.data||{},vibrate:[200,100,200]}))}catch(err){}});
+self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.openWindow(e.notification.data?.url||'/'))});
+"""
+
 @app.route('/sw.js')
 def service_worker():
     from flask import Response
+    # 10: Сначала пробуем файл, затем встроенный SW
     sw_path = os.path.join(BASE_DIR, 'sw.js')
     try:
         with open(sw_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        resp = Response(content, mimetype='application/javascript')
-        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        resp.headers['Service-Worker-Allowed'] = '/'
-        return resp
+            sw_content = f.read()
     except FileNotFoundError:
-        return Response('// sw not found', mimetype='application/javascript', status=404)
+        sw_content = _INLINE_SW
+    resp = Response(sw_content, mimetype='application/javascript')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+
+
+@app.after_request
+def add_cache_headers(response):
+    """Пункты 1,9: кэш-заголовки для CDN (Cloudflare) и браузера"""
+    path = request.path
+    # Статика — кэш 1 год (Cloudflare будет кэшировать)
+    if path.startswith('/static/') and not path.endswith('.html'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        response.headers['Vary'] = 'Accept-Encoding'
+    # Аватары и медиа — кэш 1 час
+    elif path.startswith('/static/uploads/'):
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+    # API — no cache
+    elif path.startswith('/api/') or path in ['/get_messages/', '/get_my_chats']:
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route('/manifest.json')
@@ -1624,7 +1657,7 @@ def get_messages(chat_id):
         db.session.rollback()
     except Exception:
         pass
-    limit     = min(request.args.get('limit', 35, type=int), 100)
+    limit     = min(request.args.get('limit', 30, type=int), 60)  # 3: max 30 initial, 60 for pagination
     before_id = request.args.get('before_id', None, type=int)
     uid       = current_user.id
 
@@ -3218,6 +3251,14 @@ def run_migrations():
         'CREATE INDEX IF NOT EXISTS ix_gmember_user_id  ON group_member(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_user_last_seen   ON "user"(last_seen)',
         'CREATE INDEX IF NOT EXISTS ix_user_is_online   ON "user"(is_online) WHERE is_online = TRUE',
+        # 4: Критичные индексы для производительности
+        'CREATE INDEX IF NOT EXISTS idx_msg_chat_id_desc ON message(chat_id, id DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_msg_sender ON message(sender_id)',
+        'CREATE INDEX IF NOT EXISTS idx_msg_unread ON message(chat_id, is_read) WHERE is_read = FALSE',
+        'CREATE INDEX IF NOT EXISTS idx_user_username ON "user"(username)',
+        'CREATE INDEX IF NOT EXISTS idx_user_phone ON "user"(phone)',
+        'CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_channel_post_ch ON channel_post(channel_id, id DESC)',
         # Privacy settings
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'all' ''',
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'all' ''',
