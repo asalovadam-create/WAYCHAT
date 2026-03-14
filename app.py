@@ -259,11 +259,15 @@ def _run_early_migrations():
         except Exception as e:
             print(f'early migration skip: {e}')
 
-    # Обновляем старых юзеров: меняем 'contacts' -> 'all' для moments_visibility
+    # Сбрасываем moments_visibility: 'contacts' и NULL → 'all'
+    # Запускается при каждом старте чтобы гарантированно применить изменение
     try:
         with db.engine.begin() as conn:
-            conn.execute(text("UPDATE \"user\" SET moments_visibility = 'all' WHERE moments_visibility = 'contacts' OR moments_visibility IS NULL"))
-        print('✅ moments_visibility updated to all')
+            result = conn.execute(text(
+                "UPDATE \"user\" SET moments_visibility = 'all' "
+                "WHERE moments_visibility IS NULL OR moments_visibility = 'contacts' OR moments_visibility = ''"
+            ))
+            print(f'✅ moments_visibility reset: {result.rowcount} rows updated to all')
     except Exception as e:
         print(f'moments_visibility update skip: {e}')
 
@@ -2274,30 +2278,83 @@ def debug_moments():
     })
 
 
+@app.route('/fix_moments_visibility')
+@login_required
+def fix_moments_visibility():
+    """Принудительно сбрасывает moments_visibility всех пользователей на 'all'.
+    Вызови один раз в браузере если моменты не видны."""
+    try:
+        with db.engine.begin() as conn:
+            result = conn.execute(text(
+                "UPDATE \"user\" SET moments_visibility = 'all'"
+            ))
+            count = result.rowcount
+        # Очищаем весь кэш пользователей
+        _user_dict_cache._store.clear()
+        _user_dict_cache._times.clear()
+        return jsonify({'ok': True, 'updated': count, 'message': f'Обновлено {count} пользователей'})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
 # ══════════════════════════════════════════════════════════
 #  МОМЕНТЫ
 # ══════════════════════════════════════════════════════════
 @app.route('/get_moments')
 @login_required
 def get_moments():
+    """
+    Правила видимости моментов:
+    - Свои моменты — всегда видны
+    - Чужие моменты — видны если:
+        1. Я сохранил этого человека (my_saved)
+        2. ИЛИ он сохранил меня (saved_me)
+        3. ИЛИ у него visibility = 'all'
+      И при этом:
+        - Он не заблокирован мной
+        - Он не скрыл моменты от меня
+        - Его visibility != 'nobody'
+    """
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
 
-    # Все моменты за 24 часа — используем прямой SQL для актуальных данных
-    # (ORM-кэш сессии может отдавать устаревший moments_visibility)
+    # Кого я сохранил
+    my_saved_ids = set(db.session.execute(
+        text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
+    # Кто сохранил меня
+    saved_me_ids = set(db.session.execute(
+        text('SELECT user_id FROM saved_contact WHERE contact_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
+    # Кого я заблокировал
+    i_blocked_ids = set(db.session.execute(
+        text('SELECT blocked_id FROM blocked_user WHERE blocker_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
+    # Кто скрыл моменты от меня
+    hidden_ids = set(db.session.execute(
+        text('SELECT user_id FROM moment_hidden_from WHERE hidden_from_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
+    # Все моменты за 24ч — чистый SQL, без ORM-кэша
     rows = db.session.execute(text('''
         SELECT
-            m.id          AS moment_id,
+            m.id            AS moment_id,
             m.user_id,
             m.media_url,
             m.text,
             m.geo_name,
             m.timestamp,
-            m.expires_at,
-            u.name        AS user_name,
-            u.avatar      AS user_avatar,
-            u.moments_visibility
+            u.name          AS user_name,
+            u.avatar        AS user_avatar,
+            COALESCE(u.moments_visibility, 'all') AS vis
         FROM moment m
         JOIN "user" u ON u.id = m.user_id
         WHERE m.timestamp >= :cutoff
@@ -2305,58 +2362,52 @@ def get_moments():
         ORDER BY m.timestamp DESC
     '''), {'cutoff': cutoff, 'now': now_utc}).fetchall()
 
-    # Контакты: достаточно чтобы хотя бы один сохранил другого
-    my_saved = {c.contact_id for c in SavedContact.query.filter_by(user_id=uid).all()}
-    saved_me = {c.user_id for c in SavedContact.query.filter_by(contact_id=uid).all()}
-    mutual_contacts = my_saved | saved_me
-
-    # Кто скрыл моменты от меня
-    hidden_from_me = {h.user_id for h in MomentHiddenFrom.query.filter_by(hidden_from_id=uid).all()}
-
-    # Кого я заблокировал / кто меня заблокировал
-    i_blocked  = {b.blocked_id  for b in BlockedUser.query.filter_by(blocker_id=uid).all()}
-    blocked_me = {b.blocker_id  for b in BlockedUser.query.filter_by(blocked_id=uid).all()}
-    blocked_set = i_blocked | blocked_me
-
-    # Для совместимости переименуем rows в moments (список namedtuple-like)
-    moments = rows
-
-    # Батч view_count
-    moment_ids = [m.moment_id for m in moments]
+    # view counts
+    moment_ids = [r.moment_id for r in rows]
     view_counts = {}
     if moment_ids:
-        vc_rows = db.session.execute(
+        for vc in db.session.execute(
             text('SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id = ANY(:ids) GROUP BY moment_id'),
             {'ids': moment_ids}
-        ).fetchall()
-        view_counts = {r.moment_id: r.cnt for r in vc_rows}
+        ).fetchall():
+            view_counts[vc.moment_id] = vc.cnt
 
     data = []
-    for m in moments:
-        author_id = m.user_id
+    for r in rows:
+        author_id = r.user_id
         is_mine   = (author_id == uid)
-        vis       = (m.moments_visibility or 'all').strip()
 
         if not is_mine:
-            if author_id in blocked_set:      continue
-            if author_id in hidden_from_me:   continue
-            if vis == 'nobody':               continue
-            if vis == 'contacts' and author_id not in mutual_contacts:
+            # Заблокирован — не показываем
+            if author_id in i_blocked_ids:
                 continue
-            # vis == 'all' — показываем
+            # Скрыл от меня — не показываем
+            if author_id in hidden_ids:
+                continue
+            # Явно закрыл моменты — не показываем
+            if r.vis == 'nobody':
+                continue
+            # Показываем если: я сохранил ИЛИ он сохранил меня ИЛИ видимость 'all'
+            can_see = (
+                author_id in my_saved_ids or
+                author_id in saved_me_ids or
+                r.vis == 'all'
+            )
+            if not can_see:
+                continue
 
-        ts = m.timestamp
+        ts = r.timestamp
         data.append({
-            'id':            m.moment_id,
+            'id':            r.moment_id,
             'user_id':       author_id,
-            'user_name':     m.user_name  or '',
-            'user_avatar':   m.user_avatar or '',
-            'media_url':     m.media_url  or '',
-            'text':          m.text       or '',
-            'geo_name':      m.geo_name   or '',
+            'user_name':     r.user_name   or '',
+            'user_avatar':   r.user_avatar or '',
+            'media_url':     r.media_url   or '',
+            'text':          r.text        or '',
+            'geo_name':      r.geo_name    or '',
             'timestamp':     to_moscow_str(ts),
             'raw_timestamp': ts.isoformat() + 'Z' if ts else '',
-            'view_count':    view_counts.get(m.moment_id, 0),
+            'view_count':    view_counts.get(r.moment_id, 0),
             'is_mine':       is_mine,
         })
 
