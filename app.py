@@ -2215,119 +2215,18 @@ def block_user(user_id):
         db.session.commit()
     return jsonify({'success': True})
 
-@app.route('/debug_moments')
-@login_required
-def debug_moments():
-    """Debug: показывает почему моменты не видны"""
-    uid     = current_user.id
-    cutoff  = datetime.utcnow() - timedelta(hours=24)
-    now_utc = datetime.utcnow()
-
-    moments_raw = db.session.query(Moment, User).join(
-        User, Moment.user_id == User.id
-    ).filter(
-        Moment.timestamp >= cutoff,
-        or_(Moment.expires_at == None, Moment.expires_at > now_utc)
-    ).order_by(Moment.timestamp.desc()).all()
-
-    my_saved = {c.contact_id for c in SavedContact.query.filter_by(user_id=uid).all()}
-    saved_me = {c.user_id for c in SavedContact.query.filter_by(contact_id=uid).all()}
-    contacts = my_saved | saved_me
-
-    i_blocked  = {b.blocked_id  for b in BlockedUser.query.filter_by(blocker_id=uid).all()}
-    blocked_me = {b.blocker_id  for b in BlockedUser.query.filter_by(blocked_id=uid).all()}
-    blocked_set = i_blocked | blocked_me
-    hidden_from_me = {h.user_id for h in MomentHiddenFrom.query.filter_by(hidden_from_id=uid).all()}
-
-    result = []
-    for m in moments_raw:
-        author_id = m.Moment.user_id
-        is_mine   = author_id == uid
-        vis       = m.User.moments_visibility
-        in_contacts = author_id in contacts
-        in_blocked  = author_id in blocked_set
-        in_hidden   = author_id in hidden_from_me
-
-        reason = 'OK'
-        if not is_mine:
-            if in_blocked:   reason = 'BLOCKED'
-            elif in_hidden:  reason = 'HIDDEN'
-            elif vis == 'nobody': reason = 'VIS=nobody'
-            elif vis == 'contacts' and not in_contacts: reason = f'VIS=contacts but not in contacts (my_saved={author_id in my_saved}, saved_me={author_id in saved_me})'
-
-        result.append({
-            'moment_id':    m.Moment.id,
-            'author_id':    author_id,
-            'author_name':  m.User.name,
-            'visibility':   vis,
-            'is_mine':      is_mine,
-            'in_contacts':  in_contacts,
-            'in_blocked':   in_blocked,
-            'in_hidden':    in_hidden,
-            'reason':       reason,
-            'ts':           m.Moment.timestamp.isoformat() if m.Moment.timestamp else '',
-        })
-
-    return jsonify({
-        'my_id':        uid,
-        'my_saved':     list(my_saved),
-        'saved_me':     list(saved_me),
-        'contacts':     list(contacts),
-        'blocked':      list(blocked_set),
-        'moments':      result,
-    })
 
 
-@app.route('/fix_moments_visibility')
-@login_required
-def fix_moments_visibility():
-    """Принудительно сбрасывает moments_visibility всех пользователей на 'all'.
-    Вызови один раз в браузере если моменты не видны."""
-    try:
-        with db.engine.begin() as conn:
-            result = conn.execute(text(
-                "UPDATE \"user\" SET moments_visibility = 'all'"
-            ))
-            count = result.rowcount
-        # Очищаем весь кэш пользователей
-        _user_dict_cache._store.clear()
-        _user_dict_cache._times.clear()
-        return jsonify({'ok': True, 'updated': count, 'message': f'Обновлено {count} пользователей'})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-# ══════════════════════════════════════════════════════════
-#  МОМЕНТЫ
-# ══════════════════════════════════════════════════════════
 @app.route('/get_moments')
-@login_required
+@login_required  
 def get_moments():
-    """
-    Правила видимости моментов:
-    - Свои моменты — всегда видны
-    - Чужие моменты — видны если:
-        1. Я сохранил этого человека (my_saved)
-        2. ИЛИ он сохранил меня (saved_me)
-        3. ИЛИ у него visibility = 'all'
-      И при этом:
-        - Он не заблокирован мной
-        - Он не скрыл моменты от меня
-        - Его visibility != 'nobody'
-    """
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
 
-    # Кого я сохранил
+    # Кого я сохранил — эти люди показывают мне свои моменты
     my_saved_ids = set(db.session.execute(
         text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'),
-        {'uid': uid}
-    ).scalars().all())
-
-    # Кто сохранил меня
-    saved_me_ids = set(db.session.execute(
-        text('SELECT user_id FROM saved_contact WHERE contact_id = :uid'),
         {'uid': uid}
     ).scalars().all())
 
@@ -2343,22 +2242,22 @@ def get_moments():
         {'uid': uid}
     ).scalars().all())
 
-    # Все моменты за 24ч — чистый SQL, без ORM-кэша
+    # Все моменты за 24ч
     rows = db.session.execute(text('''
         SELECT
-            m.id            AS moment_id,
+            m.id        AS moment_id,
             m.user_id,
             m.media_url,
             m.text,
             m.geo_name,
             m.timestamp,
-            u.name          AS user_name,
-            u.avatar        AS user_avatar,
-            COALESCE(u.moments_visibility, 'all') AS vis
+            u.name      AS user_name,
+            u.avatar    AS user_avatar
         FROM moment m
         JOIN "user" u ON u.id = m.user_id
         WHERE m.timestamp >= :cutoff
           AND (m.expires_at IS NULL OR m.expires_at > :now)
+          AND u.is_blocked = FALSE
         ORDER BY m.timestamp DESC
     '''), {'cutoff': cutoff, 'now': now_utc}).fetchall()
 
@@ -2378,23 +2277,10 @@ def get_moments():
         is_mine   = (author_id == uid)
 
         if not is_mine:
-            # Заблокирован — не показываем
-            if author_id in i_blocked_ids:
-                continue
-            # Скрыл от меня — не показываем
-            if author_id in hidden_ids:
-                continue
-            # Явно закрыл моменты — не показываем
-            if r.vis == 'nobody':
-                continue
-            # Показываем если: я сохранил ИЛИ он сохранил меня ИЛИ видимость 'all'
-            can_see = (
-                author_id in my_saved_ids or
-                author_id in saved_me_ids or
-                r.vis == 'all'
-            )
-            if not can_see:
-                continue
+            if author_id in i_blocked_ids: continue
+            if author_id in hidden_ids:    continue
+            # ГЛАВНОЕ ПРАВИЛО: вижу только тех кого сохранил
+            if author_id not in my_saved_ids: continue
 
         ts = r.timestamp
         data.append({
@@ -2412,6 +2298,58 @@ def get_moments():
         })
 
     return jsonify(data)
+
+
+
+@app.route('/debug_moments')
+@login_required
+def debug_moments():
+    uid = current_user.id
+    now_utc = datetime.utcnow()
+    cutoff  = now_utc - timedelta(hours=24)
+
+    my_saved = list(db.session.execute(
+        text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'), {'uid': uid}
+    ).scalars().all())
+
+    all_moments = db.session.execute(text('''
+        SELECT m.id, m.user_id, m.timestamp, m.expires_at,
+               u.name, u.moments_visibility
+        FROM moment m JOIN "user" u ON u.id = m.user_id
+        ORDER BY m.timestamp DESC LIMIT 50
+    '''), {}).fetchall()
+
+    result = []
+    for m in all_moments:
+        age_h = round((now_utc - m.timestamp).total_seconds() / 3600, 1) if m.timestamp else 99
+        expired = (m.expires_at is not None and m.expires_at < now_utc)
+        too_old = age_h > 24
+        i_saved = m.user_id in my_saved
+        is_mine = m.user_id == uid
+
+        why_hidden = []
+        if too_old: why_hidden.append(f'TOO_OLD({age_h}h)')
+        if expired: why_hidden.append('EXPIRED')
+        if not is_mine and not i_saved: why_hidden.append('NOT_IN_MY_SAVED')
+
+        result.append({
+            'moment_id':   m.id,
+            'author_id':   m.user_id,
+            'author_name': m.name,
+            'vis':         m.moments_visibility,
+            'age_hours':   age_h,
+            'expired':     expired,
+            'is_mine':     is_mine,
+            'i_saved':     i_saved,
+            'VISIBLE':     len(why_hidden) == 0,
+            'why_hidden':  why_hidden,
+        })
+
+    return jsonify({
+        'my_id':     uid,
+        'my_saved':  my_saved,
+        'moments':   result,
+    })
 
 
 # ══════════════════════════════════════════════════════════
@@ -3573,71 +3511,7 @@ def report_user():
     return jsonify({'success': True})
 
 
-@app.route('/debug_moments')
-@login_required
-def debug_moments():
-    """DEBUG: показывает почему моменты не видны. Удалить после отладки."""
-    uid = current_user.id
-    cutoff = datetime.utcnow() - timedelta(hours=24)
-    now_utc = datetime.utcnow()
 
-    all_moments = db.session.query(Moment, User).join(
-        User, Moment.user_id == User.id
-    ).filter(
-        Moment.timestamp >= cutoff,
-        or_(Moment.expires_at == None, Moment.expires_at > now_utc)
-    ).all()
-
-    my_saved = {c.contact_id for c in SavedContact.query.filter_by(user_id=uid).all()}
-    saved_me = {c.user_id   for c in SavedContact.query.filter_by(contact_id=uid).all()}
-    i_blocked = {b.blocked_id for b in BlockedUser.query.filter_by(blocker_id=uid).all()}
-    hidden_from_me = {h.user_id for h in MomentHiddenFrom.query.filter_by(hidden_from_id=uid).all()}
-
-    result = []
-    for m in all_moments:
-        author_id = m.Moment.user_id
-        is_mine = author_id == uid
-        vis = m.User.moments_visibility or 'unknown'
-        blocked = author_id in i_blocked
-        hidden = author_id in hidden_from_me
-        i_saved_them = author_id in my_saved
-        they_saved_me = author_id in saved_me
-
-        visible = True
-        reason = 'OK'
-        if not is_mine:
-            if blocked:   visible = False; reason = 'YOU_BLOCKED_THEM'
-            elif hidden:  visible = False; reason = 'THEY_HID_FROM_YOU'
-            elif vis == 'nobody': visible = False; reason = 'VIS_NOBODY'
-
-        result.append({
-            'moment_id':      m.Moment.id,
-            'author_id':      author_id,
-            'author_name':    m.User.name,
-            'author_vis':     vis,
-            'is_mine':        is_mine,
-            'i_saved_them':   i_saved_them,
-            'they_saved_me':  they_saved_me,
-            'i_blocked_them': blocked,
-            'they_hid_from_me': hidden,
-            'will_be_shown':  visible,
-            'skip_reason':    reason if not visible else None,
-            'expires_at':     m.Moment.expires_at.isoformat() if m.Moment.expires_at else None,
-            'timestamp':      m.Moment.timestamp.isoformat() if m.Moment.timestamp else None,
-        })
-
-    return jsonify({
-        'my_id':         uid,
-        'my_saved':      list(my_saved),
-        'saved_me':      list(saved_me),
-        'total_moments': len(result),
-        'moments':       result,
-    })
-
-
-# ══════════════════════════════════════════════════════════
-#  HEALTHCHECK
-# ══════════════════════════════════════════════════════════
 @app.route('/health')
 def healthcheck():
     try:
