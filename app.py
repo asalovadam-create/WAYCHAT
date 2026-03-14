@@ -205,13 +205,63 @@ socketio = SocketIO(
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 30,               # мобильные сети — дольше ждём
-    ping_interval         = 25,               # реже пингуем — меньше трафика
-    max_http_buffer_size  = 5 * 1024 * 1024,  # 5MB буфер (было 10)
+    ping_timeout          = 30,
+    ping_interval         = 25,
+    max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
-    compression_threshold = 1024,             # gzip пакеты >1KB
+    compression_threshold = 1024,
 )
+
+# ══════════════════════════════════════════════════════════
+#  РАННИЕ МИГРАЦИИ — выполняются ДО любого запроса
+#  Критически важно: добавляем колонки которые есть в модели User
+#  Если колонки нет в БД но есть в модели — SQLAlchemy падает на любом SELECT
+# ══════════════════════════════════════════════════════════
+def _run_early_migrations():
+    """Добавляем новые колонки в существующие таблицы.
+    Использует IF NOT EXISTS — безопасно запускать многократно."""
+    early_sqls = [
+        "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'contacts'",
+        "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'contacts'",
+        '''CREATE TABLE IF NOT EXISTS saved_contact (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            contact_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            saved_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(user_id, contact_id)
+        )''',
+        '''CREATE TABLE IF NOT EXISTS moment_hidden_from (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            hidden_from_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            UNIQUE(user_id, hidden_from_id)
+        )''',
+        '''CREATE TABLE IF NOT EXISTS user_track (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            title VARCHAR(200) DEFAULT '',
+            artist VARCHAR(200) DEFAULT '',
+            duration REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_saved_contact_user ON saved_contact(user_id)',
+        'CREATE INDEX IF NOT EXISTS ix_user_track_user ON user_track(user_id)',
+    ]
+    for sql in early_sqls:
+        try:
+            with db.engine.begin() as conn:
+                conn.execute(text(sql))
+        except Exception as e:
+            print(f'early migration skip: {e}')
+
+with app.app_context():
+    try:
+        db.create_all()
+        _run_early_migrations()
+        print('✅ DB migrations OK')
+    except Exception as _e:
+        print(f'⚠️  DB startup error: {_e}')
 
 # ══════════════════════════════════════════════════════════
 #  CLOUDINARY
