@@ -1522,81 +1522,66 @@ function renderStoriesRow() {
     const row = document.getElementById('stories-row');
     if (!row) return;
     const moments = momentsCache || [];
+    const SVG_PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>';
 
-    // Группируем по юзеру (как в TG)
     const byUser = new Map();
     const order  = [];
-    moments.forEach(m => {
+    moments.forEach(function(m) {
         if (!byUser.has(m.user_id)) { byUser.set(m.user_id, m); order.push(m.user_id); }
     });
 
-    // Мой кружок первым
-    const meFirst = [];
-    const meId = currentUser?.id;
-    if (meId) {
-        meFirst.push(meId);
-        order.forEach(uid => { if (uid !== meId) meFirst.push(uid); });
-    } else {
-        meFirst.push(...order);
-    }
+    const meId = currentUser ? currentUser.id : null;
+    const meFirst = meId ? [meId] : [];
+    order.forEach(function(uid) { if (uid !== meId) meFirst.push(uid); });
 
-    // Убираем дубликаты
     const seen = new Set();
-    const deduped = meFirst.filter(uid => { if (seen.has(uid)) return false; seen.add(uid); return true; });
+    const deduped = meFirst.filter(function(uid) { if (seen.has(uid)) return false; seen.add(uid); return true; });
 
     row.innerHTML = '';
 
-    deduped.forEach((uid, i) => {
-        const m     = byUser.get(uid) || {};
-        const isMe  = uid === meId;
-        const name  = isMe ? 'Я' : (m.user_name || m.username || 'Пользователь');
-        const ava   = m.user_avatar || '/static/default_avatar.png';
-        const viewed = !isMe && _viewedMomentUsers?.has(uid);
+    function makeBubble(htmlInner, delay, clickFn) {
+        const b = document.createElement('div');
+        b.className = 'story-bubble';
+        b.style.animationDelay = (delay * 0.04) + 's';
+        b.innerHTML = htmlInner;
+        b.onclick = clickFn;
+        return b;
+    }
 
-        const bubble = document.createElement('div');
-        bubble.className = 'story-bubble';
-        bubble.style.animationDelay = (i * 0.04) + 's';
-        bubble.onclick = () => {
-            _hideStoriesRow();
-            openUserMomentsViewer(uid);
-        };
+    function addBtnBubble(delay, label) {
+        const html = '<div class="story-ring" style="background:rgba(255,255,255,0.1)">'
+            + '<div class="story-ring-inner" style="background:var(--surface2)">' + SVG_PLUS + '</div>'
+            + '</div>'
+            + '<span class="story-name">' + (label || 'Добавить') + '</span>';
+        return makeBubble(html, delay, function() { _hideStoriesRow(); pickMedia('moment'); });
+    }
 
-        // Если это я и нет моментов — кнопка добавить
+    deduped.forEach(function(uid, i) {
+        const m      = byUser.get(uid) || {};
+        const isMe   = uid === meId;
+        const name   = isMe ? 'Я' : (m.user_name || m.username || 'Пользователь');
+        const ava    = m.user_avatar || '/static/default_avatar.png';
+        const viewed = !isMe && _viewedMomentUsers && _viewedMomentUsers.has(uid);
+
         if (isMe && !byUser.has(uid)) {
-            bubble.innerHTML = \`
-            <div class="story-ring" style="background:rgba(255,255,255,0.1)">
-                <div class="story-ring-inner" style="background:var(--surface2)">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>
-                </div>
-            </div>
-            <span class="story-name">Добавить</span>\`;
-            bubble.onclick = () => { _hideStoriesRow(); pickMedia('moment'); };
+            row.appendChild(addBtnBubble(i, 'Добавить'));
         } else {
             const avaHtml = ava.startsWith('emoji:')
-                ? \`<div class="ava-inner" style="display:flex;align-items:center;justify-content:center;font-size:24px;">\${ava.slice(6)}</div>\`
-                : \`<img src="\${ava}" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.src='/static/default_avatar.png'">\`;
-            bubble.innerHTML = \`
-            <div class="story-ring \${viewed ? 'viewed' : ''}">
-                <div class="story-ring-inner">\${avaHtml}</div>
-            </div>
-            <span class="story-name">\${escHtml(name)}</span>\`;
+                ? '<div class="ava-inner" style="display:flex;align-items:center;justify-content:center;font-size:24px;">' + ava.slice(6) + '</div>'
+                : '<img src="' + ava + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.src=\'\/static\/default_avatar.png\'">';
+            const ringClass = 'story-ring' + (viewed ? ' viewed' : '');
+            const html = '<div class="' + ringClass + '">'
+                + '<div class="story-ring-inner">' + avaHtml + '</div>'
+                + '</div>'
+                + '<span class="story-name">' + escHtml(name) + '</span>';
+            const b = makeBubble(html, i, null);
+            b.onclick = (function(u) { return function() { _hideStoriesRow(); openUserMomentsViewer(u); }; })(uid);
+            row.appendChild(b);
         }
-        row.appendChild(bubble);
     });
 
-    // Если нет моментов — показываем только кнопку "добавить"
-    if (!deduped.length || (deduped.length === 0)) {
-        const bubble = document.createElement('div');
-        bubble.className = 'story-bubble';
-        bubble.innerHTML = \`
-        <div class="story-ring" style="background:rgba(255,255,255,0.1)">
-            <div class="story-ring-inner" style="background:var(--surface2)">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>
-            </div>
-        </div>
-        <span class="story-name">Добавить</span>\`;
-        bubble.onclick = () => { _hideStoriesRow(); pickMedia('moment'); };
-        row.appendChild(bubble);
+    if (!deduped.length) {
+        row.appendChild(addBtnBubble(0, 'Добавить'));
     }
 }
 
