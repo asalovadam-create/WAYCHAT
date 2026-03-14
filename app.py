@@ -2224,19 +2224,13 @@ def get_moments():
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
 
-    # Кого я заблокировал — их не показываем
+    # Только заблокированные не показываем
     i_blocked_ids = set(db.session.execute(
         text('SELECT blocked_id FROM blocked_user WHERE blocker_id = :uid'),
         {'uid': uid}
     ).scalars().all())
 
-    # Кто скрыл моменты от меня
-    hidden_ids = set(db.session.execute(
-        text('SELECT user_id FROM moment_hidden_from WHERE hidden_from_id = :uid'),
-        {'uid': uid}
-    ).scalars().all())
-
-    # Все активные моменты за 24ч — прямой SQL без ORM кэша
+    # Все активные моменты за 24ч — БЕЗ ФИЛЬТРОВ по visibility и контактам
     rows = db.session.execute(text('''
         SELECT
             m.id          AS moment_id,
@@ -2246,18 +2240,16 @@ def get_moments():
             m.geo_name,
             m.timestamp,
             u.name        AS user_name,
-            u.avatar      AS user_avatar,
-            COALESCE(u.moments_visibility, 'all') AS vis
+            u.avatar      AS user_avatar
         FROM moment m
         JOIN "user" u ON u.id = m.user_id
         WHERE m.timestamp >= :cutoff
           AND (m.expires_at IS NULL OR m.expires_at > :now)
           AND u.is_blocked = FALSE
         ORDER BY m.timestamp DESC
-        LIMIT 200
+        LIMIT 300
     '''), {'cutoff': cutoff, 'now': now_utc}).fetchall()
 
-    # view counts
     moment_ids = [r.moment_id for r in rows]
     view_counts = {}
     if moment_ids:
@@ -2271,16 +2263,9 @@ def get_moments():
     for r in rows:
         author_id = r.user_id
         is_mine   = (author_id == uid)
-
-        if not is_mine:
-            # Заблокирован мной
-            if author_id in i_blocked_ids: continue
-            # Скрыл от меня
-            if author_id in hidden_ids: continue
-            # Явно скрыл от всех
-            if r.vis == 'nobody': continue
-            # Всё — показываем. Кто сохранил не важно.
-
+        # Единственный фильтр — заблокированные
+        if not is_mine and author_id in i_blocked_ids:
+            continue
         ts = r.timestamp
         data.append({
             'id':            r.moment_id,
