@@ -918,27 +918,10 @@ body {
 
 /* АНИМАЦИИ */
 @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
-@keyframes storiesBubbleIn { from{opacity:0;transform:scale(0.5);} to{opacity:1;transform:scale(1);} }
-@keyframes storiesSlideDown { from{opacity:0;transform:translateY(-6px);} to{opacity:1;transform:translateY(0);} }
-#stories-row::-webkit-scrollbar, #stories-mini::-webkit-scrollbar { display:none; }
-
-/* Полный кружок в развёрнутой полоске */
-.story-bubble { display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;animation:storiesBubbleIn 0.3s cubic-bezier(0.34,1.56,0.64,1) both; }
-.story-ring { width:60px;height:60px;border-radius:50%;padding:2.5px;background:conic-gradient(var(--accent) 0deg,var(--accent) 290deg,rgba(255,255,255,0.1) 290deg);flex-shrink:0;transition:transform 0.15s; }
-.story-ring.viewed { background:conic-gradient(rgba(255,255,255,0.15) 0deg,rgba(255,255,255,0.15) 360deg); }
-.story-ring:active,.story-ring-mini:active { transform:scale(0.88); }
-.story-ring-inner,.story-ring-mini-inner { width:100%;height:100%;border-radius:50%;background:var(--bg);padding:2px;display:flex;align-items:center;justify-content:center;overflow:hidden; }
-.story-ring-inner img,.story-ring-inner .ava-inner,
-.story-ring-mini-inner img,.story-ring-mini-inner .ava-inner { width:100%;height:100%;border-radius:50%;object-fit:cover; }
-.story-name { font-size:10px;font-weight:500;color:rgba(255,255,255,0.7);max-width:64px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2; }
-
-/* Мини-кружки слева от поиска */
-.story-ring-mini { width:28px;height:28px;border-radius:50%;padding:2px;background:conic-gradient(var(--accent) 0deg,var(--accent) 290deg,rgba(255,255,255,0.1) 290deg);flex-shrink:0;margin-left:-6px;transition:transform 0.15s;box-shadow:0 0 0 2px var(--bg); }
-.story-ring-mini:first-child { margin-left:0; }
-.story-ring-mini.viewed { background:conic-gradient(rgba(255,255,255,0.18) 0deg,rgba(255,255,255,0.18) 360deg); }
-#stories-mini { padding:2px 0; transition:opacity 0.2s; }
-#stories-mini:active { opacity:0.7; }
-#stories-mini-count { font-size:11px;font-weight:700;color:rgba(255,255,255,0.55);margin-left:4px;white-space:nowrap; }
+@keyframes storiesBubbleIn { from{opacity:0;transform:scale(.7);} to{opacity:1;transform:scale(1);} }
+#stories-row::-webkit-scrollbar { display:none; }
+#stories-mini-bar:active { opacity:.75; }
+#stories-pull-wrapper { will-change:height; }
 @keyframes slideUp { from{opacity:0;transform:translateY(12px);} to{opacity:1;transform:translateY(0);} }
 @keyframes msgIn { from{opacity:0;transform:translateY(8px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
@@ -967,27 +950,27 @@ body {
                 </div>
             </div>
 
-            <!-- ══ СТРОКА: MINI-STORIES + ПОИСК ══ -->
-            <!-- Контейнер всей строки: мини-кружки СЛЕВА + поиск СПРАВА -->
-            <div id="stories-search-row" style="display:flex;align-items:center;gap:8px;padding:0 14px 12px">
-                <!-- Мини-кружки (всегда видны, маленькие) -->
-                <div id="stories-mini" style="display:flex;align-items:center;gap:-4px;flex-shrink:0;cursor:pointer;position:relative" onclick="_toggleStoriesExpand()" title="Моменты">
+            <!-- ══ STORIES: мини-кружки (всегда видны) ══ -->
+            <div id="stories-mini-bar" style="display:flex;align-items:center;gap:0;padding:0 16px 8px;min-height:36px;cursor:pointer;-webkit-tap-highlight-color:transparent" onclick="_toggleStoriesExpand()">
+                <div id="stories-mini" style="display:flex;align-items:center;flex-shrink:0">
                     <!-- заполняется renderMiniStories() -->
-                </div>
-                <!-- Поиск -->
-                <div class="search-box" style="flex:1">
-                    <span style="flex-shrink:0">${ICONS.search}</span>
-                    <input id="search-input" style="background:transparent;outline:none;width:100%;color:white;font-size:15px;font-family:inherit"
-                           placeholder="Поиск"
-                           oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
-                    <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0">Отмена</button>
                 </div>
             </div>
 
-            <!-- ══ ПОЛНАЯ ПОЛОСКА STORIES (раскрывается при pull/тапе) ══ -->
-            <div id="stories-pull-wrapper" style="overflow:hidden;height:0;transition:height 0.4s cubic-bezier(0.34,1.4,0.64,1)">
-                <div id="stories-row" style="display:flex;gap:14px;padding:4px 14px 16px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch">
-                    <!-- заполняется renderStoriesRow() -->
+            <!-- ══ ПОЛНАЯ ПОЛОСКА STORIES (pull-to-expand) ══ -->
+            <div id="stories-pull-wrapper" style="overflow:hidden;height:0">
+                <div id="stories-row" style="display:flex;gap:14px;padding:2px 14px 14px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch">
+                </div>
+            </div>
+
+            <!-- ══ ПОИСК ══ -->
+            <div class="px-5 mb-4">
+                <div class="search-box">
+                    <span style="flex-shrink:0">${ICONS.search}</span>
+                    <input id="search-input" style="background:transparent;outline:none;width:100%;color:white;font-size:15px;font-family:inherit"
+                           placeholder="Поиск людей и чатов"
+                           oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
+                    <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0">Отмена</button>
                 </div>
             </div>
             <div id="search-results" class="px-5 hidden"></div>
@@ -1458,230 +1441,289 @@ body {
 }
 
 // ══════════════════════════════════════════════════════════
-//  STORIES (моменты в шапке чатов) + PULL-TO-REVEAL
+//  STORIES — мини-кружки над поиском + pull-to-expand
 // ══════════════════════════════════════════════════════════
 let _storiesExpanded = false;
-let _pullStartY      = 0;
-let _pullActive      = false;
-let _pullDelta       = 0;
-const PULL_THRESHOLD = 55; // px для полного раскрытия
-const STORIES_FULL_H = 98; // px высота развёрнутой полоски
+let _pty = 0, _ptActive = false, _ptDelta = 0;
+const PT_THRESH = 50;   // px — порог раскрытия
+const ST_FULL   = 92;   // px — высота раскрытой полоски
 
 function _initStoriesPullToRefresh() {
     const mc = document.getElementById('main-content');
-    if (!mc) return;
+    if (!mc || mc._storiesInit) return;
+    mc._storiesInit = true;
 
     mc.addEventListener('touchstart', function(e) {
         if (currentTab !== 'chats') return;
-        if (mc.scrollTop > 2) return;
-        _pullStartY = e.touches[0].clientY;
-        _pullActive = true;
-        _pullDelta  = 0;
+        if (mc.scrollTop > 4) return;
+        _pty = e.touches[0].clientY;
+        _ptActive = true;
+        _ptDelta = 0;
     }, { passive: true });
 
     mc.addEventListener('touchmove', function(e) {
-        if (!_pullActive) return;
-        _pullDelta = e.touches[0].clientY - _pullStartY;
-        if (_pullDelta <= 0) return;
-
+        if (!_ptActive) return;
+        _ptDelta = e.touches[0].clientY - _pty;
+        if (_ptDelta <= 0) return;
+        if (_storiesExpanded) return;
+        // Живое растяжение
         const wrap = document.getElementById('stories-pull-wrapper');
         if (!wrap) return;
-
-        if (!_storiesExpanded) {
-            // Живая анимация — высота растёт вместе с пальцем
-            const prog = Math.min(_pullDelta / PULL_THRESHOLD, 1);
-            wrap.style.transition = 'none';
-            wrap.style.height = Math.round(prog * STORIES_FULL_H) + 'px';
-            // Мини-кружки слегка гаснут
-            const mini = document.getElementById('stories-mini');
-            if (mini) mini.style.opacity = String(1 - prog * 0.5);
-        }
+        const h = Math.min(_ptDelta * 1.3, ST_FULL);
+        wrap.style.height = h + 'px';
     }, { passive: true });
 
     mc.addEventListener('touchend', function() {
-        if (!_pullActive) return;
-        _pullActive = false;
-
-        if (!_storiesExpanded && _pullDelta >= PULL_THRESHOLD) {
+        if (!_ptActive) return;
+        _ptActive = false;
+        if (_storiesExpanded) { _ptDelta = 0; return; }
+        const wrap = document.getElementById('stories-pull-wrapper');
+        if (!wrap) { _ptDelta = 0; return; }
+        if (_ptDelta >= PT_THRESH) {
             _expandStories();
-        } else if (!_storiesExpanded) {
-            // Не дотянули — snap back
-            const wrap = document.getElementById('stories-pull-wrapper');
-            if (wrap) { wrap.style.transition = ''; wrap.style.height = '0'; }
-            const mini = document.getElementById('stories-mini');
-            if (mini) mini.style.opacity = '1';
+        } else {
+            // Snap back — просто transition к 0
+            wrap.style.transition = 'height 0.25s ease';
+            wrap.style.height = '0';
+            setTimeout(function() { wrap.style.transition = ''; }, 260);
         }
-        _pullDelta = 0;
+        _ptDelta = 0;
     }, { passive: true });
 
-    // Рендерим мини-кружки сразу при инициализации
-    setTimeout(renderMiniStories, 400);
+    // Рендерим мини сразу
+    setTimeout(renderMiniStories, 200);
 }
 
 function _expandStories() {
+    if (_storiesExpanded) return;
     _storiesExpanded = true;
-    if (typeof vibrate === 'function') vibrate(12);
-
+    typeof vibrate === 'function' && vibrate(10);
+    renderStoriesRow();
     const wrap = document.getElementById('stories-pull-wrapper');
     if (wrap) {
-        wrap.style.transition = 'height 0.38s cubic-bezier(0.34,1.4,0.64,1)';
-        wrap.style.height     = STORIES_FULL_H + 'px';
+        wrap.style.transition = 'height 0.32s cubic-bezier(0.25,1,0.5,1)';
+        wrap.style.height = ST_FULL + 'px';
+        setTimeout(function() { wrap.style.transition = ''; }, 340);
     }
-    const mini = document.getElementById('stories-mini');
-    if (mini) { mini.style.transition = 'opacity 0.2s'; mini.style.opacity = '0.4'; }
-
-    renderStoriesRow();
-
-    // Tap outside / scroll collapses
-    clearTimeout(window._storiesCollapseTimer);
-    window._storiesCollapseTimer = setTimeout(_collapseStories, 7000);
+    clearTimeout(window._stColTimer);
+    window._stColTimer = setTimeout(_collapseStories, 6000);
 }
 
 function _collapseStories() {
+    if (!_storiesExpanded) return;
     _storiesExpanded = false;
     const wrap = document.getElementById('stories-pull-wrapper');
     if (wrap) {
-        wrap.style.transition = 'height 0.3s cubic-bezier(0.4,0,0.2,1)';
-        wrap.style.height     = '0';
+        wrap.style.transition = 'height 0.22s ease-in';
+        wrap.style.height = '0';
+        setTimeout(function() { wrap.style.transition = ''; }, 230);
     }
-    const mini = document.getElementById('stories-mini');
-    if (mini) { mini.style.transition = 'opacity 0.2s'; mini.style.opacity = '1'; }
 }
 
 function _toggleStoriesExpand() {
-    clearTimeout(window._storiesCollapseTimer);
-    if (_storiesExpanded) {
-        _collapseStories();
-    } else {
-        _expandStories();
-    }
+    clearTimeout(window._stColTimer);
+    if (_storiesExpanded) _collapseStories();
+    else _expandStories();
 }
 
-// Мини-кружки слева от поиска (всегда видны)
+// ── Мини-кружки (всегда видны, маленькие, слева) ──
 function renderMiniStories() {
     const wrap = document.getElementById('stories-mini');
     if (!wrap) return;
-    const moments  = momentsCache || [];
-    const meId     = currentUser ? currentUser.id : null;
-    const SVG_PLUS = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>';
+    const moments = momentsCache || [];
+    const meId    = currentUser ? currentUser.id : null;
 
-    // Уникальные юзеры
+    // Собираем уникальных авторов
+    const seen = new Set(), uids = [];
+    if (meId) { seen.add(meId); uids.push(meId); }
+    moments.forEach(function(m) {
+        if (!seen.has(m.user_id)) { seen.add(m.user_id); uids.push(m.user_id); }
+    });
+
+    wrap.innerHTML = '';
+    if (!uids.length && !meId) {
+        // Совсем нет — скрываем бар
+        const bar = document.getElementById('stories-mini-bar');
+        if (bar) bar.style.display = 'none';
+        return;
+    }
+    const bar = document.getElementById('stories-mini-bar');
+    if (bar) bar.style.display = '';
+
     const byUser = new Map();
     moments.forEach(function(m) { if (!byUser.has(m.user_id)) byUser.set(m.user_id, m); });
 
-    const uids = [];
-    if (meId) uids.push(meId);
-    byUser.forEach(function(_, uid) { if (uid !== meId) uids.push(uid); });
-
-    // Дедупликация
-    const seen = new Set(); const deduped = [];
-    uids.forEach(function(uid) { if (!seen.has(uid)) { seen.add(uid); deduped.push(uid); } });
-
-    wrap.innerHTML = '';
-    const MAX_MINI = 4; // максимум мини-кружков
-
-    if (!deduped.length) {
-        // Нет моментов — показываем кнопку +
-        const btn = document.createElement('div');
-        btn.className = 'story-ring-mini';
-        btn.style.cssText = 'background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;margin-left:0';
-        btn.innerHTML = '<div class="story-ring-mini-inner" style="background:var(--surface2);display:flex;align-items:center;justify-content:center">' + SVG_PLUS + '</div>';
-        wrap.appendChild(btn);
-        const lbl = document.createElement('span');
-        lbl.id = 'stories-mini-count';
-        lbl.textContent = 'Моменты';
-        wrap.appendChild(lbl);
-        return;
-    }
-
-    deduped.slice(0, MAX_MINI).forEach(function(uid, i) {
+    const MAX = 5;
+    uids.slice(0, MAX).forEach(function(uid, i) {
         const m      = byUser.get(uid) || {};
-        const ava    = m.user_avatar || '';
-        const viewed = uid !== meId && _viewedMomentUsers && _viewedMomentUsers.has(uid);
+        const isMe   = uid === meId;
+        const ava    = isMe ? (currentUser.avatar || '') : (m.user_avatar || '');
+        const viewed = !isMe && _viewedMomentUsers && _viewedMomentUsers.has(uid);
+        const hasMom = byUser.has(uid);
 
         const ring = document.createElement('div');
-        ring.className = 'story-ring-mini' + (viewed ? ' viewed' : '');
+        ring.style.cssText = 'width:32px;height:32px;border-radius:50%;flex-shrink:0;'
+            + 'margin-left:' + (i === 0 ? '0' : '-8px') + ';'
+            + 'box-shadow:0 0 0 2.5px var(--bg);'
+            + 'background:' + (hasMom && !viewed ? 'conic-gradient(var(--accent) 0deg 300deg,rgba(255,255,255,.1) 300deg)' : 'rgba(255,255,255,.12)') + ';'
+            + 'padding:2px;position:relative;z-index:' + (MAX - i) + ';'
+            + 'transition:transform .15s';
+
+        // Inner
+        const inner = document.createElement('div');
+        inner.style.cssText = 'width:100%;height:100%;border-radius:50%;background:var(--bg);overflow:hidden;display:flex;align-items:center;justify-content:center';
+
         if (ava && ava.startsWith('emoji:')) {
-            ring.innerHTML = '<div class="story-ring-mini-inner" style="display:flex;align-items:center;justify-content:center;font-size:14px">' + ava.slice(6) + '</div>';
+            inner.style.fontSize = '16px';
+            inner.textContent = ava.slice(6);
+        } else if (ava && !ava.includes('default') && !ava.startsWith('/static/default')) {
+            const img = document.createElement('img');
+            img.src = ava;
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+            img.onerror = function() {
+                inner.style.background = 'var(--accent)';
+                inner.textContent = (isMe ? (currentUser.name||'?') : (m.user_name||'?')).charAt(0).toUpperCase();
+                inner.style.fontSize = '13px';
+                inner.style.fontWeight = '700';
+                inner.style.color = '#000';
+            };
+            inner.appendChild(img);
         } else {
-            ring.innerHTML = '<div class="story-ring-mini-inner"><img src="' + (ava || '/static/default_avatar.png') + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.src="/static/default_avatar.png""></div>';
+            // Инициалы вместо вопросительного знака
+            const nm = isMe ? (currentUser.name || '?') : (m.user_name || '?');
+            inner.style.background = _nameColor(nm);
+            inner.style.fontSize = '13px';
+            inner.style.fontWeight = '700';
+            inner.style.color = '#fff';
+            inner.textContent = nm.charAt(0).toUpperCase();
         }
-        ring.style.animationDelay = (i * 0.06) + 's';
+
+        ring.appendChild(inner);
         wrap.appendChild(ring);
     });
 
-    // Счётчик "+N" если больше 4
-    const extra = deduped.length - MAX_MINI;
-    const lbl = document.createElement('span');
-    lbl.id = 'stories-mini-count';
-    lbl.textContent = extra > 0 ? ('+' + extra) : (deduped.length === 1 ? '1' : String(deduped.length));
-    wrap.appendChild(lbl);
+    // Счётчик
+    const old = document.getElementById('stories-mini-count');
+    if (old) old.remove();
+    if (uids.length) {
+        const lbl = document.createElement('span');
+        lbl.id = 'stories-mini-count';
+        lbl.style.cssText = 'font-size:12px;font-weight:600;color:rgba(255,255,255,.5);margin-left:8px;white-space:nowrap';
+        lbl.textContent = uids.length > 1 ? uids.length + ' моментов' : '1 момент';
+        wrap.appendChild(lbl);
+    }
 }
 
-// Полная развёрнутая полоска
+// Цвет из имени (для инициалов)
+function _nameColor(name) {
+    const colors = ['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#a855f7','#ec4899','#14b8a6'];
+    let h = 0;
+    for (let i = 0; i < (name||'').length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffff;
+    return colors[h % colors.length];
+}
+
+// ── Развёрнутая полоска ──
 function renderStoriesRow() {
     const row = document.getElementById('stories-row');
     if (!row) return;
-    const moments  = momentsCache || [];
-    const SVG_PLUS = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>';
-
-    const byUser = new Map();
-    const order  = [];
+    const moments = momentsCache || [];
+    const meId    = currentUser ? currentUser.id : null;
+    const byUser  = new Map();
+    const order   = [];
     moments.forEach(function(m) {
         if (!byUser.has(m.user_id)) { byUser.set(m.user_id, m); order.push(m.user_id); }
     });
 
-    const meId = currentUser ? currentUser.id : null;
-    const meFirst = meId ? [meId] : [];
-    order.forEach(function(uid) { if (uid !== meId) meFirst.push(uid); });
+    // Я первым
+    const all = meId ? [meId] : [];
+    order.forEach(function(u) { if (u !== meId) all.push(u); });
     const seen = new Set(); const deduped = [];
-    meFirst.forEach(function(uid) { if (!seen.has(uid)) { seen.add(uid); deduped.push(uid); } });
+    all.forEach(function(u) { if (!seen.has(u)) { seen.add(u); deduped.push(u); } });
 
     row.innerHTML = '';
 
-    function makeBubble(htmlInner, delay, clickFn) {
+    function makeRing(ava, name, viewed, hasMom) {
+        const ring = document.createElement('div');
+        ring.style.cssText = 'width:60px;height:60px;border-radius:50%;flex-shrink:0;'
+            + 'background:' + (hasMom && !viewed ? 'conic-gradient(var(--accent) 0deg 300deg,rgba(255,255,255,.1) 300deg)' : 'rgba(255,255,255,.12)') + ';'
+            + 'padding:3px;transition:transform .12s';
+        ring.onpointerdown = function() { ring.style.transform = 'scale(.9)'; };
+        ring.onpointerup   = function() { ring.style.transform = ''; };
+        ring.onpointercancel = function() { ring.style.transform = ''; };
+
+        const inner = document.createElement('div');
+        inner.style.cssText = 'width:100%;height:100%;border-radius:50%;background:var(--bg);overflow:hidden;display:flex;align-items:center;justify-content:center';
+
+        if (ava && ava.startsWith('emoji:')) {
+            inner.style.fontSize = '24px'; inner.textContent = ava.slice(6);
+        } else if (ava && !ava.includes('default') && !ava.startsWith('/static/default')) {
+            const img = document.createElement('img');
+            img.src = ava;
+            img.style.cssText = 'width:100%;height:100%;object-fit:cover;border-radius:50%';
+            img.onerror = function() {
+                inner.innerHTML = '';
+                inner.style.background = _nameColor(name);
+                inner.style.fontSize = '22px'; inner.style.fontWeight = '800'; inner.style.color = '#fff';
+                inner.textContent = (name||'?').charAt(0).toUpperCase();
+            };
+            inner.appendChild(img);
+        } else {
+            inner.style.background = _nameColor(name);
+            inner.style.fontSize = '22px'; inner.style.fontWeight = '800'; inner.style.color = '#fff';
+            inner.textContent = (name||'?').charAt(0).toUpperCase();
+        }
+        ring.appendChild(inner);
+        return ring;
+    }
+
+    if (!deduped.length) {
+        // Кнопка добавить
         const b = document.createElement('div');
-        b.className = 'story-bubble';
-        b.style.animationDelay = (delay * 0.045) + 's';
-        b.innerHTML = htmlInner;
-        b.onclick = clickFn;
-        return b;
+        b.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex-shrink:0';
+        const r = document.createElement('div');
+        r.style.cssText = 'width:60px;height:60px;border-radius:50%;background:rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center';
+        r.innerHTML = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>';
+        const lbl = document.createElement('span');
+        lbl.style.cssText = 'font-size:10px;color:rgba(255,255,255,.6);font-weight:500';
+        lbl.textContent = 'Добавить';
+        b.appendChild(r); b.appendChild(lbl);
+        b.onclick = function() { _collapseStories(); pickMedia('moment'); };
+        row.appendChild(b);
+        return;
     }
-
-    function addBtnBubble(delay, label) {
-        const html = '<div class="story-ring" style="background:rgba(255,255,255,0.1)">'
-            + '<div class="story-ring-inner" style="background:var(--surface2);display:flex;align-items:center;justify-content:center">' + SVG_PLUS + '</div>'
-            + '</div>'
-            + '<span class="story-name">' + (label || 'Добавить') + '</span>';
-        return makeBubble(html, delay, function() { _collapseStories(); pickMedia('moment'); });
-    }
-
-    if (!deduped.length) { row.appendChild(addBtnBubble(0, 'Добавить')); return; }
 
     deduped.forEach(function(uid, i) {
         const m      = byUser.get(uid) || {};
         const isMe   = uid === meId;
-        const name   = isMe ? 'Я' : (m.user_name || m.username || '...');
-        const ava    = m.user_avatar || '';
+        const name   = isMe ? (currentUser.name || 'Я') : (m.user_name || '?');
+        const ava    = isMe ? (currentUser.avatar || '') : (m.user_avatar || '');
         const viewed = !isMe && _viewedMomentUsers && _viewedMomentUsers.has(uid);
+        const hasMom = byUser.has(uid);
 
-        if (isMe && !byUser.has(uid)) {
-            row.appendChild(addBtnBubble(i, 'Мой момент'));
-            return;
+        const b = document.createElement('div');
+        b.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;animation:storiesBubbleIn .28s cubic-bezier(.25,1,.5,1) both';
+        b.style.animationDelay = (i * 0.04) + 's';
+
+        const ring = makeRing(ava, name, viewed, hasMom);
+
+        // Кнопка + для меня если нет момента
+        if (isMe && !hasMom) {
+            ring.style.background = 'rgba(255,255,255,.08)';
+            ring.children[0].innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round"/></svg>';
+            b.onclick = function() { _collapseStories(); pickMedia('moment'); };
+        } else {
+            b.onclick = (function(u) { return function() { _collapseStories(); openUserMomentsViewer(u); }; })(uid);
         }
-        const avaHtml = (ava && ava.startsWith('emoji:'))
-            ? '<div class="ava-inner" style="display:flex;align-items:center;justify-content:center;font-size:26px">' + ava.slice(6) + '</div>'
-            : '<img src="' + (ava || '/static/default_avatar.png') + '" style="width:100%;height:100%;border-radius:50%;object-fit:cover" onerror="this.src="/static/default_avatar.png"">';
-        const ringCls = 'story-ring' + (viewed ? ' viewed' : '');
-        const html = '<div class="' + ringCls + '"><div class="story-ring-inner">' + avaHtml + '</div></div>'
-            + '<span class="story-name">' + escHtml(name) + '</span>';
-        const b = makeBubble(html, i, null);
-        b.onclick = (function(u) { return function() { _collapseStories(); openUserMomentsViewer(u); }; })(uid);
+
+        const lbl = document.createElement('span');
+        lbl.style.cssText = 'font-size:10px;color:rgba(255,255,255,.65);font-weight:500;max-width:64px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        lbl.textContent = isMe ? 'Я' : name.split(' ')[0];
+
+        b.appendChild(ring); b.appendChild(lbl);
         row.appendChild(b);
     });
 }
 
-// Обновляем мини-кружки когда приходят новые моменты
 function _refreshStoriesIfNeeded() {
     if (currentTab === 'chats') {
         renderMiniStories();
