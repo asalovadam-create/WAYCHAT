@@ -2845,6 +2845,7 @@ def handle_msg(data):
         uname = current_user.name
     except Exception:
         return
+    sender_dict = get_cached_user_dict(uid)  # нужен для аватарки в push
 
     msg_type = data.get('type_msg') or data.get('type', 'text')
     if msg_type == 'send_message':
@@ -2890,8 +2891,9 @@ def handle_msg(data):
                     if m.user_id != uid:
                         is_online = _online_cache.get(m.user_id)
                         if not is_online:
+                            _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
                             eventlet.spawn(send_push_to_user, m.user_id,
-                                f'{uname} → {group.name}', push_preview, chat_id)
+                                f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
         else:
             payload['is_group_msg'] = False
             parts = chat.room_key.replace('chat_', '').split('_')
@@ -2904,7 +2906,8 @@ def handle_msg(data):
                         is_online = _online_cache.get(uid_int)
                         if not is_online:
                             if push_preview and msg_type not in ('call_audio','call_video'):
-                                eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
+                                _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
+                                eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
 
 
 @socketio.on('mark_read')
