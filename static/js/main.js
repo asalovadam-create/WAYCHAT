@@ -4428,10 +4428,13 @@ function showPartnerProfile() {
                             + (t.artist ? '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">'+escHtml(t.artist)+'</div>' : '')
                             + '</div>'
                             + (dur ? '<div style="font-size:12px;color:rgba(255,255,255,.3);flex-shrink:0;margin-right:4px">'+dur+'</div>' : '')
-                            + '<button onclick="addFriendTrackToPlaylist(\''+escHtml(t.title||'')+'\',\''+escHtml(t.artist||'')+'\','+t.duration+','+t.id+')" '
-                            + 'style="width:28px;height:28px;border-radius:50%;background:rgba(16,185,129,.15);border:.5px solid rgba(16,185,129,.3);color:var(--accent);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;font-size:18px;font-weight:300;line-height:1;padding:0">'
-                            + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>'
-                            + '</button>'
+                            + (t.id ? (
+                                '<button onclick="addFriendTrackToPlaylist(\''+escHtml(t.title||'')+'\',\''+escHtml(t.artist||'')+'\','+t.duration+','+t.id+')" '
+                                + 'id="add-track-btn-'+t.id+'" '
+                                + 'style="width:28px;height:28px;border-radius:50%;background:rgba(16,185,129,.15);border:.5px solid rgba(16,185,129,.3);color:var(--accent);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;padding:0;transition:all .2s">'
+                                + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>'
+                                + '</button>'
+                              ) : '')
                             + '</div>';
                     }
 
@@ -4686,10 +4689,18 @@ async function addFriendTrackToPlaylist(title, artist, duration, serverTrackId) 
         _mpRender();
         // Не синкаем на сервер — это чужой трек, мы только слушаем
 
+        // Визуально подтверждаем добавление — меняем кнопку на галочку
+        const btn = document.getElementById('add-track-btn-' + serverTrackId);
+        if (btn) {
+            btn.style.background = 'rgba(16,185,129,.35)';
+            btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            btn.onclick = null;
+        }
         showToast(`«${track.title}» добавлен ✓`, 'success');
         vibrate(15);
     } catch(e) {
-        showToast('Ошибка добавления', 'error');
+        const errMsg = e.message || 'Ошибка добавления';
+        showToast(errMsg.includes('No audio') ? 'Трек ещё загружается, попробуй через секунду' : errMsg, 'error');
         console.error('addFriendTrack:', e);
     }
 }
@@ -8025,28 +8036,32 @@ async function _mpImportAudio(file) {
     const buf = await file.arrayBuffer();
     await _mdbPut('blobs', { id, data: buf, mime: file.type || 'audio/mpeg' });
 
-    // Загружаем на Cloudinary в фоне — чтобы другие могли добавить этот трек
-    _mpUploadTrackToServer(id, file, track);
+    // Загружаем на сервер — чтобы другие могли добавить этот трек онлайн
+    // Передаём оригинальный File объект (не ArrayBuffer)
+    _mpUploadTrackToServer(id, file, { ...track, id });
 }
 
 // Загружает аудиофайл на сервер (Cloudinary) и обновляет audio_url трека
 async function _mpUploadTrackToServer(id, file, track) {
     try {
         const fd = new FormData();
-        fd.append('file', file);
+        fd.append('file',     file);
+        fd.append('title',    track.title  || '');
+        fd.append('artist',   track.artist || '');
+        fd.append('duration', track.duration || 0);
         const r = await apiFetch('/upload_track', { method: 'POST', body: fd });
         if (!r?.ok) return;
         const data = await r.json();
         if (!data.ok || !data.url) return;
         // Обновляем трек в IndexedDB
-        track.audio_url = data.url;
-        await _mdbPut('tracks', { ...track, id });
+        const updated = { ...track, id, audio_url: data.url, serverTrackId: data.track_id };
+        await _mdbPut('tracks', updated);
         // Обновляем в MP.tracks
         const t = MP.tracks.find(t => t.id === id);
-        if (t) t.audio_url = data.url;
+        if (t) { t.audio_url = data.url; t.serverTrackId = data.track_id; }
         // Синхронизируем с сервером
         _mpSyncTracksToServer();
-    } catch(e) {}
+    } catch(e) { console.warn('uploadTrack:', e); }
 }
 
 // ══ Импорт видео → аудио (надёжный стриминговый метод) ══
