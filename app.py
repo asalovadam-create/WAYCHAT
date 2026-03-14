@@ -2218,19 +2218,13 @@ def block_user(user_id):
 
 
 @app.route('/get_moments')
-@login_required  
+@login_required
 def get_moments():
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
 
-    # Кого я сохранил — эти люди показывают мне свои моменты
-    my_saved_ids = set(db.session.execute(
-        text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'),
-        {'uid': uid}
-    ).scalars().all())
-
-    # Кого я заблокировал
+    # Кого я заблокировал — их не показываем
     i_blocked_ids = set(db.session.execute(
         text('SELECT blocked_id FROM blocked_user WHERE blocker_id = :uid'),
         {'uid': uid}
@@ -2242,23 +2236,25 @@ def get_moments():
         {'uid': uid}
     ).scalars().all())
 
-    # Все моменты за 24ч
+    # Все активные моменты за 24ч — прямой SQL без ORM кэша
     rows = db.session.execute(text('''
         SELECT
-            m.id        AS moment_id,
+            m.id          AS moment_id,
             m.user_id,
             m.media_url,
             m.text,
             m.geo_name,
             m.timestamp,
-            u.name      AS user_name,
-            u.avatar    AS user_avatar
+            u.name        AS user_name,
+            u.avatar      AS user_avatar,
+            COALESCE(u.moments_visibility, 'all') AS vis
         FROM moment m
         JOIN "user" u ON u.id = m.user_id
         WHERE m.timestamp >= :cutoff
           AND (m.expires_at IS NULL OR m.expires_at > :now)
           AND u.is_blocked = FALSE
         ORDER BY m.timestamp DESC
+        LIMIT 200
     '''), {'cutoff': cutoff, 'now': now_utc}).fetchall()
 
     # view counts
@@ -2277,10 +2273,13 @@ def get_moments():
         is_mine   = (author_id == uid)
 
         if not is_mine:
+            # Заблокирован мной
             if author_id in i_blocked_ids: continue
-            if author_id in hidden_ids:    continue
-            # ГЛАВНОЕ ПРАВИЛО: вижу только тех кого сохранил
-            if author_id not in my_saved_ids: continue
+            # Скрыл от меня
+            if author_id in hidden_ids: continue
+            # Явно скрыл от всех
+            if r.vis == 'nobody': continue
+            # Всё — показываем. Кто сохранил не важно.
 
         ts = r.timestamp
         data.append({
