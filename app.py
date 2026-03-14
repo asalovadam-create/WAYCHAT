@@ -2050,25 +2050,67 @@ def upload_track():
 
 
 @app.route('/stream_track/<int:track_id>')
-@login_required
 def stream_track(track_id):
-    """Стримит аудиофайл трека напрямую из БД"""
+    """Стримит аудиофайл трека напрямую из БД.
+    Доступен без авторизации — нужно чтобы другие юзеры могли воспроизводить чужие треки.
+    Если есть Cloudinary URL — редиректим туда (экономит трафик сервера)."""
+    from flask import Response, redirect as flask_redirect
     t = db.session.get(UserTrack, track_id)
-    if not t or not t.audio_data:
+    if not t:
         return jsonify({'error': 'Not found'}), 404
-    # Проверяем доступ
-    uid = current_user.id
-    if t.user_id != uid:
+
+    # Если есть Cloudinary URL — редиректим (быстрее, не нагружает сервер)
+    if t.audio_url and t.audio_url.startswith('http'):
+        return flask_redirect(t.audio_url, code=302)
+
+    # Fallback: отдаём из БД
+    if not t.audio_data:
+        return jsonify({'error': 'No audio data'}), 404
+
+    # Проверяем видимость (только для не-владельцев и только если залогинен)
+    try:
+        uid = current_user.id if current_user.is_authenticated else None
+    except Exception:
+        uid = None
+
+    if uid and t.user_id != uid:
         owner = db.session.get(User, t.user_id)
         vis = owner.tracks_visibility if owner else 'all'
         if vis == 'nobody':
             return ('', 403)
-    from flask import Response
+
+    data   = t.audio_data
+    mime   = t.audio_mime or 'audio/mpeg'
+    length = len(data)
+
+    # Range запросы — нужны для перемотки на iOS/Safari
+    range_header = request.headers.get('Range', None)
+    if range_header:
+        try:
+            byte1, byte2 = 0, None
+            m = range_header.replace('bytes=', '').split('-')
+            byte1 = int(m[0]) if m[0] else 0
+            byte2 = int(m[1]) if len(m) > 1 and m[1] else length - 1
+            byte2 = min(byte2, length - 1)
+            chunk = data[byte1:byte2 + 1]
+            resp  = Response(
+                chunk, 206, mimetype=mime,
+                headers={
+                    'Content-Range':  f'bytes {byte1}-{byte2}/{length}',
+                    'Accept-Ranges':  'bytes',
+                    'Content-Length': str(len(chunk)),
+                    'Cache-Control':  'public, max-age=3600',
+                }
+            )
+            return resp
+        except Exception:
+            pass
+
     return Response(
-        t.audio_data,
-        mimetype=t.audio_mime or 'audio/mpeg',
+        data,
+        mimetype=mime,
         headers={
-            'Content-Length': str(len(t.audio_data)),
+            'Content-Length': str(length),
             'Accept-Ranges':  'bytes',
             'Cache-Control':  'public, max-age=3600',
         }
@@ -2085,9 +2127,8 @@ def add_track_from_user(track_id):
         return jsonify({'ok': False, 'error': 'Track not found'}), 404
     if src_track.user_id == uid:
         return jsonify({'ok': False, 'error': 'Your own track'}), 400
-    # Если нет Cloudinary URL — используем стриминг с сервера
-    if not src_track.audio_url and not src_track.audio_data:
-        return jsonify({'ok': False, 'error': 'No audio data'}), 400
+    # Трек всегда доступен: через Cloudinary URL или через /stream_track/<id>
+    # audio_data может отсутствовать если трек в Cloudinary — это нормально
 
     # Проверяем видимость треков владельца
     owner = db.session.get(User, src_track.user_id)
@@ -2143,7 +2184,9 @@ def get_track_url(track_id):
         vis = owner.tracks_visibility if owner else 'all'
         if vis == 'nobody':
             return jsonify({'error': 'Private'}), 403
-    return jsonify({'url': t.audio_url or ''})
+    # Если нет Cloudinary URL — отдаём /stream_track/<id> (всегда работает)
+    url = t.audio_url or f'/stream_track/{t.id}'
+    return jsonify({'ok': True, 'url': url})
 
 
 @app.route('/block_user/<int:user_id>', methods=['POST'])
