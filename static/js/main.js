@@ -2872,7 +2872,8 @@ function buildMessageRow(msg, animate = true) {
     // Для группового чата — показываем имя отправителя
     let senderNameHtml = '';
     if (!isMe && currentChatType === 'group' && msg.sender_name) {
-        senderNameHtml = `<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:3px">${msg.sender_name}</div>`;
+        const _displaySender = getContactDisplayName(msg.sender_id, msg.sender_name);
+        senderNameHtml = '<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:3px">' + escHtml(_displaySender) + '</div>';
     }
 
     const readColor = msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.4)';
@@ -3646,10 +3647,13 @@ function tryBrowserNotification(msg) {
     if (Notification.permission === 'granted' && document.hidden) {
         try {
             const senderName = getContactDisplayName(msg.sender_id, msg.sender_name || 'WayChat');
+            // Берём аватар отправителя из кэша контактов
+            const contact = savedContacts.find(c => c.id === msg.sender_id);
+            const avatar  = contact?.avatar || msg.sender_avatar || '/static/img/icon-192.png';
             new Notification(senderName, {
                 body: msg.content || '🎙️ Голосовое сообщение',
-                icon: '/static/img/chats.png',
-                tag:  `chat-${msg.chat_id}`
+                icon: avatar,
+                tag:  'chat-' + msg.chat_id,
             });
         } catch(e) {}
     }
@@ -5034,16 +5038,24 @@ function saveContactFromSearch(id, name, avatar, username) {
     if (!savedContacts.some(c => c.id === id)) {
         savedContacts.push({ id, name, avatar, username });
         localStorage.setItem('waychat_contacts', JSON.stringify(savedContacts));
-        showToast(`${name} сохранён в контактах`, 'success');
+        // Спрашиваем своё имя сразу при сохранении
+        const customName = prompt('Сохранить как (оставь пустым для «' + name + '»):', '');
+        if (customName && customName.trim()) {
+            contactCustomNames[id] = customName.trim();
+            localStorage.setItem('waychat_contact_names', JSON.stringify(contactCustomNames));
+        }
+        const displayName = contactCustomNames[id] || name;
+        showToast(displayName + ' сохранён в контактах', 'success');
         vibrate(20);
-        const btn = document.getElementById(`save-contact-btn-${id}`);
+        const btn = document.getElementById('save-contact-btn-' + id);
         if (btn) {
             btn.textContent = 'Убрать';
             btn.style.background = 'rgba(239,68,68,0.1)';
             btn.style.borderColor = 'rgba(239,68,68,0.3)';
             btn.style.color = '#ef4444';
-            btn.setAttribute('onclick', `removeContactById(${id})`);
+            btn.setAttribute('onclick', 'removeContactById(' + id + ')');
         }
+        loadChats(); // обновляем список чатов с новым именем
     }
 }
 
@@ -5082,12 +5094,17 @@ function openContactsModal() {
 }
 
 function renameContact(id, currentName) {
-    const newName = prompt(`Своё имя для контакта:`, contactCustomNames[id] || currentName);
+    const newName = prompt('Своё имя для контакта:', contactCustomNames[id] || currentName);
     if (newName === null) return;
     if (newName.trim()) contactCustomNames[id] = newName.trim();
     else delete contactCustomNames[id];
     localStorage.setItem('waychat_contact_names', JSON.stringify(contactCustomNames));
-    showToast('Имя обновлено', 'success');
+    // Обновляем шапку чата если открыт этот контакт
+    if (currentPartnerId === id) {
+        const chatNameEl = document.getElementById('chat-name');
+        if (chatNameEl) chatNameEl.textContent = contactCustomNames[id] || currentName;
+    }
+    showToast('Имя обновлено ✓', 'success');
     document.querySelector('.modal-overlay')?.remove();
     openContactsModal();
     loadChats();
@@ -5284,11 +5301,16 @@ function showPartnerProfile() {
     }
 }
 function renameContactFromProfile(id, currentName) {
-    const newName = prompt(`Своё имя для контакта:`, contactCustomNames[id] || currentName);
+    const newName = prompt('Своё имя для контакта:', contactCustomNames[id] || currentName);
     if (newName === null) return;
     if (newName.trim()) contactCustomNames[id] = newName.trim();
     else delete contactCustomNames[id];
     localStorage.setItem('waychat_contact_names', JSON.stringify(contactCustomNames));
+    // Обновляем шапку чата
+    if (currentPartnerId === id) {
+        const chatNameEl = document.getElementById('chat-name');
+        if (chatNameEl) chatNameEl.textContent = contactCustomNames[id] || currentName;
+    }
     showToast('Имя обновлено', 'success');
     const nameEl = document.getElementById('chat-name');
     if (nameEl) nameEl.textContent = getContactDisplayName(id, currentName);
