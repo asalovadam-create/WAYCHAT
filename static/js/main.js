@@ -3212,22 +3212,66 @@ async function unblockUser(id, btn) {
 
 async function openHiddenMomentsList() {
     try {
-        const r = await apiFetch('/get_privacy');
-        const data = r.ok ? await r.json() : {};
-        const hidden = data.hidden_from || [];
+        // Загружаем настройки конфиденциальности и список контактов параллельно
+        const [privR, contR] = await Promise.all([
+            apiFetch('/get_privacy'),
+            apiFetch('/get_my_saved_contacts'),
+        ]);
+        const privData = privR.ok ? await privR.json() : {};
+        const contacts = contR.ok ? await contR.json() : [];
+        const hiddenIds = new Set((privData.hidden_from || []).map(h => h.id));
+
         const ov = document.createElement('div'); ov.className='modal-overlay'; ov.onclick=e=>{if(e.target===ov)ov.remove();};
-        const sh = document.createElement('div'); sh.className='modal-sheet';
+        const sh = document.createElement('div'); sh.className='modal-sheet'; sh.style.cssText='max-height:90vh;overflow-y:auto';
+
         sh.innerHTML = `<div class="modal-handle"></div>
-            <div style="font-size:17px;font-weight:700;margin-bottom:8px">👁️ Скрыто от пользователей</div>
-            <div style="font-size:13px;color:rgba(255,255,255,.4);margin-bottom:16px">Эти пользователи не видят твои моменты</div>
-            ${hidden.length === 0 ? '<div style="text-align:center;color:rgba(255,255,255,.4);padding:40px 0">Никого нет</div>' :
-              hidden.map(h => `<div id="hidden-row-${h.id}" style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:.5px solid rgba(255,255,255,.07)">
-                <div style="flex:1;font-size:15px">ID: ${h.id}</div>
-                <button onclick="unhideMomentsFrom(${h.id},this)" style="padding:8px 14px;background:rgba(16,185,129,.1);border:none;border-radius:10px;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Показать</button>
-              </div>`).join('')}`;
+            <div style="font-size:17px;font-weight:700;margin-bottom:6px">👁️ Скрыть моменты от...</div>
+            <div style="font-size:13px;color:rgba(255,255,255,.4);margin-bottom:18px">Выбери контакты — они не будут видеть твои моменты</div>
+            <div id="hidden-contacts-list">
+                ${contacts.length === 0
+                    ? '<div style="text-align:center;color:rgba(255,255,255,.4);padding:40px 0;font-size:14px">Нет сохранённых контактов.<br>Сначала сохрани кого-нибудь в чате.</div>'
+                    : contacts.map((c,i) => {
+                        const isHidden = hiddenIds.has(c.id);
+                        return `<div style="display:flex;align-items:center;gap:12px;padding:12px 4px;${i<contacts.length-1?'border-bottom:.5px solid rgba(255,255,255,.07)':''}">
+                            <img src="${c.avatar||'/static/default_avatar.png'}" style="width:42px;height:42px;border-radius:50%;object-fit:cover;flex-shrink:0">
+                            <div style="flex:1;min-width:0">
+                                <div style="font-size:15px;font-weight:600">${escHtml(c.name)}</div>
+                                <div style="font-size:12px;color:rgba(255,255,255,.4)">@${escHtml(c.username||'')}</div>
+                            </div>
+                            <button data-uid="${c.id}" data-hidden="${isHidden}" onclick="toggleHideMoment(this)"
+                                style="padding:8px 14px;background:${isHidden?'rgba(239,68,68,.12)':'rgba(255,255,255,.06)'};border:none;border-radius:12px;color:${isHidden?'#ef4444':'rgba(255,255,255,.6)'};font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:all .2s">
+                                ${isHidden ? '✗ Скрыто' : 'Скрыть'}
+                            </button>
+                        </div>`;
+                    }).join('')
+                }
+            </div>`;
+
         ov.appendChild(sh); document.body.appendChild(ov);
-    } catch(e) {}
+    } catch(e) { showToast('Ошибка загрузки','error'); }
 }
+
+window.toggleHideMoment = async function(btn) {
+    const uid    = parseInt(btn.dataset.uid);
+    const hidden = btn.dataset.hidden === 'true';
+    try {
+        if (hidden) {
+            await apiFetch('/unhide_moments_from/'+uid, {method:'POST'});
+            btn.dataset.hidden = 'false';
+            btn.textContent = 'Скрыть';
+            btn.style.background = 'rgba(255,255,255,.06)';
+            btn.style.color = 'rgba(255,255,255,.6)';
+            showToast('Моменты снова видны', 'success');
+        } else {
+            await apiFetch('/hide_moments_from/'+uid, {method:'POST'});
+            btn.dataset.hidden = 'true';
+            btn.textContent = '✗ Скрыто';
+            btn.style.background = 'rgba(239,68,68,.12)';
+            btn.style.color = '#ef4444';
+            showToast('Скрыто', 'info');
+        }
+    } catch(e) { showToast('Ошибка','error'); }
+};
 
 async function unhideMomentsFrom(id, btn) {
     try {
@@ -4129,15 +4173,17 @@ function showPartnerProfile() {
             + '</button></div>'
             : '<div style="margin:10px 16px"><button onclick="showGroupInfo()" style="width:100%;padding:14px;background:rgba(59,130,246,0.1);border:none;border-radius:14px;color:#60a5fa;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="#60a5fa" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Участники группы</button></div>')
 
-        // Треки пользователя
+        // Треки пользователя (под кнопками сохранить/переименовать)
         + '<div id="profile-tracks-section" style="margin:10px 16px 0;display:none">'
-        + '<div style="font-size:12px;font-weight:700;color:rgba(255,255,255,.35);letter-spacing:.5px;margin-bottom:8px;padding:0 2px">ТРЕКИ</div>'
+        + '<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.3);letter-spacing:.6px;margin-bottom:8px;padding:0 2px" id="profile-tracks-label">ТРЕКИ</div>'
         + '<div id="profile-tracks-list" style="background:rgba(255,255,255,.04);border-radius:14px;overflow:hidden"></div>'
+        + '<button id="profile-tracks-expand" style="display:none;width:100%;margin-top:6px;padding:10px;background:rgba(255,255,255,.04);border:none;border-radius:12px;color:rgba(255,255,255,.45);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:6px" onclick="expandProfileTracks(this)">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        + 'Показать все треки</button>'
         + '</div>'
 
-        // Заблокировать / скрыть моменты
-        + '<div style="margin:10px 16px 0;display:flex;flex-direction:column;gap:8px">'
-        + '<button onclick="hideMomentsFromUser(' + currentPartnerId + ');this.closest(\'.partner-profile-overlay\').remove()" id="hide-moments-btn-' + currentPartnerId + '" style="width:100%;padding:13px;background:rgba(255,255,255,.05);border:none;border-radius:14px;color:rgba(255,255,255,.5);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Скрыть мои моменты</button>'
+        // Заблокировать — в самом низу
+        + '<div style="margin:10px 16px 16px">'
         + '<button onclick="blockUserFromProfile(' + currentPartnerId + ');this.closest(\'.partner-profile-overlay\').remove()" style="width:100%;padding:13px;background:rgba(239,68,68,0.07);border:none;border-radius:14px;color:#ef4444;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:8px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="#ef4444" stroke-width="2"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>Заблокировать</button>'
         + '</div>'
 
@@ -4179,26 +4225,41 @@ function showPartnerProfile() {
             if (data.tracks && data.tracks.length > 0) {
                 var tracksSection = overlay.querySelector('#profile-tracks-section');
                 var tracksList    = overlay.querySelector('#profile-tracks-list');
+                var tracksLabel   = overlay.querySelector('#profile-tracks-label');
+                var expandBtn     = overlay.querySelector('#profile-tracks-expand');
                 if (tracksSection && tracksList) {
                     tracksSection.style.display = 'block';
-                    // Заголовок секции
-                    var secTitle = tracksSection.querySelector('div');
-                    if (secTitle) secTitle.textContent = 'ТРЕКИ ' + escHtml(data.name).toUpperCase();
-                    tracksList.innerHTML = data.tracks.slice(0,10).map(function(t, i) {
-                        var dur = t.duration > 0 ? Math.floor(t.duration/60)+':'+(Math.floor(t.duration%60)+'').padStart(2,'0') : '';
-                        return '<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;'+(i<Math.min(data.tracks.length,10)-1?'border-bottom:.5px solid rgba(255,255,255,.06)':'')+'">'
-                            + '<div style="width:36px;height:36px;border-radius:10px;background:rgba(124,58,237,.2);flex-shrink:0;display:flex;align-items:center;justify-content:center">'
-                            + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" stroke="#a78bfa" stroke-width="1.5"/><circle cx="18" cy="16" r="3" stroke="#a78bfa" stroke-width="1.5"/></svg>'
+                    if (tracksLabel) tracksLabel.textContent = 'ТРЕКИ ' + data.name.toUpperCase();
+
+                    var allTracks = data.tracks;
+                    var PREVIEW = 5;
+
+                    function renderTrack(t, i, total) {
+                        var dur = t.duration > 0 ? Math.floor(t.duration/60)+':'+(String(Math.floor(t.duration%60)).padStart(2,'0')) : '';
+                        return '<div style="display:flex;align-items:center;gap:10px;padding:11px 14px;'+(i<total-1?'border-bottom:.5px solid rgba(255,255,255,.06)':'')+'">'
+                            + '<div style="width:34px;height:34px;border-radius:9px;background:rgba(124,58,237,.2);flex-shrink:0;display:flex;align-items:center;justify-content:center">'
+                            + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13" stroke="#a78bfa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6" cy="18" r="3" stroke="#a78bfa" stroke-width="1.5"/><circle cx="18" cy="16" r="3" stroke="#a78bfa" stroke-width="1.5"/></svg>'
                             + '</div>'
                             + '<div style="flex:1;min-width:0">'
                             + '<div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escHtml(t.title||'Без названия')+'</div>'
-                            + '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:2px">'+escHtml(t.artist||'')+'</div>'
+                            + (t.artist ? '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">'+escHtml(t.artist)+'</div>' : '')
                             + '</div>'
                             + (dur ? '<div style="font-size:12px;color:rgba(255,255,255,.3);flex-shrink:0">'+dur+'</div>' : '')
                             + '</div>';
-                    }).join('');
-                    if (data.tracks.length > 10) {
-                        tracksList.insertAdjacentHTML('beforeend','<div style="padding:10px 14px;text-align:center;font-size:13px;color:rgba(255,255,255,.35)">и ещё '+(data.tracks.length-10)+' треков</div>');
+                    }
+
+                    // Показываем первые 5
+                    var visible = allTracks.slice(0, PREVIEW);
+                    tracksList.innerHTML = visible.map(function(t,i){ return renderTrack(t, i, visible.length); }).join('');
+
+                    // Если треков больше 5 — кнопка развернуть
+                    if (allTracks.length > PREVIEW && expandBtn) {
+                        expandBtn.style.display = 'flex';
+                        expandBtn.textContent = '';
+                        expandBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polyline points="6 9 12 15 18 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Показать все ' + allTracks.length + ' треков';
+                        expandBtn._allTracks = allTracks;
+                        expandBtn._renderFn  = renderTrack;
+                        expandBtn._list      = tracksList;
                     }
                 }
             }
@@ -4243,6 +4304,15 @@ async function toggleContactSave(id, name) {
                 : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="var(--accent,#10b981)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/><line x1="22" y1="11" x2="16" y2="11" stroke="var(--accent,#10b981)" stroke-width="2" stroke-linecap="round"/></svg>Сохранить';
         }
     } catch(e) { showToast('Ошибка','error'); }
+}
+
+function expandProfileTracks(btn) {
+    var allTracks = btn._allTracks;
+    var renderFn  = btn._renderFn;
+    var list      = btn._list;
+    if (!allTracks || !list) return;
+    list.innerHTML = allTracks.map(function(t,i){ return renderFn(t, i, allTracks.length); }).join('');
+    btn.style.display = 'none';
 }
 
 async function hideMomentsFromUser(userId) {
