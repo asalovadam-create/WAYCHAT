@@ -5831,11 +5831,12 @@ async function loadMoments() {
         });
         if (!r.ok) { console.error('get_moments:', r.status); return; }
         const moments = await r.json();
+        console.log('[moments] got', moments?.length, 'items:', JSON.stringify(moments?.map(m=>({id:m.id,user:m.user_name,mine:m.is_mine}))));
         if (!Array.isArray(moments)) { console.error('not array:', moments); return; }
         momentsCache = moments;
         momentsLastLoad = Date.now();
         currentMoments = moments;
-        _refreshStoriesIfNeeded(); // обновляем мини-кружки
+        _refreshStoriesIfNeeded();
         renderMomentsList(container, moments);
         // Предзагружаем первые 3 медиа фоново — не блокирует UI
         setTimeout(() => {
