@@ -2219,10 +2219,10 @@ def get_moments():
         or_(Moment.expires_at == None, Moment.expires_at > now_utc)
     ).order_by(Moment.timestamp.desc()).all()
 
-    # Контакты текущего пользователя (двусторонние — оба сохранили друг друга)
+    # Контакты: достаточно чтобы хотя бы один сохранил другого
     my_saved = {c.contact_id for c in SavedContact.query.filter_by(user_id=uid).all()}
     saved_me = {c.user_id for c in SavedContact.query.filter_by(contact_id=uid).all()}
-    mutual_contacts = my_saved & saved_me  # взаимные
+    mutual_contacts = my_saved | saved_me  # видим друг друга если любой сохранил
 
     # Кто скрыл моменты от меня
     hidden_from_me = {h.user_id for h in MomentHiddenFrom.query.filter_by(hidden_from_id=uid).all()}
