@@ -249,6 +249,8 @@ def _run_early_migrations():
         'CREATE INDEX IF NOT EXISTS ix_user_track_user ON user_track(user_id)',
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_url VARCHAR(500) DEFAULT ''",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS cover_url VARCHAR(500) DEFAULT ''",
+        "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_data BYTEA",
+        "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50) DEFAULT 'audio/mpeg'",
     ]
     for sql in early_sqls:
         try:
@@ -659,8 +661,10 @@ class UserTrack(db.Model):
     title      = db.Column(db.String(200), default='')
     artist     = db.Column(db.String(200), default='')
     duration   = db.Column(db.Float, default=0)
-    audio_url  = db.Column(db.String(500), default='')   # URL на Cloudinary
+    audio_url  = db.Column(db.String(500), default='')   # URL на Cloudinary (опционально)
     cover_url  = db.Column(db.String(500), default='')   # обложка
+    audio_data = db.Column(db.LargeBinary, nullable=True)  # бинарные данные (fallback)
+    audio_mime = db.Column(db.String(50),  default='audio/mpeg')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -1980,19 +1984,95 @@ def delete_message_route(msg_id):
 @app.route('/upload_track', methods=['POST'])
 @login_required
 def upload_track():
-    """Загружает аудиофайл трека на Cloudinary и возвращает URL"""
-    uid = current_user.id
-    f = request.files.get('file')
+    """Загружает трек: сохраняет в БД (всегда) + Cloudinary (если настроен).
+    Возвращает URL. Без Cloudinary возвращает /stream_track/<id>."""
+    uid   = current_user.id
+    f     = request.files.get('file')
+    title = (request.form.get('title') or '').strip()[:200]
+    artist= (request.form.get('artist') or '').strip()[:200]
+    duration = float(request.form.get('duration') or 0)
     if not f:
         return jsonify({'ok': False, 'error': 'No file'}), 400
     try:
-        url = upload_to_cloudinary(f, folder='waychat/tracks')
-        if not url:
-            return jsonify({'ok': False, 'error': 'Upload failed'}), 500
-        return jsonify({'ok': True, 'url': url})
+        raw_data = f.read()
+        mime     = f.mimetype or 'audio/mpeg'
+        if not raw_data:
+            return jsonify({'ok': False, 'error': 'Empty file'}), 400
+
+        # Пробуем Cloudinary
+        audio_url = ''
+        try:
+            import io
+            f.stream = io.BytesIO(raw_data)
+            f.seek    = f.stream.seek
+            url = upload_to_cloudinary(f, folder='waychat/tracks')
+            if url:
+                audio_url = url
+        except Exception as ce:
+            app.logger.warning(f'Cloudinary skip: {ce}')
+
+        # Создаём или обновляем запись в БД
+        existing = UserTrack.query.filter_by(
+            user_id=uid, title=title, artist=artist
+        ).first() if title else None
+
+        if existing:
+            existing.audio_data = raw_data
+            existing.audio_mime = mime
+            if audio_url:
+                existing.audio_url = audio_url
+            if duration:
+                existing.duration = duration
+            track = existing
+        else:
+            track = UserTrack(
+                user_id    = uid,
+                title      = title or 'Трек',
+                artist     = artist,
+                duration   = duration,
+                audio_url  = audio_url,
+                audio_data = raw_data,
+                audio_mime = mime,
+            )
+            db.session.add(track)
+
+        db.session.commit()
+
+        # Если нет Cloudinary URL — отдаём ссылку на стриминг с сервера
+        if not audio_url:
+            audio_url = f'/stream_track/{track.id}'
+
+        return jsonify({'ok': True, 'url': audio_url, 'track_id': track.id})
     except Exception as e:
+        db.session.rollback()
         app.logger.error(f'upload_track: {e}')
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/stream_track/<int:track_id>')
+@login_required
+def stream_track(track_id):
+    """Стримит аудиофайл трека напрямую из БД"""
+    t = db.session.get(UserTrack, track_id)
+    if not t or not t.audio_data:
+        return jsonify({'error': 'Not found'}), 404
+    # Проверяем доступ
+    uid = current_user.id
+    if t.user_id != uid:
+        owner = db.session.get(User, t.user_id)
+        vis = owner.tracks_visibility if owner else 'all'
+        if vis == 'nobody':
+            return ('', 403)
+    from flask import Response
+    return Response(
+        t.audio_data,
+        mimetype=t.audio_mime or 'audio/mpeg',
+        headers={
+            'Content-Length': str(len(t.audio_data)),
+            'Accept-Ranges':  'bytes',
+            'Cache-Control':  'public, max-age=3600',
+        }
+    )
 
 
 @app.route('/add_track_from_user/<int:track_id>', methods=['POST'])
@@ -2005,8 +2085,9 @@ def add_track_from_user(track_id):
         return jsonify({'ok': False, 'error': 'Track not found'}), 404
     if src_track.user_id == uid:
         return jsonify({'ok': False, 'error': 'Your own track'}), 400
-    if not src_track.audio_url:
-        return jsonify({'ok': False, 'error': 'No audio URL'}), 400
+    # Если нет Cloudinary URL — используем стриминг с сервера
+    if not src_track.audio_url and not src_track.audio_data:
+        return jsonify({'ok': False, 'error': 'No audio data'}), 400
 
     # Проверяем видимость треков владельца
     owner = db.session.get(User, src_track.user_id)
@@ -2020,14 +2101,20 @@ def add_track_from_user(track_id):
             if not (i_saved and they_saved):
                 return jsonify({'ok': False, 'error': 'Not mutual contacts'}), 403
 
-    # Копируем трек (тот же URL — не тратим место)
+    # Определяем URL для воспроизведения
+    play_url = src_track.audio_url
+    if not play_url:
+        play_url = f'/stream_track/{src_track.id}'
+
+    # Копируем запись (не дублируем бинарные данные — ссылаемся на оригинал через URL)
     new_track = UserTrack(
-        user_id=uid,
-        title=src_track.title,
-        artist=src_track.artist,
-        duration=src_track.duration,
-        audio_url=src_track.audio_url,
-        cover_url=src_track.cover_url or '',
+        user_id    = uid,
+        title      = src_track.title,
+        artist     = src_track.artist,
+        duration   = src_track.duration,
+        audio_url  = play_url,
+        cover_url  = src_track.cover_url or '',
+        # audio_data не копируем — воспроизводим по URL
     )
     db.session.add(new_track)
     db.session.commit()
@@ -2037,8 +2124,8 @@ def add_track_from_user(track_id):
         'title':    new_track.title,
         'artist':   new_track.artist,
         'duration': new_track.duration,
-        'audio_url':new_track.audio_url,
-        'cover_url':new_track.cover_url,
+        'audio_url':play_url,
+        'cover_url':new_track.cover_url or '',
     })
 
 
