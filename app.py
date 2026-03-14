@@ -247,6 +247,8 @@ def _run_early_migrations():
         )''',
         'CREATE INDEX IF NOT EXISTS ix_saved_contact_user ON saved_contact(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_user_track_user ON user_track(user_id)',
+        "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_url VARCHAR(500) DEFAULT ''",
+        "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS cover_url VARCHAR(500) DEFAULT ''",
     ]
     for sql in early_sqls:
         try:
@@ -657,6 +659,8 @@ class UserTrack(db.Model):
     title      = db.Column(db.String(200), default='')
     artist     = db.Column(db.String(200), default='')
     duration   = db.Column(db.Float, default=0)
+    audio_url  = db.Column(db.String(500), default='')   # URL на Cloudinary
+    cover_url  = db.Column(db.String(500), default='')   # обложка
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -1264,7 +1268,14 @@ def get_user_profile(user_id):
     can_see_tracks = (uid == user_id) or (vis == 'all') or (vis == 'contacts' and is_mutual)
     if can_see_tracks:
         track_rows = UserTrack.query.filter_by(user_id=user_id).order_by(UserTrack.created_at.desc()).limit(50).all()
-        tracks = [{'id': t.id, 'title': t.title, 'artist': t.artist, 'duration': t.duration} for t in track_rows]
+        tracks = [{
+            'id':        t.id,
+            'title':     t.title,
+            'artist':    t.artist,
+            'duration':  t.duration,
+            'audio_url': t.audio_url or '',
+            'cover_url': t.cover_url or '',
+        } for t in track_rows]
 
     data = {
         'id':           u.id,
@@ -1966,6 +1977,88 @@ def delete_message_route(msg_id):
     return jsonify({'success': True})
 
 
+@app.route('/upload_track', methods=['POST'])
+@login_required
+def upload_track():
+    """Загружает аудиофайл трека на Cloudinary и возвращает URL"""
+    uid = current_user.id
+    f = request.files.get('file')
+    if not f:
+        return jsonify({'ok': False, 'error': 'No file'}), 400
+    try:
+        url = upload_to_cloudinary(f, folder='waychat/tracks')
+        if not url:
+            return jsonify({'ok': False, 'error': 'Upload failed'}), 500
+        return jsonify({'ok': True, 'url': url})
+    except Exception as e:
+        app.logger.error(f'upload_track: {e}')
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/add_track_from_user/<int:track_id>', methods=['POST'])
+@login_required
+def add_track_from_user(track_id):
+    """Копирует трек другого пользователя в свой плейлист (по URL, без скачивания)"""
+    uid = current_user.id
+    src_track = db.session.get(UserTrack, track_id)
+    if not src_track:
+        return jsonify({'ok': False, 'error': 'Track not found'}), 404
+    if src_track.user_id == uid:
+        return jsonify({'ok': False, 'error': 'Your own track'}), 400
+    if not src_track.audio_url:
+        return jsonify({'ok': False, 'error': 'No audio URL'}), 400
+
+    # Проверяем видимость треков владельца
+    owner = db.session.get(User, src_track.user_id)
+    if owner:
+        vis = owner.tracks_visibility or 'all'
+        if vis == 'nobody':
+            return jsonify({'ok': False, 'error': 'Tracks are private'}), 403
+        if vis == 'contacts':
+            i_saved = SavedContact.query.filter_by(user_id=uid, contact_id=src_track.user_id).first()
+            they_saved = SavedContact.query.filter_by(user_id=src_track.user_id, contact_id=uid).first()
+            if not (i_saved and they_saved):
+                return jsonify({'ok': False, 'error': 'Not mutual contacts'}), 403
+
+    # Копируем трек (тот же URL — не тратим место)
+    new_track = UserTrack(
+        user_id=uid,
+        title=src_track.title,
+        artist=src_track.artist,
+        duration=src_track.duration,
+        audio_url=src_track.audio_url,
+        cover_url=src_track.cover_url or '',
+    )
+    db.session.add(new_track)
+    db.session.commit()
+    return jsonify({
+        'ok':       True,
+        'track_id': new_track.id,
+        'title':    new_track.title,
+        'artist':   new_track.artist,
+        'duration': new_track.duration,
+        'audio_url':new_track.audio_url,
+        'cover_url':new_track.cover_url,
+    })
+
+
+@app.route('/get_track_url/<int:track_id>')
+@login_required
+def get_track_url(track_id):
+    """Возвращает audio_url трека (для воспроизведения онлайн)"""
+    uid = current_user.id
+    t = db.session.get(UserTrack, track_id)
+    if not t:
+        return jsonify({'error': 'Not found'}), 404
+    # Только владелец или разрешено
+    if t.user_id != uid:
+        owner = db.session.get(User, t.user_id)
+        vis = owner.tracks_visibility if owner else 'all'
+        if vis == 'nobody':
+            return jsonify({'error': 'Private'}), 403
+    return jsonify({'url': t.audio_url or ''})
+
+
 @app.route('/block_user/<int:user_id>', methods=['POST'])
 @login_required
 def block_user(user_id):
@@ -2180,6 +2273,8 @@ def sync_tracks():
             title=str(t.get('title', ''))[:200],
             artist=str(t.get('artist', ''))[:200],
             duration=float(t.get('duration', 0)),
+            audio_url=str(t.get('audio_url', ''))[:500],
+            cover_url=str(t.get('cover_url', ''))[:500],
         ))
     db.session.commit()
     return jsonify({'ok': True})
