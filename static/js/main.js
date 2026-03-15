@@ -2821,16 +2821,43 @@ function buildMessageRow(msg, animate = true) {
           ${_callbackBtn}
         </div>`;
     } else if (type === 'image' || type === 'photo') {
-        // iOS26 стиль — фото без рамки, на весь пузырь, с zoom
-        contentHtml = `<div class="img-bubble" style="overflow:hidden;border-radius:18px;max-width:280px;cursor:zoom-in" onclick="openImgZoom(this.querySelector('img').src)">
-            <img src="${msg.file_url}" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover" loading="lazy"
-                 onerror="this.style.display='none';this.parentElement.innerHTML='<div style=padding:16px;color:rgba(255,255,255,.4);font-size:13px>Не удалось загрузить</div>'">
-        </div>`;
+        // Фото без рамки + кнопка переслать
+        contentHtml = '<div style="position:relative;overflow:hidden;border-radius:14px;max-width:280px;cursor:zoom-in" onclick="openImgZoom(this.querySelector(\'img\').src)">'
+            + '<img src="'+msg.file_url+'" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover" loading="lazy"'
+            + ' onerror="this.style.display=\'none\';this.parentElement.innerHTML=\'<div style=padding:16px;color:rgba(255,255,255,.4);font-size:13px>Не удалось загрузить</div>\'">'
+            + '<button onclick="event.stopPropagation();_forwardMessage('+JSON.stringify(msg).replace(/"/g,'&quot;')+')" '
+            + 'style="position:absolute;bottom:8px;right:8px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.5);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)">'
+            + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + '</button>'
+            + '</div>';
     } else if (type === 'video') {
-        // Видео без рамки
-        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px">
-            <video src="${msg.file_url}" controls playsinline style="display:block;width:100%;max-height:380px;object-fit:cover"></video>
-        </div>`;
+        // Видео без рамки + кнопка переслать
+        contentHtml = '<div style="position:relative;overflow:hidden;border-radius:14px;max-width:280px">'
+            + '<video src="'+msg.file_url+'" controls playsinline style="display:block;width:100%;max-height:380px;object-fit:cover"></video>'
+            + '<button onclick="event.stopPropagation();_forwardMessage('+JSON.stringify(msg).replace(/"/g,'&quot;')+')" '
+            + 'style="position:absolute;top:8px;right:8px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.5);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)">'
+            + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + '</button>'
+            + '</div>';
+    } else if (type === 'music') {
+        // Музыкальная карточка — название, исполнитель, плеер + кнопка скачать
+        const title  = msg.music_title  || (msg.content && msg.content.replace(/^🎵\s*/,'').split(' — ')[0]) || 'Трек';
+        const artist = msg.music_artist || (msg.content && msg.content.includes(' — ') ? msg.content.split(' — ').slice(1).join(' — ') : '');
+        const src    = msg.file_url || msg.music_url || '';
+        const uid2   = 'mu_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+        contentHtml = '<div style="min-width:220px;max-width:280px">'
+            + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'
+            + '<div style="width:42px;height:42px;border-radius:10px;background:rgba(124,58,237,.25);display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+            + '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 18V5l12-2v13" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/><circle cx="6" cy="18" r="3" stroke="#a78bfa" stroke-width="2"/><circle cx="18" cy="16" r="3" stroke="#a78bfa" stroke-width="2"/></svg>'
+            + '</div>'
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="font-size:14px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(title) + '</div>'
+            + (artist ? '<div style="font-size:12px;color:rgba(255,255,255,.5);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(artist) + '</div>' : '')
+            + '</div>'
+            + (src ? '<a href="' + src + '" download="' + escHtml(title) + '.mp3" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;text-decoration:none" title="Скачать"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></a>' : '')
+            + '</div>'
+            + renderAudioPlayer(src)
+            + '</div>';
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
@@ -2877,11 +2904,26 @@ function buildMessageRow(msg, animate = true) {
     }
 
     const readColor = msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.4)';
+    // Заголовок пересланного сообщения
+    let fwdHtml = '';
+    if (msg.forwarded_from || msg.fwd_from) {
+        const fwdName   = msg.forwarded_from || msg.fwd_from || 'Пользователь';
+        const fwdAvatar = msg.fwd_avatar || '';
+        const fwdAvaEl  = fwdAvatar
+            ? '<img src="'+fwdAvatar+'" style="width:18px;height:18px;border-radius:50%;object-fit:cover;flex-shrink:0">'
+            : '<div style="width:18px;height:18px;border-radius:50%;background:rgba(167,139,250,.3);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:#a78bfa;flex-shrink:0">'+escHtml((fwdName[0]||'?').toUpperCase())+'</div>';
+        fwdHtml = '<div style="display:flex;align-items:center;gap:5px;padding-bottom:6px;border-bottom:.5px solid rgba(255,255,255,.1);margin-bottom:6px">'
+            + fwdAvaEl
+            + '<div style="font-size:11px;color:rgba(167,139,250,.85);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">↪ '+escHtml(fwdName)+'</div>'
+            + '</div>';
+    }
+
     row.innerHTML = `
         ${avatarHtml}
         <div style="flex:1;display:flex;flex-direction:column;${isMe?'align-items:flex-end':'align-items:flex-start'}">
             <div class="bubble">
                 ${senderNameHtml}
+                ${fwdHtml}
                 ${contentHtml}
                 <div class="msg-time">
                     ${displayTime}
@@ -5479,18 +5521,25 @@ function doForwardMsg(el) {
     const isText = !msg.type || msg.type === 'text';
     const fwdSender = msg.sender_name || (msg.sender_id === currentUser.id ? currentUser.name : '');
     const content  = isText
-        ? `↪ ${fwdSender}:
-${msg.content || msg.text || ''}`
+        ? (msg.content || msg.text || '')
         : null;
     const type_msg = isText ? 'text' : (msg.type || msg.type_msg || 'text');
 
+    // Аватар оригинального отправителя
+    const fwdContact = savedContacts.find(c => c.id === msg.sender_id);
+    const fwdAvatar  = fwdContact?.avatar || msg.sender_avatar || '';
+
     socket.emit('send_message', {
-        chat_id:    targetChatId,
-        type_msg:   type_msg,
-        content:    content,
-        file_url:   isText ? null : msg.file_url,
-        sender_id:  currentUser.id,
+        chat_id:        targetChatId,
+        type_msg:       type_msg,
+        content:        content,
+        file_url:       isText ? null : msg.file_url,
+        music_title:    msg.music_title  || '',
+        music_artist:   msg.music_artist || '',
+        music_url:      msg.music_url    || msg.file_url || '',
+        sender_id:      currentUser.id,
         forwarded_from: fwdSender,
+        fwd_avatar:     fwdAvatar,
     });
 
     showToast(`Переслано → ${name}`, 'success');
@@ -9845,11 +9894,14 @@ async function _doSendTrack(el) {
                 // Отправляем URL напрямую как аудио-сообщение
                 window._trackSendOv?.remove();
                 socket.emit('send_message', {
-                    chat_id:   chatId,
-                    type_msg:  'audio',
-                    file_url:  track.audio_url,
-                    content:   `🎵 ${track.title||'Трек'}${track.artist ? ' — '+track.artist : ''}`,
-                    sender_id: currentUser.id,
+                    chat_id:      chatId,
+                    type_msg:     'music',
+                    file_url:     track.audio_url,
+                    content:      (track.title||'Трек') + (track.artist ? ' — '+track.artist : ''),
+                    music_title:  track.title  || '',
+                    music_artist: track.artist || '',
+                    music_url:    track.audio_url,
+                    sender_id:    currentUser.id,
                 });
                 showToast(`Отправлено → ${name} 🎵`, 'success');
                 return;
@@ -9872,11 +9924,14 @@ async function _doSendTrack(el) {
         const data = await r.json();
 
         socket.emit('send_message', {
-            chat_id:   chatId,
-            type_msg:  'audio',
-            file_url:  data.url,
-            content:   `🎵 ${track.title||'Трек'}${track.artist ? ' — '+track.artist : ''}`,
-            sender_id: currentUser.id,
+            chat_id:      chatId,
+            type_msg:     'music',
+            file_url:     data.url,
+            content:      (track.title||'Трек') + (track.artist ? ' — '+track.artist : ''),
+            music_title:  track.title  || '',
+            music_artist: track.artist || '',
+            music_url:    data.url,
+            sender_id:    currentUser.id,
         });
         showToast(`Отправлено → ${name} 🎵`, 'success');
     } catch(e) {
