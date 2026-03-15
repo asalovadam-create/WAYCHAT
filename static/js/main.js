@@ -4185,7 +4185,8 @@ function showVoicePreview(blob, ext, duration) {
     const blobUrl  = URL.createObjectURL(blob);
     const overlay  = document.createElement('div');
     overlay.id     = 'voice-preview-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(16px);display:flex;align-items:flex-end;animation:fadeIn 0.2s';
+    overlay.id = 'create-group-modal';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);display:flex;align-items:flex-end';
     overlay.innerHTML = `
     <div style="background:rgba(14,14,20,0.97);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);width:100%;padding:20px 20px calc(env(safe-area-inset-bottom) + 20px)">
         <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 20px"></div>
@@ -4554,48 +4555,60 @@ async function createGroup() {
 // ══════════════════════════════════════════════════════════
 //  ACTION SHEET — кнопка "+" (новый чат / группа / канал)
 // ══════════════════════════════════════════════════════════
+function _closeNewChatSheet() {
+    const el = document.getElementById('new-chat-sheet');
+    if (el) el.remove();
+}
+
 function openNewChatSheet() {
     vibrate(8);
+    // Убираем старый если есть
+    _closeNewChatSheet();
+
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);display:flex;flex-direction:column;justify-content:flex-end;animation:fadeIn 0.2s ease';
-    ov.onclick = e => { if (e.target===ov) ov.remove(); };
+    ov.id = 'new-chat-sheet';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,0.55);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;flex-direction:column;justify-content:flex-end';
+    ov.addEventListener('click', function(e) { if (e.target === ov) _closeNewChatSheet(); });
 
-    ov.innerHTML = `
-    <div style="background:#1c1c1e;border-radius:18px 18px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),20px);animation:slideUp 0.28s cubic-bezier(0.25,1,0.5,1)">
-        <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 16px"></div>
-        <div style="padding:0 16px 8px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.35);letter-spacing:0.5px;text-transform:uppercase">Новый</div>
+    const sheet = document.createElement('div');
+    sheet.style.cssText = 'background:#1c1c1e;border-radius:18px 18px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),20px)';
 
-        <button onclick="document.querySelector('[style*=z-index:9000]')?.remove();openNewContactModal()" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit">
-            <div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7" r="4" stroke="white" stroke-width="2"/></svg>
-            </div>
-            <div style="text-align:left">
-                <div style="font-size:16px;font-weight:600">Личное сообщение</div>
-                <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:1px">Найти контакт</div>
-            </div>
-        </button>
+    function sheetBtn(iconHtml, title, subtitle, action) {
+        const btn = document.createElement('button');
+        btn.style.cssText = 'width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit;font-size:inherit;text-align:left';
+        btn.innerHTML = '<div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + iconHtml + '</div>'
+            + '<div><div style="font-size:16px;font-weight:600">' + title + '</div>'
+            + '<div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:2px">' + subtitle + '</div></div>';
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            _closeNewChatSheet();
+            setTimeout(action, 80); // iOS: ждём закрытия перед открытием нового модала
+        });
+        return btn;
+    }
 
-        <button onclick="document.querySelector('[style*=z-index:9000]')?.remove();openCreateGroupModal()" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit">
-            <div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:justify-content:center;flex-shrink:0;display:flex;align-items:center;justify-content:center">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="white" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
-            </div>
-            <div style="text-align:left">
-                <div style="font-size:16px;font-weight:600">Новая группа</div>
-                <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:1px">Чат для нескольких людей</div>
-            </div>
-        </button>
+    const handle = document.createElement('div');
+    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 16px';
+    const label = document.createElement('div');
+    label.style.cssText = 'padding:0 16px 8px;font-size:13px;font-weight:600;color:rgba(255,255,255,0.35);letter-spacing:0.5px;text-transform:uppercase';
+    label.textContent = 'Новый';
 
-        <button onclick="document.querySelector('[style*=z-index:9000]')?.remove();openCreateChannelModal()" style="width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit">
-            <div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M22 8.5c0 4.7-4.5 8.5-10 8.5-1.4 0-2.7-.2-3.9-.7L2 18l1.3-4.2C2.5 12.5 2 11 2 9.5 2 4.8 6.5 1 12 1s10 3.8 10 7.5z" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="8" y1="9" x2="16" y2="9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="13" x2="13" y2="13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
-            </div>
-            <div style="text-align:left">
-                <div style="font-size:16px;font-weight:600">Новый канал</div>
-                <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:1px">Публикуй для подписчиков</div>
-            </div>
-        </button>
-    </div>`;
+    sheet.appendChild(handle);
+    sheet.appendChild(label);
+    sheet.appendChild(sheetBtn(
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7" r="4" stroke="white" stroke-width="2"/></svg>',
+        'Личное сообщение', 'Найти контакт', function() { openNewContactModal(); }
+    ));
+    sheet.appendChild(sheetBtn(
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="white" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Новая группа', 'Чат для нескольких людей', function() { openCreateGroupModal(); }
+    ));
+    sheet.appendChild(sheetBtn(
+        '<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M22 8.5c0 4.7-4.5 8.5-10 8.5-1.4 0-2.7-.2-3.9-.7L2 18l1.3-4.2C2.5 12.5 2 11 2 9.5 2 4.8 6.5 1 12 1s10 3.8 10 7.5z" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="8" y1="9" x2="16" y2="9" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="13" x2="13" y2="13" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Новый канал', 'Публикуй для подписчиков', function() { openCreateChannelModal(); }
+    ));
 
+    ov.appendChild(sheet);
     document.body.appendChild(ov);
 }
 
@@ -4607,11 +4620,14 @@ let _currentChannel = null;
 
 function openCreateChannelModal() {
     vibrate(8);
+    const old = document.getElementById('create-channel-modal');
+    if (old) old.remove();
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);display:flex;flex-direction:column;animation:fadeIn 0.2s';
+    ov.id = 'create-channel-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;flex-direction:column';
     ov.innerHTML = `
     <div style="position:sticky;top:0;padding:max(env(safe-area-inset-top),52px) 16px 12px;display:flex;align-items:center;gap:12px;background:rgba(10,10,14,.95);border-bottom:.5px solid rgba(255,255,255,.08)">
-        <button onclick="this.closest('[style*=z-index:8500]').remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <button onclick="document.getElementById('create-channel-modal')?.remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
         </button>
         <h2 style="flex:1;font-size:18px;font-weight:800;margin:0">Новый канал</h2>
@@ -4689,7 +4705,7 @@ async function submitCreateChannel(btn) {
             await apiFetch('/api/channels/' + d.channel_id + '/upload_avatar', {method:'POST', body:fd});
         }
 
-        document.querySelector('[style*=z-index:8500]')?.remove();
+        document.getElementById('create-channel-modal')?.remove();
         showToast('Канал @' + uname + ' создан!', 'success');
         vibrate(15);
         setTimeout(() => openChannelById(d.channel_id), 300);
@@ -4827,10 +4843,11 @@ async function toggleChannelSub(chId, btn) {
 function openNewPostModal(chId) {
     vibrate(8);
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8600;background:rgba(0,0,0,.7);backdrop-filter:blur(20px);display:flex;flex-direction:column;animation:fadeIn .2s';
+    ov.id = 'new-post-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8600;background:rgba(0,0,0,.7);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;flex-direction:column';
     ov.innerHTML = `
     <div style="position:sticky;top:0;padding:max(env(safe-area-inset-top),50px) 16px 12px;display:flex;align-items:center;gap:12px;background:rgba(10,10,14,.95);border-bottom:.5px solid rgba(255,255,255,.08)">
-        <button onclick="this.closest('[style*=z-index:8600]').remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center">
+        <button onclick="document.getElementById('new-post-modal')?.remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
         </button>
         <h2 style="flex:1;font-size:18px;font-weight:800;margin:0">Новый пост</h2>
@@ -4899,7 +4916,7 @@ async function submitChannelPost(chId, btn) {
         if (!d.ok) { showToast(d.error||'Ошибка', 'error'); btn.disabled=false; btn.textContent='Опубликовать'; return; }
 
         _postMediaFile = null;
-        document.querySelector('[style*=z-index:8600]')?.remove();
+        document.getElementById('new-post-modal')?.remove();
         showToast('Пост опубликован!', 'success');
         vibrate(15);
 
