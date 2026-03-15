@@ -251,6 +251,7 @@ def _run_early_migrations():
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS cover_url VARCHAR(500) DEFAULT ''",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_data BYTEA",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50) DEFAULT 'audio/mpeg'",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS extra_data TEXT DEFAULT ''",
         # Channels
         '''CREATE TABLE IF NOT EXISTS channel (
             id SERIAL PRIMARY KEY,
@@ -600,8 +601,9 @@ class Message(db.Model):
     sender_name = db.Column(db.String(120), default='')
     type        = db.Column(db.String(10),  default='text')
     content     = db.Column(db.Text)
-    file_url    = db.Column(db.String(300))
-    is_read     = db.Column(db.Boolean,     default=False, index=True)
+    file_url        = db.Column(db.String(300))
+    extra_data      = db.Column(db.Text,  default='')  # JSON: forwarded_from, music meta
+    is_read         = db.Column(db.Boolean,     default=False, index=True)
     is_deleted  = db.Column(db.Boolean,     default=False, index=True)
     timestamp   = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
 
@@ -611,7 +613,12 @@ class Message(db.Model):
     )
 
     def to_dict(self):
-        return {
+        import json as _json
+        extra = {}
+        try:
+            if self.extra_data: extra = _json.loads(self.extra_data)
+        except Exception: pass
+        d = {
             'id':            self.id,
             'chat_id':       self.chat_id,
             'sender_id':     self.sender_id,
@@ -624,6 +631,8 @@ class Message(db.Model):
             'timestamp':     to_moscow_str(self.timestamp),
             'raw_timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else '',
         }
+        d.update(extra)  # forwarded_from, fwd_avatar, music_title, music_artist, music_url
+        return d
 
 
 class MessageReaction(db.Model):
@@ -1510,6 +1519,7 @@ def get_my_chats():
             unread   = _unread_counts.get(c.id, 0)
 
             type_map = {'image': '📷 Фото', 'audio': '🎙 Голос', 'video': '📹 Видео',
+                        'music': '🎵 Музыка',
                         'call_audio': '📞 Аудиозвонок', 'call_video': '📹 Видеозвонок'}
             preview  = '💬 Начните переписку'
             sort_ts  = c.created_at or datetime(2000, 1, 1)
@@ -2851,9 +2861,18 @@ def handle_msg(data):
     if msg_type == 'send_message':
         msg_type = 'text'
 
+    import json as _json2
+    # Собираем extra_data: forwarded_from, fwd_avatar, music meta
+    _extra = {}
+    for _k in ('forwarded_from','fwd_avatar','music_title','music_artist','music_url'):
+        _v = data.get(_k)
+        if _v: _extra[_k] = str(_v)[:500]
+    _extra_json = _json2.dumps(_extra, ensure_ascii=False) if _extra else ''
+
     msg = Message(
         chat_id=chat_id, sender_id=uid, sender_name=uname,
-        type=msg_type, content=(data.get('content') or '')[:10000], file_url=data.get('file_url'),
+        type=msg_type, content=(data.get('content') or '')[:10000],
+        file_url=data.get('file_url'), extra_data=_extra_json,
     )
     db.session.add(msg)
     db.session.commit()
@@ -2861,6 +2880,9 @@ def handle_msg(data):
     _chat_cache.delete(uid)
     payload = msg.to_dict()
     payload['chat_id'] = chat_id
+    # Прокидываем extra поля в payload для live-сообщений
+    for _k in ('forwarded_from','fwd_avatar','music_title','music_artist','music_url'):
+        if data.get(_k): payload[_k] = data[_k]
     chat = db.session.get(Chat, chat_id)
 
     if chat:
