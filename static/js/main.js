@@ -795,12 +795,10 @@ body {
 .chat-view { position:fixed;inset:0;z-index:2000;background:#000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.35s cubic-bezier(0.22,1,0.36,1);will-change:transform; }
 .chat-view.active { transform:translateX(0); }
 .chat-wallpaper {
-    background-color: #0a0a12;
+    background-color: #0d1117;
     background-image:
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80' opacity='0.028'%3E%3Ccircle cx='20' cy='20' r='8' fill='none' stroke='%2310b981' stroke-width='1.2'/%3E%3Cpath d='M20 12 L28 20 L20 28 L12 20Z' fill='none' stroke='%2310b981' stroke-width='0.8'/%3E%3Ccircle cx='60' cy='60' r='8' fill='none' stroke='%233b82f6' stroke-width='1.2'/%3E%3Cpath d='M60 52 L68 60 L60 68 L52 60Z' fill='none' stroke='%233b82f6' stroke-width='0.8'/%3E%3Cline x1='0' y1='40' x2='80' y2='40' stroke='%23ffffff' stroke-width='0.3' opacity='0.4'/%3E%3Cline x1='40' y1='0' x2='40' y2='80' stroke='%23ffffff' stroke-width='0.3' opacity='0.4'/%3E%3C/svg%3E"),
-        radial-gradient(ellipse at 15% 10%, rgba(16,185,129,0.06) 0%, transparent 45%),
-        radial-gradient(ellipse at 85% 90%, rgba(59,130,246,0.05) 0%, transparent 45%),
-        radial-gradient(ellipse at 50% 50%, rgba(99,102,241,0.03) 0%, transparent 60%);
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cdefs%3E%3Cfilter id='blur'%3E%3CfeGaussianBlur stdDeviation='0.5'/%3E%3C/filter%3E%3C/defs%3E%3Ccircle cx='20' cy='20' r='14' fill='none' stroke='%2310b981' stroke-width='0.6' opacity='0.07' filter='url(%23blur)'/%3E%3Ccircle cx='100' cy='40' r='10' fill='none' stroke='%233b82f6' stroke-width='0.6' opacity='0.07'/%3E%3Ccircle cx='60' cy='100' r='18' fill='none' stroke='%2310b981' stroke-width='0.5' opacity='0.05'/%3E%3Ccircle cx='20' cy='90' r='8' fill='none' stroke='%238b5cf6' stroke-width='0.5' opacity='0.06'/%3E%3Ccircle cx='100' cy='100' r='12' fill='none' stroke='%233b82f6' stroke-width='0.5' opacity='0.05'/%3E%3C/svg%3E"),
+        linear-gradient(160deg, #0d1117 0%, #0a0f1a 40%, #080d14 100%);
 }
 
 /* СООБЩЕНИЯ */
@@ -830,26 +828,28 @@ body {
 
 /* ИНПУТ */
 .input-bar {
-    padding:8px 8px max(calc(env(safe-area-inset-bottom)+8px),8px);
-    border-top:.5px solid rgba(255,255,255,.07);
-    background:rgba(14,14,18,0.97);
-    backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+    padding:6px 8px max(calc(env(safe-area-inset-bottom)+6px),6px);
+    border-top:none;
+    background:transparent;
 }
 .input-wrap { display:flex;align-items:center;gap:6px; }
 .input-inner {
-    flex:1;background:rgba(255,255,255,.08);
-    border:1px solid rgba(255,255,255,.09);
+    flex:1;
+    background:rgba(255,255,255,.1);
+    backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+    border:1px solid rgba(255,255,255,.12);
     border-radius:22px;padding:0 14px;
-    transition:border-color 0.2s;
+    transition:border-color 0.2s,background 0.2s;
     height:38px;
     display:flex;align-items:center;
+    box-shadow:0 2px 12px rgba(0,0,0,.2);
 }
-.input-inner:focus-within { border-color:rgba(255,255,255,.2); }
+.input-inner:focus-within { border-color:rgba(255,255,255,.25);background:rgba(255,255,255,.13); }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:15px;padding:0;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none;height:100%;display:flex;align-items:center; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:38px;height:38px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow);-webkit-tap-highlight-color:transparent; }
 .send-btn:active { transform:scale(0.88); }
-.icon-btn { width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.09);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s;-webkit-tap-highlight-color:transparent; }
+.icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s;-webkit-tap-highlight-color:transparent; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
 
 /* ПЕЧАТЬ */
@@ -1783,8 +1783,7 @@ let _channelsListCache = [];
 let _channelsLastLoad = 0;
 
 async function loadChannelsForList(force) {
-    // Кэш: не перезагружать чаще раза в 30 секунд (если не форс)
-    if (!force && _channelsListCache.length && Date.now() - _channelsLastLoad < 30000) {
+    if (!force && _channelsListCache.length && Date.now() - _channelsLastLoad < 20000) {
         renderChannelsList(_channelsListCache);
         return;
     }
@@ -1795,10 +1794,12 @@ async function loadChannelsForList(force) {
         if (!Array.isArray(chs)) return;
         _channelsListCache = chs;
         _channelsLastLoad  = Date.now();
-        // Сохраняем в localStorage для мгновенного показа при следующем открытии
         try { localStorage.setItem('wc_channels_cache', JSON.stringify({ts: Date.now(), data: chs})); } catch(e) {}
         renderChannelsList(chs);
-    } catch(e) {}
+    } catch(e) {
+        // Retry once after 2s if network error
+        setTimeout(function(){ if (_channelsListCache.length === 0) loadChannelsForList(true); }, 2000);
+    }
 }
 
 // Загрузка каналов из localStorage — мгновенно, без сети
@@ -2955,10 +2956,12 @@ function buildMessageRow(msg, animate = true) {
         const text = msg.content || msg.text || '';
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
         const linkedColor = isMe ? 'rgba(255,255,255,0.92)' : '#60a5fa';
-        const linked = safe.replace(/(https?:\/\/[^\s<]+)/g,
-            `<a href="$1" target="_blank" rel="noopener noreferrer"
-                style="color:${linkedColor};text-decoration:none;border-bottom:1px solid ${linkedColor}40;word-break:break-all;font-weight:500">$1</a>`);
-        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}</div>`;
+        // Links
+        var linked = safe.replace(/(https?:\/\/[^\s<]+)/g,
+            '<a href="$1" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;text-decoration:none;word-break:break-all">$1</a>');
+        // @mentions
+        linked = linked.replace(/@([a-zA-Z0-9_]{2,32})/g, '<span class="mention" data-u="$1" onclick="_openMentionProfile(this.dataset.u)" style="color:#60a5fa;font-weight:500;cursor:pointer">@$1</span>');
+        contentHtml = '<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">'+linked+'</div>';
     }
 
     // Аватар — кэшированный, для групп берём по sender_id
@@ -4924,7 +4927,7 @@ function renderChannelView(ch, posts) {
 
     var ov = document.createElement('div');
     ov.id = 'channel-view';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#1c1c1e;display:flex;flex-direction:column';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#0d1117;display:flex;flex-direction:column';
 
     var isOwner  = ch.is_owner;
     var isSub    = ch.is_subscribed;
@@ -5022,7 +5025,7 @@ function renderChannelView(ch, posts) {
     // ── ASSEMBLE ──
     var postsWrapper = document.createElement('div');
     postsWrapper.id = 'channel-posts-list';
-    postsWrapper.style.cssText = 'flex:1;overflow-y:auto;display:flex;flex-direction:column';
+    postsWrapper.style.cssText = 'flex:1;overflow-y:auto;display:flex;flex-direction:column;background-color:#0d1117;background-image:url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'120\' height=\'120\'%3E%3Ccircle cx=\'20\' cy=\'20\' r=\'14\' fill=\'none\' stroke=\'%2310b981\' stroke-width=\'0.6\' opacity=\'0.07\'/%3E%3Ccircle cx=\'100\' cy=\'40\' r=\'10\' fill=\'none\' stroke=\'%233b82f6\' stroke-width=\'0.6\' opacity=\'0.07\'/%3E%3C/svg%3E"),linear-gradient(160deg,#0d1117 0%,#0a0f1a 100%)'
     postsWrapper.innerHTML = postsHtml;
 
     ov.innerHTML = topbar;
@@ -5038,6 +5041,18 @@ function renderChannelView(ch, posts) {
 }
 
 // Opens iOS26 glass info sheet when tapping avatar in channel header
+function _openMentionProfile(username) {
+    // Search for user or channel by username and open
+    apiFetch('/search_users?q='+encodeURIComponent(username)).then(function(r){ return r?.json(); }).then(function(results){
+        if (!results || !results.length) { showToast('@'+username+' не найден', 'info'); return; }
+        var user = results.find(function(x){ return (x.username||'').toLowerCase() === username.toLowerCase() && x.type !== 'channel'; });
+        var ch   = results.find(function(x){ return (x.username||'').toLowerCase() === username.toLowerCase() && x.type === 'channel'; });
+        if (ch)   { openChannelById(ch.id); }
+        else if (user) { openChat(user.id, user.name, user.avatar||user.avatar_url||''); }
+        else { showToast('@'+username, 'info'); }
+    }).catch(function(){});
+}
+
 function _openChVerifyReq(chId) {
     var s = document.getElementById('ch-settings-sheet');
     if (s) s.remove();
@@ -5468,23 +5483,39 @@ function renderChannelPost(p, isOwner, chId) {
         return '<button onclick="reactChannelPost('+chId+','+p.id+',\'' + r.emoji + '\')" style="display:inline-flex;align-items:center;gap:4px;background:'+(active?'rgba(16,185,129,.25)':'rgba(255,255,255,.07)')+';border:1px solid '+(active?'var(--accent)':'rgba(255,255,255,.1)')+';border-radius:20px;padding:4px 10px;font-size:13px;cursor:pointer;color:white;margin:2px">'+r.emoji+' <span style="font-size:11px;opacity:.7">'+r.count+'</span></button>';
     }).join('');
 
-    return '<div style="padding:12px 16px;border-bottom:.5px solid rgba(255,255,255,.05)">'
-        + (p.media_url
-            ? (p.media_url.match(/\.(mp4|mov|webm)/i)
-                ? '<video src="'+p.media_url+'" controls style="width:100%;border-radius:14px;margin-bottom:8px;max-height:360px"></video>'
-                : '<img src="'+p.media_url+'" style="width:100%;border-radius:14px;margin-bottom:8px;max-height:420px;object-fit:cover" loading="lazy">')
-            : '')
-        + (p.text ? '<div style="font-size:15px;line-height:1.5;white-space:pre-wrap;word-break:break-word">'+escHtml(p.text)+'</div>' : '')
-        + '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:10px">'
+    // Process text: @mentions and links blue
+    var postText = '';
+    if (p.text) {
+        var safe = escHtml(p.text);
+        safe = safe.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#60a5fa;text-decoration:none">$1</a>');
+        safe = safe.replace(/@([a-zA-Z0-9_]{2,32})/g, '<span style="color:#60a5fa;font-weight:500">@$1</span>');
+        postText = '<div style="font-size:15px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin-bottom:6px">'+safe+'</div>';
+    }
+
+    var mediaHtml = '';
+    if (p.media_url) {
+        if (p.media_url.match(/\.(mp4|mov|webm)/i)) {
+            mediaHtml = '<video src="'+p.media_url+'" controls playsinline style="width:100%;border-radius:14px;margin-bottom:8px;max-height:360px;display:block"></video>';
+        } else {
+            mediaHtml = '<img src="'+p.media_url+'" style="width:100%;border-radius:14px;margin-bottom:8px;max-height:420px;object-fit:cover;display:block" loading="lazy" onerror="this.style.display=\'none\'">';
+        }
+    }
+
+    var footerHtml = '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'
         + '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'
-        + '<button onclick="openReactPicker('+chId+','+p.id+')" style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:4px 10px;font-size:14px;cursor:pointer;color:white;margin:2px">+</button>'
+        + '<button onclick="openReactPicker('+chId+','+p.id+')" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:3px 8px;font-size:13px;cursor:pointer;color:white;-webkit-tap-highlight-color:transparent">😊</button>'
         + reacts
         + '</div>'
-        + '<div style="display:flex;align-items:center;gap:10px">'
-        + '<span style="font-size:11px;color:rgba(255,255,255,.3);display:flex;align-items:center;gap:3px"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.4)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.4)" stroke-width="2"/></svg>'+p.views+'</span>'
+        + '<div style="display:flex;align-items:center;gap:8px">'
+        + '<span style="font-size:11px;color:rgba(255,255,255,.3)">'
+        + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.35)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.35)" stroke-width="2"/></svg>'
+        + p.views + '</span>'
         + '<span style="font-size:11px;color:rgba(255,255,255,.3)">'+p.created_at+'</span>'
-        + (isOwner ? '<button onclick="deleteChannelPost('+chId+','+p.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.3);padding:2px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>' : '')
-        + '</div></div>'
+        + (isOwner ? '<button onclick="deleteChannelPost('+chId+','+p.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);padding:2px 0;-webkit-tap-highlight-color:transparent"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>' : '')
+        + '</div></div>';
+
+    return '<div style="padding:10px 14px 8px;border-bottom:.5px solid rgba(255,255,255,.04)">'
+        + mediaHtml + postText + footerHtml
         + '</div>';
 }
 
