@@ -721,13 +721,19 @@ function renderApp() {
     --divider: rgba(255,255,255,0.09);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #111113;
+    overflow: hidden;
+}
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: #111113; color: var(--text);
-    overflow: hidden; margin: 0;
-    height: 100dvh; height: -webkit-fill-available;
+    color: var(--text);
     -webkit-font-smoothing: antialiased;
     -webkit-text-size-adjust: 100%;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
 }
 .glass { background:rgba(8,8,12,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%); }
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
@@ -987,9 +993,9 @@ body {
 .animate-up  { animation:slideUp 0.3s ease; }
 </style>
 
-<div id="app" style="width:100%;height:100dvh;height:-webkit-fill-available;display:flex;flex-direction:column;overflow:hidden;background:#111113">
-    <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px)">
+<div id="app" style="position:fixed;top:0;left:0;right:0;bottom:0;display:flex;flex-direction:column;overflow:hidden;background:#111113;width:100%;height:100%">
+    <div id="conn-status" class="conn-status" style="opacity:0;flex-shrink:0"></div>
+    <div id="main-content" style="flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px)">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section" style="padding-top:max(env(safe-area-inset-top),44px)">
