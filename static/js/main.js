@@ -321,9 +321,12 @@ function initSocket() {
         wsConnected = true;
         updateConnStatus(true);
         socket.emit('join', { user_id: currentUser.id });
-        // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
         if (Date.now() - _lastChatsLoad > 5000) loadChats();
-        if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
+        if (currentChatId) {
+            socket.emit('enter_chat', { chat_id: currentChatId });
+            // После переподключения — перезагружаем сообщения чтобы не пропустить
+            if (wsReconnected) loadMessages(true);
+        }
         wsReconnected = true;
     });
 
@@ -383,6 +386,9 @@ function initSocket() {
 
     // Группы
     socket.on('group_message', onNewMessage);
+    socket.on('channel_new_post', function(data) {
+        loadChannelsForList(true); // форс — новый пост меняет порядок
+    });
     socket.on('group_member_added', (d) => {
         if (+d.group_id === currentChatId) {
             showToast(`${d.member_name} добавлен в группу`, 'info');
@@ -749,12 +755,13 @@ body {
 /* ПОИСК */
 .search-box {
     display:flex;align-items:center;gap:10px;
-    background:rgba(255,255,255,0.07);
-    border:1px solid rgba(255,255,255,0.09);
-    border-radius:14px;padding:11px 14px;
+    background:rgba(255,255,255,0.08);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:22px;padding:10px 16px;
     transition:border-color 0.2s,background 0.2s;
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
 }
-.search-box:focus-within { border-color:rgba(255,255,255,0.18);background:rgba(255,255,255,0.1); }
+.search-box:focus-within { border-color:rgba(255,255,255,0.2);background:rgba(255,255,255,0.11); }
 
 /* ФАБ — iOS 26 glass pill */
 .fab-plus {
@@ -822,15 +829,26 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ */
-.input-bar { padding:10px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom)+10px),20px);border-top:0.5px solid var(--border); }
-.input-wrap { display:flex;align-items:flex-end;gap:8px; }
-.input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:24px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
-.input-inner:focus-within { border-color:var(--accent-30); }
+.input-bar {
+    padding:8px 8px max(calc(env(safe-area-inset-bottom)+8px),8px);
+    border-top:.5px solid rgba(255,255,255,.07);
+    background:rgba(28,28,30,0.98);
+    backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+}
+.input-wrap { display:flex;align-items:flex-end;gap:6px; }
+.input-inner {
+    flex:1;background:rgba(255,255,255,.08);
+    border:1px solid rgba(255,255,255,.09);
+    border-radius:22px;padding:9px 14px;
+    transition:border-color 0.2s;min-height:42px;
+    display:flex;align-items:center;
+}
+.input-inner:focus-within { border-color:rgba(255,255,255,.2); }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:15px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.3); }
-.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
+.send-btn { width:38px;height:38px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow);-webkit-tap-highlight-color:transparent; }
 .send-btn:active { transform:scale(0.88); }
-.icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
+.icon-btn { width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.09);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s;-webkit-tap-highlight-color:transparent; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
 
 /* ПЕЧАТЬ */
@@ -998,11 +1016,11 @@ body {
             <!-- ══ ПОИСК ══ -->
             <div class="px-5 mb-4">
                 <div class="search-box">
-                    <span style="flex-shrink:0">${ICONS.search}</span>
+                    <span style="flex-shrink:0;opacity:.5">${ICONS.search}</span>
                     <input id="search-input" style="background:transparent;outline:none;width:100%;color:white;font-size:15px;font-family:inherit"
-                           placeholder="Поиск людей и чатов"
+                           placeholder="Найти"
                            oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
-                    <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0">Отмена</button>
+                    <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0;padding-left:8px">Отмена</button>
                 </div>
             </div>
             <div id="search-results" class="px-5 hidden"></div>
@@ -1761,15 +1779,39 @@ function _refreshStoriesIfNeeded() {
 // ══════════════════════════════════════════════════════════
 let _channelsListCache = [];
 
-async function loadChannelsForList() {
+let _channelsLastLoad = 0;
+
+async function loadChannelsForList(force) {
+    // Кэш: не перезагружать чаще раза в 30 секунд (если не форс)
+    if (!force && _channelsListCache.length && Date.now() - _channelsLastLoad < 30000) {
+        renderChannelsList(_channelsListCache);
+        return;
+    }
     try {
         const r = await apiFetch('/api/channels/my');
         if (!r?.ok) return;
         const chs = await r.json();
-        if (!Array.isArray(chs) || !chs.length) return;
+        if (!Array.isArray(chs)) return;
         _channelsListCache = chs;
+        _channelsLastLoad  = Date.now();
+        // Сохраняем в localStorage для мгновенного показа при следующем открытии
+        try { localStorage.setItem('wc_channels_cache', JSON.stringify({ts: Date.now(), data: chs})); } catch(e) {}
         renderChannelsList(chs);
     } catch(e) {}
+}
+
+// Загрузка каналов из localStorage — мгновенно, без сети
+function loadChannelsFromCache() {
+    try {
+        const raw = localStorage.getItem('wc_channels_cache');
+        if (!raw) return false;
+        const {ts, data} = JSON.parse(raw);
+        if (!data || !data.length) return false;
+        if (Date.now() - ts > 300000) return false; // > 5 мин — не используем
+        _channelsListCache = data;
+        renderChannelsList(data);
+        return true;
+    } catch(e) { return false; }
 }
 
 function renderChannelsList(channels) {
@@ -1791,10 +1833,10 @@ function renderChannelsList(channels) {
         // Avatar — square rounded like TG channels
         const _chi = escHtml(ch.name.charAt(0).toUpperCase());
         const avaHtml = ch.avatar
-            ? '<div style="width:56px;height:56px;border-radius:16px;overflow:hidden;flex-shrink:0"><img src="'+ch.avatar+'" style="width:56px;height:56px;object-fit:cover"></div>'
-            : '<div style="width:56px;height:56px;border-radius:16px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#000;flex-shrink:0">'+_chi+'</div>';
+            ? '<div style="width:56px;height:56px;border-radius:50%;overflow:hidden;flex-shrink:0"><img src="'+ch.avatar+'" style="width:56px;height:56px;object-fit:cover"></div>'
+            : '<div style="width:56px;height:56px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#000;flex-shrink:0">'+_chi+'</div>';
         const subsText  = (ch.subscribers||0) + ' подп.';
-        const ownerDot  = ch.is_owner ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:5px;vertical-align:2px"></span>' : '';
+        const ownerDot  = ''; // убрали зелёный кружок
         const verifyBadgeHtml = ch.is_verified ? _channelVerifyBadge(14) : '';
         const lastText  = ch.last_post_text
             ? escHtml(ch.last_post_text.slice(0, 55))
@@ -1810,7 +1852,21 @@ function renderChannelsList(channels) {
             + '</div>'
             + '<div style="width:.5px;position:absolute;bottom:0;left:70px;right:0;background:rgba(255,255,255,.06)"></div>';
 
-        container.appendChild(item);
+        // Вставляем канал в нужную позицию по времени последнего поста
+        if (ch.last_post_time) {
+            // Ищем первый chat-item время которого меньше времени поста
+            var inserted = false;
+            var allItems = container.querySelectorAll('.chat-item:not([data-channel-item])');
+            // Простой вариант: вставляем в начало если есть последний пост
+            var firstItem = container.firstChild;
+            if (firstItem) {
+                container.insertBefore(item, firstItem);
+            } else {
+                container.appendChild(item);
+            }
+        } else {
+            container.appendChild(item);
+        }
     });
 }
 
@@ -1829,7 +1885,7 @@ function switchTab(tab) {
     if (tab === 'chats') {
         const chatList = document.getElementById('chat-list');
         if (!chatList?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
-        else { renderChatList(recentChats); loadChannelsForList(); }
+        else { renderChatList(recentChats); loadChannelsFromCache(); loadChannelsForList(); }
         // Всегда рендерим мини-кружки из кэша сразу
         renderMiniStories();
         // Обновляем моменты если кэш старый (>30 сек)
@@ -1907,7 +1963,8 @@ async function loadChats(force = false) {
         recentChats = chats;
         _lastChatsLoad = Date.now();
         renderChatList(chats);
-        loadChannelsForList();  // подгружаем каналы под чатами
+        if (!loadChannelsFromCache()) loadChannelsForList();
+        else loadChannelsForList(); // обновляем в фоне после показа кэша
         updatePageTitle();
         try { localStorage.setItem('waychat_chats_cache', JSON.stringify(chats)); } catch(e) {}
         chats.slice(0, 5).forEach(c => {
@@ -2340,6 +2397,14 @@ async function apiFetch(url, options = {}, _retry = 0) {
 // ══════════════════════════════════════════════════════════
 //  ПОИСК
 // ══════════════════════════════════════════════════════════
+function _searchOpenUser(el) {
+    cancelSearch();
+    var uid  = +el.dataset.uid;
+    var name = decodeURIComponent(el.dataset.uname || '');
+    var ava  = decodeURIComponent(el.dataset.uava  || '');
+    openChat(uid, name, ava);
+}
+
 function onSearchFocus() {
     searchMode = true;
     document.getElementById('search-cancel').style.display = 'block';
@@ -2415,33 +2480,64 @@ function handleSearch() {
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(async () => {
         const res = document.getElementById('search-results');
+        if (!res) return;
+        res.innerHTML = '<div style="padding:20px;text-align:center;opacity:.4;font-size:13px">Поиск...</div>';
         try {
-            const r = await apiFetch(`/search_users?q=${encodeURIComponent(q)}`);
+            const r = await apiFetch('/search_users?q=' + encodeURIComponent(q));
             if (!r) return;
-            const users = await r.json();
-            if (!res) return;
-            res.innerHTML = `<p style="font-size:11px;font-weight:700;color:var(--text-2);letter-spacing:0.8px;text-transform:uppercase;margin:0 4px 10px">Результаты</p>`;
-            if (!users.length) {
-                res.innerHTML += `<p style="text-align:center;opacity:0.3;padding:30px;font-size:14px">Никого не найдено</p>`;
+            const results = await r.json();
+
+            const users    = results.filter(function(x){ return x.type === 'user' || !x.type; });
+            const channels = results.filter(function(x){ return x.type === 'channel'; });
+
+            if (!results.length) {
+                res.innerHTML = '<div style="text-align:center;opacity:.3;padding:30px;font-size:14px">Ничего не найдено</div>';
                 return;
             }
-            users.forEach(u => {
-                const d = document.createElement('div');
-                d.className = 'user-result';
-                d.onclick = () => { cancelSearch(); openChat(u.id, u.name, u.avatar_url||u.avatar); };
-                d.innerHTML = `
-                    ${getAvatarHtml({id:u.id, name:u.name, avatar:u.avatar_url||u.avatar},'w-12 h-12')}
-                    <div style="flex:1">
-                        <div style="font-weight:600;font-size:15px">${u.name}</div>
-                        <div style="font-size:13px;color:var(--text-2)">@${u.username} ${u.online?'<span style="color:var(--accent)">● в сети</span>':''}</div>
-                    </div>
-                    <div style="color:rgba(255,255,255,0.4)">${ICONS.send.replace('white','rgba(255,255,255,0.4)').replace('width="20" height="20"','width="16" height="16"')}</div>`;
-                res.appendChild(d);
-            });
+
+            let html = '';
+
+            // Пользователи
+            if (users.length) {
+                html += '<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.35);letter-spacing:.8px;text-transform:uppercase;margin:0 4px 8px;padding-top:4px">Люди</div>';
+                users.forEach(function(u) {
+                    const ava = u.avatar_url || u.avatar || '';
+                    const avaEl = ava && !ava.includes('default')
+                        ? '<img src="'+ava+'" style="width:46px;height:46px;border-radius:50%;object-fit:cover;flex-shrink:0">'
+                        : '<div style="width:46px;height:46px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#000;flex-shrink:0">' + escHtml((u.name||'?')[0].toUpperCase()) + '</div>';
+                    html += '<div class="user-result" data-uid="'+u.id+'" data-uname="'+encodeURIComponent(u.name||'')+'" data-uava="'+encodeURIComponent(u.avatar_url||u.avatar||'')+'" onclick="_searchOpenUser(this)">'
+                        + avaEl
+                        + '<div style="flex:1;min-width:0">'
+                        + '<div style="font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escHtml(u.name)+'</div>'
+                        + '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">@'+escHtml(u.username)+(u.online?' <span style="color:var(--accent)">● в сети</span>':'')+'</div>'
+                        + '</div></div>';
+                });
+            }
+
+            // Каналы
+            if (channels.length) {
+                html += '<div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.35);letter-spacing:.8px;text-transform:uppercase;margin:12px 4px 8px">Каналы</div>';
+                channels.forEach(function(ch) {
+                    const ava = ch.avatar || '';
+                    const avaEl = ava && !ava.includes('default')
+                        ? '<img src="'+ava+'" style="width:46px;height:46px;border-radius:50%;object-fit:cover;flex-shrink:0">'
+                        : '<div style="width:46px;height:46px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#000;flex-shrink:0">' + escHtml((ch.name||'?')[0].toUpperCase()) + '</div>';
+                    const verBadge = ch.is_verified ? _channelVerifyBadge(14) : '';
+                    const subs = ch.subscribers === 1 ? '1 подписчик' : (ch.subscribers||0)+' подписчиков';
+                    html += '<div class="user-result" onclick="cancelSearch();openChannelById('+ch.id+')">'
+                        + avaEl
+                        + '<div style="flex:1;min-width:0">'
+                        + '<div style="font-weight:600;font-size:15px;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+escHtml(ch.name)+verBadge+'</div>'
+                        + '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">@'+escHtml(ch.username)+' · '+subs+'</div>'
+                        + '</div></div>';
+                });
+            }
+
+            res.innerHTML = html;
         } catch(e) {
-            if (res) res.innerHTML = `<p style="text-align:center;color:#ef4444;padding:20px;font-size:13px">Ошибка поиска</p>`;
+            res.innerHTML = '<div style="text-align:center;color:#ef4444;padding:20px;font-size:13px">Ошибка поиска</div>';
         }
-    }, 280);
+    }, 220);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2977,6 +3073,7 @@ function renderNewMessage(msg, animate = true) {
     const row = buildMessageRow(msg, animate);
     if (msg._optimistic) {
         row.setAttribute('data-optimistic', '1');
+        row.setAttribute('data-content', msg.content || '');
         row.setAttribute('data-content', msg.content || '');
         row.style.opacity = '0.7';
     }
@@ -3631,8 +3728,22 @@ function sendText() {
     });
     input.value = '';
     input.style.height = 'auto';
+    updateSendButton && updateSendButton();
     socket.emit('stop_typing', { chat_id: currentChatId });
     vibrate(8);
+    // Fallback: если через 4с сокет не вернул подтверждение — перезагружаем чат
+    var _sendChatId = currentChatId;
+    setTimeout(function() {
+        if (currentChatId === _sendChatId) {
+            var container = document.getElementById('messages');
+            var hasTmp = container && container.querySelector('[data-msg-id^="tmp_"]');
+            if (hasTmp) {
+                // Оптимистичное сообщение всё ещё висит — загружаем с сервера
+                hasTmp.remove();
+                loadMessages(true);
+            }
+        }
+    }, 4000);
 }
 
 function _nowMoscow() {
@@ -3649,15 +3760,20 @@ function onNewMessage(msg) {
 
     // Проверяем: это сообщение для открытого чата?
     if (+msg.chat_id === currentChatId) {
-        // Удаляем ВСЕ оптимистичные дубликаты с тем же контентом
+        // Дедупликация по реальному id — главная защита
+        if (msg.id && document.querySelector('[data-msg-id="'+msg.id+'"]')) return;
+        // Удаляем оптимистичные дубликаты
         if (+msg.sender_id === currentUser.id) {
             const container = document.getElementById('messages');
-            container?.querySelectorAll('[data-optimistic="1"]').forEach(el => {
-                if (el.dataset.content === (msg.content || '')) el.remove();
-            });
+            if (container) {
+                container.querySelectorAll('[data-optimistic="1"]').forEach(function(el) {
+                    if (el.dataset.content === (msg.content || '')) el.remove();
+                });
+                container.querySelectorAll('[data-msg-id^="tmp_"]').forEach(function(el) {
+                    el.remove();
+                });
+            }
         }
-        // Проверяем: нет ли уже этого сообщения в DOM (защита от дублей)
-        if (document.querySelector(`[data-msg-id="${msg.id}"]`)) return;
 
         hideTypingIndicator();
         renderNewMessage(msg, true);
@@ -4912,6 +5028,12 @@ function renderChannelView(ch, posts) {
 }
 
 // Opens iOS26 glass info sheet when tapping avatar in channel header
+function _openChVerifyReq(chId) {
+    var s = document.getElementById('ch-settings-sheet');
+    if (s) s.remove();
+    openVerifyRequestModal(chId);
+}
+
 function _openChSettings() {
     var ch = window._currentInfoSheetCh;
     var sheet = document.getElementById('ch-info-sheet');
@@ -5007,6 +5129,7 @@ async function _chSendPost(chId) {
         if (inp) { inp.value = ''; inp.style.height = 'auto'; }
         _chMediaFile = null;
         vibrate(15);
+        loadChannelsForList(); // обновляем канал наверху списка
         // Refresh posts
         const pr = await apiFetch('/api/channels/'+chId+'/posts');
         const pd = await pr.json();
@@ -5020,33 +5143,179 @@ async function _chSendPost(chId) {
 
 function openChannelSettings(chId, ch) {
     vibrate(8);
-    const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;flex-direction:column;justify-content:flex-end';
-    ov.onclick = function(e) { if(e.target===ov) ov.remove(); };
+    if (!ch) ch = _channelsListCache.find(function(c){ return c.id == chId; }) || {id:chId,name:'',username:'',description:'',avatar:'',is_verified:false,is_private:false};
+    var old = document.getElementById('ch-settings-sheet');
+    if (old) old.remove();
 
-    const isVerified = ch && ch.is_verified;
-    const verifyStatus = ch && ch._verifyStatus;
+    var ov = document.createElement('div');
+    ov.id = 'ch-settings-sheet';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,.65);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);display:flex;flex-direction:column;justify-content:flex-end';
+    ov.addEventListener('click', function(e){ if(e.target===ov) ov.remove(); });
 
-    const verifyBlock = isVerified
-        ? '<div style="display:flex;align-items:center;gap:8px;padding:14px 16px;background:rgba(74,158,224,.1);border-radius:14px;margin-bottom:12px">'
-          + _channelVerifyBadge(20)
-          + '<div><div style="font-size:14px;font-weight:700;color:#4A9EE0">Канал верифицирован</div><div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">Синяя галочка отображается подписчикам</div></div></div>'
-        : '<div onclick="openVerifyRequestModal('+chId+')" style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:rgba(255,255,255,.05);border-radius:14px;margin-bottom:12px;cursor:pointer;-webkit-tap-highlight-color:transparent">'
-          + '<div style="width:40px;height:40px;border-radius:50%;background:rgba(74,158,224,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">'
-          + _channelVerifyBadge(22) + '</div>'
-          + '<div><div style="font-size:15px;font-weight:600">Подать на верификацию</div>'
-          + '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">Получить синюю галочку</div></div>'
-          + '<svg style="margin-left:auto" width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+    var verifyRow = ch.is_verified
+        ? '<div style="display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:.5px solid rgba(255,255,255,.06)">'
+          + '<div style="width:38px;height:38px;border-radius:12px;background:rgba(74,158,224,.12);display:flex;align-items:center;justify-content:center;flex-shrink:0">'+_channelVerifyBadge(22)+'</div>'
+          + '<div><div style="font-size:15px;font-weight:600;color:#4A9EE0">Канал верифицирован</div>'
+          + '<div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:1px">Галочка видна всем подписчикам</div></div>'
+          + '</div>'
+        : '<div onclick="_openChVerifyReq('+chId+')" style="display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:.5px solid rgba(255,255,255,.06);cursor:pointer;-webkit-tap-highlight-color:transparent">'
+          + '<div style="width:38px;height:38px;border-radius:12px;background:rgba(74,158,224,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0">'+_channelVerifyBadge(22)+'</div>'
+          + '<div style="flex:1"><div style="font-size:15px;font-weight:600">Подать на верификацию</div>'
+          + '<div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:1px">Получить синюю галочку</div></div>'
+          + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.25)" stroke-width="1.8" stroke-linecap="round"/></svg>'
           + '</div>';
 
-    ov.innerHTML = '<div style="background:#1c1c1e;border-radius:20px 20px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),16px)">'
-        + '<div style="width:36px;height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin:10px auto 16px"></div>'
-        + '<div style="padding:0 16px 12px;font-size:13px;font-weight:600;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px">Настройки канала</div>'
-        + '<div style="padding:0 12px 8px">' + verifyBlock + '</div>'
+    var origin = window.location.origin;
+    var link = origin + '/channel/' + (ch.username || ch.id);
+
+    function srow(bgColor, icon, label, sub, fn) {
+        var el = document.createElement('div');
+        el.style.cssText = 'display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:.5px solid rgba(255,255,255,.06);cursor:pointer;-webkit-tap-highlight-color:transparent';
+        el.innerHTML = '<div style="width:38px;height:38px;border-radius:12px;background:'+bgColor+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+icon+'</div>'
+            + '<div style="flex:1"><div style="font-size:15px;font-weight:600">'+label+'</div>'+(sub?'<div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:1px">'+sub+'</div>':'')+'</div>'
+            + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.25)" stroke-width="1.8" stroke-linecap="round"/></svg>';
+        el.addEventListener('click', fn);
+        return el;
+    }
+
+    var sheet = document.createElement('div');
+    sheet.style.cssText = 'background:rgba(28,28,30,.98);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border-radius:22px 22px 0 0;padding:0 16px max(env(safe-area-inset-bottom),20px);border-top:1px solid rgba(255,255,255,.09)';
+
+    var handle = '<div style="width:36px;height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin:12px auto 18px"></div>';
+    var title = '<div style="font-size:13px;font-weight:700;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px">Управление каналом</div>';
+    sheet.innerHTML = handle + title;
+
+    var verifyEl = document.createElement('div');
+    verifyEl.innerHTML = verifyRow;
+    sheet.appendChild(verifyEl.firstChild);
+
+    sheet.appendChild(srow('rgba(59,130,246,.15)',
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Редактировать', 'Название, описание, аватарка',
+        function(){ ov.remove(); openChannelEdit(chId); }
+    ));
+
+    sheet.appendChild(srow('rgba(16,185,129,.12)',
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="#10b981" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="#10b981" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Ссылка на канал', link,
+        function(){ copyChannelLink(link); ov.remove(); }
+    ));
+
+    sheet.appendChild(srow('rgba(139,92,246,.15)',
+        '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="18" cy="5" r="3" stroke="#a78bfa" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="#a78bfa" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="#a78bfa" stroke-width="2"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Поделиться', 'Отправить ссылку другу',
+        function(){ shareChannel(chId, link); ov.remove(); }
+    ));
+
+    ov.appendChild(sheet);
+    document.body.appendChild(ov);
+}
+
+function copyChannelLink(link) {
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(link).then(function(){ showToast('Ссылка скопирована ✓', 'success'); vibrate(15); }).catch(function(){});
+    } else {
+        var ta = document.createElement('textarea');
+        ta.value = link; ta.style.cssText = 'position:fixed;top:-9999px';
+        document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+        showToast('Ссылка скопирована ✓', 'success');
+    }
+}
+
+function shareChannel(chId, link) {
+    if (navigator.share) {
+        navigator.share({ title: 'WayChat канал', url: link }).catch(function(){});
+    } else {
+        copyChannelLink(link);
+    }
+}
+
+async function openChannelEdit(chId) {
+    vibrate(8);
+    var ch = _channelsListCache.find(function(c){ return c.id == chId; }) || {id:chId,name:'',username:'',description:'',avatar:'',is_private:false};
+    var ov = document.createElement('div');
+    ov.id = 'ch-edit-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9200;background:rgba(0,0,0,.7);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);display:flex;flex-direction:column';
+
+    var avaInner = ch.avatar
+        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover">'
+        : '<span style="font-size:32px;font-weight:800;color:#000">'+escHtml((ch.name||'?')[0].toUpperCase())+'</span>';
+
+    ov.innerHTML = ''
+        + '<div style="padding:max(env(safe-area-inset-top),50px) 16px 14px;display:flex;align-items:center;gap:12px;background:rgba(28,28,30,.98);border-bottom:.5px solid rgba(255,255,255,.08)">'
+        + '<button onclick="_closeChEdit()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.09);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg></button>'
+        + '<h2 style="flex:1;font-size:18px;font-weight:800;margin:0">Редактировать</h2>'
+        + '<button id="ch-edit-save" onclick="submitChannelEdit('+chId+')" style="background:var(--accent);color:#000;border:none;border-radius:14px;padding:8px 18px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent">Готово</button>'
+        + '</div>'
+        + '<div style="flex:1;overflow-y:auto;padding:20px 16px">'
+        // Avatar
+        + '<div style="display:flex;justify-content:center;margin-bottom:24px">'
+        + '<div onclick="_chEditPickAva()" style="position:relative;cursor:pointer;-webkit-tap-highlight-color:transparent">'
+        + '<div id="ch-edit-ava" style="width:88px;height:88px;border-radius:50%;overflow:hidden;background:var(--accent);display:flex;align-items:center;justify-content:center">'+avaInner+'</div>'
+        + '<div style="position:absolute;bottom:2px;right:2px;width:28px;height:28px;border-radius:50%;background:rgba(28,28,30,.95);border:2px solid rgba(255,255,255,.15);display:flex;align-items:center;justify-content:center">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="white" stroke-width="2"/><circle cx="12" cy="13" r="4" stroke="white" stroke-width="2"/></svg>'
+        + '</div>'
+        + '<input id="ch-edit-ava-inp" type="file" accept="image/*" style="display:none" onchange="_chEditAvaChange(this)">'
+        + '</div></div>'
+        // Fields card
+        + '<div style="background:rgba(255,255,255,.06);border-radius:18px;overflow:hidden;margin-bottom:14px">'
+        + '<div style="padding:0 16px"><div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px;padding-top:12px;margin-bottom:6px">Название</div>'
+        + '<input id="ch-edit-name" value="'+escHtml(ch.name||'')+'" maxlength="120" style="width:100%;padding:0 0 12px;background:none;border:none;border-bottom:.5px solid rgba(255,255,255,.07);color:white;font-size:16px;font-family:inherit;outline:none" placeholder="Название канала"></div>'
+        + '<div style="padding:0 16px"><div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px;padding-top:12px;margin-bottom:6px">Username</div>'
+        + '<div style="display:flex;align-items:center;padding-bottom:12px;border-bottom:.5px solid rgba(255,255,255,.07)"><span style="color:rgba(255,255,255,.3);font-size:16px;margin-right:2px">@</span><input id="ch-edit-uname" value="'+escHtml(ch.username||'')+'" maxlength="64" style="flex:1;background:none;border:none;color:white;font-size:16px;font-family:inherit;outline:none" placeholder="username"></div></div>'
+        + '<div style="padding:0 16px"><div style="font-size:11px;font-weight:700;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px;padding-top:12px;margin-bottom:6px">Описание</div>'
+        + '<textarea id="ch-edit-desc" rows="3" maxlength="500" style="width:100%;padding:0 0 12px;background:none;border:none;color:white;font-size:15px;font-family:inherit;outline:none;resize:none;line-height:1.5;box-sizing:border-box" placeholder="О чём этот канал...">'+escHtml(ch.description||'')+'</textarea></div>'
+        + '</div>'
+        + '<div style="background:rgba(255,255,255,.06);border-radius:18px;padding:0 16px"><label style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;cursor:pointer">'
+        + '<div><div style="font-size:15px;font-weight:500">Приватный</div><div style="font-size:12px;color:rgba(255,255,255,.35);margin-top:2px">Только по ссылке</div></div>'
+        + '<input id="ch-edit-private" type="checkbox" '+(ch.is_private?'checked':'')+' style="width:20px;height:20px;accent-color:var(--accent)">'
+        + '</label></div>'
         + '</div>';
 
     document.body.appendChild(ov);
 }
+
+function _closeChEdit(){ var m=document.getElementById('ch-edit-modal'); if(m) m.remove(); }
+let _chEditAvaFile = null;
+function _chEditPickAva() { document.getElementById('ch-edit-ava-inp')?.click(); }
+function _chEditAvaChange(inp) {
+    var file = inp.files[0]; if (!file) return;
+    _chEditAvaFile = file;
+    var url = URL.createObjectURL(file);
+    var box = document.getElementById('ch-edit-ava');
+    if (box) box.innerHTML = '<img src="'+url+'" style="width:100%;height:100%;object-fit:cover">';
+}
+
+async function submitChannelEdit(chId) {
+    var btn = document.getElementById('ch-edit-save');
+    var name  = document.getElementById('ch-edit-name')?.value.trim();
+    var uname = document.getElementById('ch-edit-uname')?.value.trim().toLowerCase();
+    var desc  = document.getElementById('ch-edit-desc')?.value.trim();
+    var priv  = document.getElementById('ch-edit-private')?.checked;
+    if (!name) { showToast('Введите название', 'error'); return; }
+    if (btn) { btn.disabled=true; btn.textContent='...'; }
+    try {
+        if (_chEditAvaFile) {
+            var fd = new FormData(); fd.append('file', _chEditAvaFile);
+            await apiFetch('/api/channels/'+chId+'/upload_avatar', {method:'POST', body:fd});
+            _chEditAvaFile = null;
+        }
+        var r = await apiFetch('/api/channels/'+chId+'/edit', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({name:name, username:uname, description:desc, is_private:priv})
+        });
+        var d = await r.json();
+        if (!d.ok) { showToast(d.error||'Ошибка', 'error'); if(btn){btn.disabled=false;btn.textContent='Готово';} return; }
+        document.getElementById('ch-edit-modal')?.remove();
+        showToast('Канал обновлён ✓', 'success'); vibrate(15);
+        loadChannelsForList(true);
+        if (document.getElementById('channel-view')) openChannelById(chId);
+    } catch(e) {
+        showToast('Ошибка', 'error');
+        if(btn){btn.disabled=false;btn.textContent='Готово';}
+    }
+}
+
 
 function _closeVerifyReqModal() { var m = document.getElementById("verify-req-modal"); if(m) m.remove(); }
 
