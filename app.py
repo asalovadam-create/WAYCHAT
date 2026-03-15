@@ -1412,6 +1412,24 @@ def get_current_user_route():
         return jsonify({'error': 'Session error'}), 500
 
 
+
+@app.route('/api/me')
+@login_required
+def api_me():
+    """Возвращает данные текущего пользователя — используется для auth check"""
+    u = current_user
+    return jsonify({
+        'id':            u.id,
+        'name':          u.name,
+        'username':      u.username,
+        'avatar':        u.avatar or '',
+        'bio':           u.bio or '',
+        'is_verified':   u.is_verified or False,
+        'verified_type': u.verified_type or '',
+        'phone':         u.phone or '',
+    })
+
+
 @app.route('/get_user_profile/<int:user_id>')
 @login_required
 def get_user_profile(user_id):
