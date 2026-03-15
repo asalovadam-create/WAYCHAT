@@ -739,18 +739,21 @@ function renderApp() {
 html, body {
     margin: 0; padding: 0;
     width: 100%;
+    height: 100%;
     background: #111113;
     overflow: hidden;
+    /* Запрещаем overscroll на уровне html/body */
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: auto;
 }
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     color: var(--text);
-    min-height: 100vh;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     -webkit-text-size-adjust: 100%;
-    text-rendering: optimizeSpeed; /* быстрее optimizeLegibility */
-    /* NO position:fixed — Safari safe-area bug */
+    text-rendering: optimizeSpeed;
+    touch-action: pan-x pan-y; /* запрещает pinch-zoom на уровне body */
 }
 .glass { background:rgba(8,8,12,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%); }
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
@@ -845,6 +848,13 @@ body {
 .chat-view.active { transform: translate3d(0,0,0); opacity: 1; }
 /* Swipe back — нет transition пока тянем */
 .chat-view.swiping { transition: none !important; }
+
+/* Канал view — такой же слайд как chat-view */
+#channel-view {
+    transition: transform .28s cubic-bezier(.22,1,.36,1), opacity .2s;
+    will-change: transform, opacity;
+}
+#channel-view.swiping { transition: none !important; }
 .chat-wallpaper {
     background-color: #0d1117;
     background-image:
@@ -1102,15 +1112,15 @@ body {
 #stories-row::-webkit-scrollbar { display:none; }
 #stories-mini-bar:active { opacity:.75; }
 #stories-pull-wrapper { will-change:height; }
-@keyframes slideUp { from{opacity:0;transform:translateY(12px);} to{opacity:1;transform:translateY(0);} }
-@keyframes msgIn { from{opacity:0;transform:translateY(8px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
-@keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
-@keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
-.animate-msg { animation:msgIn 0.25s cubic-bezier(0.22,1,0.36,1); }
-.animate-up  { animation:slideUp 0.3s ease; }
+@keyframes slideUp { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
+@keyframes msgIn { from{opacity:0;transform:translateY(6px) scale(0.98);} to{opacity:1;transform:translateY(0) scale(1);} }
+@keyframes toastIn { from{opacity:0;transform:translateY(-6px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
+@keyframes toastOut { to{opacity:0;transform:translateY(-6px) scale(0.97);} }
+.animate-msg { animation:msgIn 0.2s cubic-bezier(0.22,1,0.36,1); contain:layout; }
+.animate-up  { animation:slideUp 0.22s ease; }
 </style>
 
-<div id="app" style="width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#111113">
+<div id="app" style="width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#111113;overscroll-behavior:none;touch-action:pan-x pan-y">
     <div id="conn-status" class="conn-status" style="opacity:0;flex-shrink:0"></div>
     <div id="main-content" style="flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px);transform:translateZ(0)">
 
@@ -1159,8 +1169,11 @@ body {
 
         <!-- ══ МОМЕНТЫ ══ -->
         <div id="moments-section" class="hidden pt-14 px-5">
-            <div class="section-header-row" style="margin-bottom:16px">
-                <h1 class="section-title">Моменты</h1>
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+                <button onclick="switchTab('chats')" style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">
+                    <svg width="11" height="18" viewBox="0 0 11 18" fill="none"><path d="M9 1.5L1.5 9L9 16.5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <h1 style="font-size:22px;font-weight:800;letter-spacing:-.3px;margin:0;flex:1">Моменты</h1>
             </div>
             <div style="display:flex;gap:10px;margin-bottom:16px">
                 <div onclick="pickMedia('moment')" style="flex:1;display:flex;align-items:center;gap:12px;background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:13px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent">
@@ -1312,7 +1325,11 @@ body {
         </div>
 
         <!-- ══ НАСТРОЙКИ ══ -->
-        <div id="settings-section" class="hidden" style="background:#111;overflow-y:auto;height:100%">
+        <div id="settings-section" class="hidden" style="background:#111;overflow-y:auto;height:100%;position:relative">
+            <!-- Кнопка Назад для профиля -->
+            <button onclick="switchTab('chats')" style="position:absolute;top:max(env(safe-area-inset-top),16px);left:16px;z-index:10;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,.4);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent">
+                <svg width="11" height="18" viewBox="0 0 11 18" fill="none"><path d="M9 1.5L1.5 9L9 16.5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
             <!-- iOS 26 hero: размытый фон из аватара -->
             <div style="position:relative;height:300px;overflow:hidden;flex-shrink:0">
                 <div id="settings-bg" style="position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(0.45) saturate(1.7);transition:background-image 0.4s"></div>
@@ -5619,7 +5636,9 @@ function _channelVerifyBadge(size) {
         + '</svg>';
 }
 
-function _closeChannelView() { var v = document.getElementById("channel-view"); if (v) v.remove(); }
+function _closeChannelView() {
+    const cv = document.getElementById('channel-view');
+    if (cv) { cv.style.transform = ''; cv.style.opacity = ''; cv.style.transition = ''; } var v = document.getElementById("channel-view"); if (v) v.remove(); }
 
 function renderChannelView(ch, posts) {
     vibrate(8);
@@ -7679,9 +7698,33 @@ function _showMomentEditor(file) {
     bg.style.cssText = 'position:absolute;inset:0;border-radius:0 0 28px 28px;overflow:hidden';
     if (isVid) {
         const vid = document.createElement('video');
-        vid.src=url; vid.autoplay=true; vid.muted=true; vid.loop=true; vid.playsInline=true;
-        vid.style.cssText='width:100%;height:100%;object-fit:cover';
+        vid.src = url;
+        vid.autoplay = true;
+        vid.muted = false;  // ВАЖНО: звук для превью
+        vid.loop  = true;
+        vid.playsInline = true;
+        vid.controls = false;
+        vid.style.cssText = 'width:100%;height:100%;object-fit:cover';
+        // iOS требует пользовательского жеста для unmuted autoplay
+        vid.play().catch(() => {
+            vid.muted = true;
+            vid.play().catch(() => {});
+        });
         bg.appendChild(vid);
+        // ── Progress bar для видео ──
+        const vProg = document.createElement('div');
+        vProg.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:3px;background:rgba(255,255,255,.2);z-index:5';
+        const vFill = document.createElement('div');
+        vFill.style.cssText = 'height:100%;background:white;width:0%;transition:width .1s linear;border-radius:2px';
+        vProg.appendChild(vFill);
+        bg.appendChild(vProg);
+        vid.addEventListener('timeupdate', () => {
+            if (vid.duration) vFill.style.width = (vid.currentTime / vid.duration * 100) + '%';
+        });
+        // Тап по видео — play/pause
+        bg.addEventListener('click', () => {
+            vid.paused ? vid.play() : vid.pause();
+        });
     } else {
         const img = document.createElement('img');
         img.src=url; img.style.cssText='width:100%;height:100%;object-fit:cover';
@@ -7726,15 +7769,52 @@ function _showMomentEditor(file) {
     ov.appendChild(geoTag);
 
     // ── Текстовая надпись (перетаскиваемая) ──
-    const capTag = document.createElement('div');
-    capTag.id = 'me-cap-tag';
-    capTag.style.cssText = 'position:absolute;left:50%;bottom:220px;transform:translateX(-50%);background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:16px;padding:2px 6px;display:none;z-index:20;min-width:120px;max-width:80vw';
-    const capInput = document.createElement('input');
-    capInput.id='me-cap'; capInput.placeholder='Текст...';
-    capInput.style.cssText='background:transparent;border:none;outline:none;color:#fff;font-size:18px;font-weight:600;text-align:center;padding:10px 14px;width:100%;font-family:inherit';
-    capTag.appendChild(capInput);
-    _makeDraggable(capTag, ov);
-    ov.appendChild(capTag);
+    // ── Caption (WhatsApp стиль — внизу, не перетаскивается) ──
+    const capBar = document.createElement('div');
+    capBar.id = 'me-cap-bar';
+    capBar.style.cssText = 'position:absolute;bottom:120px;left:0;right:0;z-index:20;'
+        + 'padding:0 16px;display:none;flex-direction:column;align-items:stretch;';
+
+    const capInput = document.createElement('textarea');
+    capInput.id = 'me-cap';
+    capInput.placeholder = 'Добавьте подпись...';
+    capInput.maxLength = 200;
+    capInput.rows = 1;
+    capInput.style.cssText = ''
+        + 'background:rgba(0,0,0,.45);'
+        + 'backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);'
+        + 'border:none;outline:none;'
+        + 'border-radius:18px;'
+        + 'color:#fff;font-size:16px;font-weight:500;'
+        + 'text-align:left;'
+        + 'padding:12px 16px;'
+        + 'width:100%;box-sizing:border-box;'
+        + 'font-family:inherit;resize:none;'
+        + 'line-height:1.4;'
+        + '-webkit-appearance:none;';
+
+    const capCount = document.createElement('div');
+    capCount.style.cssText = 'font-size:11px;color:rgba(255,255,255,.4);text-align:right;margin-top:4px;padding-right:4px';
+    capCount.textContent = '0/200';
+
+    capInput.addEventListener('input', () => {
+        // Auto-resize
+        capInput.style.height = 'auto';
+        capInput.style.height = Math.min(capInput.scrollHeight, 100) + 'px';
+        capCount.textContent = capInput.value.length + '/200';
+    });
+    capInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); capInput.blur(); }
+    });
+
+    capBar.appendChild(capInput);
+    capBar.appendChild(capCount);
+    ov.appendChild(capBar);
+
+    // ── Bottom gradient for readability ──
+    const bottomGrad = document.createElement('div');
+    bottomGrad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:240px;background:linear-gradient(to top,rgba(0,0,0,0.7) 0%,transparent 100%);pointer-events:none;z-index:5';
+    ov.appendChild(bottomGrad);
 
     // ── Нижняя панель iOS 26 стиль ──
     const panel = document.createElement('div');
@@ -7774,9 +7854,11 @@ function _showMomentEditor(file) {
     // ── Обработчики кнопок инструментов ──
     geoBtn.onclick = () => _requestMeGeo(geoBtn, geoTag);
     txtBtn.onclick = () => {
-        const sh = capTag.style.display === 'flex' ? 'none' : 'flex';
-        capTag.style.display = sh;
-        if (sh === 'flex') { setTimeout(() => capInput.focus(), 50); }
+        const capBar = document.getElementById('me-cap-bar');
+        if (!capBar) return;
+        const showing = capBar.style.display === 'flex';
+        capBar.style.display = showing ? 'none' : 'flex';
+        if (!showing) setTimeout(() => document.getElementById('me-cap')?.focus(), 80);
     };
 
     document.body.appendChild(ov);
@@ -7843,42 +7925,15 @@ async function _requestMeGeo(btn, geoTag) {
 
 async function _publishMomentEditor(ov, file, url) {
     const sBtn = document.getElementById('me-share');
-    if(sBtn){
-        sBtn.disabled=true;
-        sBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> Публикую...';
-    }
-    const caption = (document.getElementById('me-cap')?.value||'').trim();
-    showToast('Загрузка медиа...','info',120000);
-    try {
-        const fd = new FormData();
-        fd.append('file', file);
-        if(caption) fd.append('text', caption);
-        if(_meGeo){ fd.append('geo_name',_meGeo.name); fd.append('geo_lat',_meGeo.lat); fd.append('geo_lng',_meGeo.lng); }
-        // Используем прямой fetch БЕЗ таймаута — видео может грузиться долго
-        const r = await fetch('/create_moment', {
-            method: 'POST',
-            body: fd,
-            credentials: 'include'
-        });
-        if(!r || !r.ok) {
-            const errText = r ? await r.text() : 'no response';
-            console.error('create_moment error:', r?.status, errText);
-            throw new Error('server error ' + r?.status);
-        }
-        const data = await r.json();
-        if(!data.success) throw new Error(data.error || 'failed');
-        ov.remove(); URL.revokeObjectURL(url);
-        _meFile=null; _meGeo=null;
-        momentsCache=null; loadMoments();
-        showToast('Момент опубликован! 🎉','success');
-    } catch(e){
-        console.error('publish moment error:', e);
-        showToast('Ошибка загрузки: ' + (e.message||''),'error', 5000);
-        if(sBtn){
-            sBtn.disabled=false;
-            sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        }
-    }
+    if (sBtn) { sBtn.disabled = true; sBtn.innerHTML = '...'; }
+    // Capture caption before closing editor
+    const cap = (document.getElementById('me-cap')?.value || '').trim().slice(0, 200);
+    const geo = _meGeo ? {..._meGeo} : null;
+    ov.remove();
+    URL.revokeObjectURL(url);
+    _meFile = null; _meGeo = null;
+    // Hand off to main upload function
+    await _doUploadMoment(file, cap, geo);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -8111,20 +8166,10 @@ function _updateUploadProgress(pct) {
 }
 
 // Публикация момента
-async function _publishMomentEditor(ov, file, url) {
-    const caption = (document.getElementById('me-cap')?.value || '').trim();
-    const geo = _meGeo;
-
-    // 1. Сохраняем стейт загрузки
+async function _doUploadMoment(file, caption, geo) {
     _momentUploading = true;
     _momentUploadFile = file;
-    if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} }
     _momentUploadPreviewUrl = URL.createObjectURL(file);
-
-    // 2. Закрываем редактор → открываем Моменты
-    ov.remove();
-    URL.revokeObjectURL(url);
-    _meFile = null; _meGeo = null;
     switchTab('moments');
 
     // 3. Рисуем карточку загрузки
@@ -9154,31 +9199,43 @@ function createPeerConnection() {
         }
     };
 
+    // Единый remote stream для всех треков
+    const remoteStream = new MediaStream();
+    pc._remoteStream = remoteStream;
+
     pc.ontrack = (e) => {
-        if (!e.streams[0]) return;
-        const stream = e.streams[0];
+        // Добавляем трек в единый stream
+        remoteStream.addTrack(e.track);
 
         if (e.track.kind === 'video') {
             const rv = document.getElementById('remote-video');
             if (rv) {
+                if (rv.srcObject !== remoteStream) rv.srcObject = remoteStream;
                 document.getElementById('call-video-container').style.display = 'block';
-                rv.srcObject = stream;
                 rv.style.display = 'block';
-                rv.play().catch(() => document.addEventListener('touchstart', () => rv.play(), { once: true }));
+                // play() с retry при autoplay policy
+                const tryPlay = () => rv.play().catch(err => {
+                    if (err.name === 'NotAllowedError') {
+                        document.addEventListener('touchstart', () => rv.play(), { once: true });
+                    }
+                });
+                tryPlay();
                 const ci = document.getElementById('call-info');
-                if (ci) ci.style.opacity = '0.2';
+                if (ci) ci.style.opacity = '0.15';
             }
         } else if (e.track.kind === 'audio') {
-            // Отдельный audio элемент для надёжного воспроизведения
+            // Один audio элемент на весь звонок
             let callAudio = document.getElementById('call-remote-audio');
             if (!callAudio) {
                 callAudio = document.createElement('audio');
                 callAudio.id = 'call-remote-audio';
                 callAudio.autoplay = true;
-                callAudio.setAttribute('playsinline', '');
+                callAudio.playsInline = true;
+                // Важно: не добавлять в видимый DOM на iOS
+                callAudio.style.cssText = 'position:fixed;top:-100px;left:-100px;width:1px;height:1px;opacity:0;pointer-events:none';
                 document.body.appendChild(callAudio);
             }
-            callAudio.srcObject = stream;
+            if (callAudio.srcObject !== remoteStream) callAudio.srcObject = remoteStream;
             callAudio.play().catch(() => {
                 document.addEventListener('touchstart', () => callAudio.play(), { once: true });
             });
@@ -9202,19 +9259,39 @@ async function doIceRestart() {
     } catch(e) { console.error('ICE restart failed:', e); }
 }
 
+// Хранит входящий звонок когда приложение было свёрнуто
+let _pendingIncomingCall = null;
+
 function onIncomingCall(data) {
     incomingCallData = data; pendingIce = [];
     currentCallType = data.call_type || 'audio';
     vibrate([400,200,400,200,400]);
-    const screen = document.getElementById('call-screen');
-    screen.classList.remove('hidden');
-    document.getElementById('call-name').textContent = data.from_name || 'Звонок';
-    document.getElementById('call-status-label').textContent = currentCallType === 'video' ? '📹 Видеозвонок' : '📞 Голосовой';
-    document.getElementById('call-avatar-box').innerHTML = getAvatarHtml({id: data.from, name: data.from_name, avatar: data.from_avatar}, 'w-28 h-28');
-    document.getElementById('accept-btn').style.display = 'flex';
-    document.getElementById('call-timer').style.display = 'none';
+
+    // Сохраняем на случай если экран заблокирован
+    _pendingIncomingCall = data;
+    _showIncomingCallUI(data);
     acquireWakeLock();
 }
+
+function _showIncomingCallUI(data) {
+    const screen = document.getElementById('call-screen');
+    if (!screen) return;
+    screen.classList.remove('hidden');
+    document.getElementById('call-name').textContent = data.from_name || 'Звонок';
+    document.getElementById('call-status-label').textContent =
+        (data.call_type === 'video') ? '📹 Видеозвонок' : '📞 Голосовой звонок';
+    document.getElementById('call-avatar-box').innerHTML =
+        getAvatarHtml({id: data.from, name: data.from_name, avatar: data.from_avatar}, 'w-28 h-28');
+    document.getElementById('accept-btn').style.display = 'flex';
+    document.getElementById('call-timer').style.display  = 'none';
+}
+
+// При возврате в приложение — показываем пропущенный входящий звонок
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && _pendingIncomingCall) {
+        _showIncomingCallUI(_pendingIncomingCall);
+    }
+});
 
 async function onIceCandidate(data) {
     if (!data.candidate) return;
@@ -9230,6 +9307,7 @@ async function flushPendingIce() {
 async function answerIncomingCall() {
     const data = incomingCallData;
     if (!data) return;
+    _pendingIncomingCall = null; // сбрасываем при ответе
     document.getElementById('accept-btn').style.display = 'none';
     document.getElementById('call-status-label').textContent = 'Подключение...';
     currentPartnerId = data.from; vibrate(30);
@@ -9266,6 +9344,7 @@ function startCallTimer() {
 }
 
 function endCall(notify = true) {
+    _pendingIncomingCall = null; // сбрасываем pending
     clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
 
     // Отправляем сообщение о звонке в чат
@@ -9869,7 +9948,13 @@ function scrollDown(smooth = true) {
 
 function closeChat() {
     var fab = document.getElementById('fab-main-btn'); if(fab) fab.style.display='flex';
-    document.getElementById('chat-window')?.classList.remove('active');
+    const win = document.getElementById('chat-window');
+    if (win) {
+        win.classList.remove('active', 'swiping');
+        win.style.transform = '';
+        win.style.opacity   = '';
+        win.style.transition = '';
+    }
     if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
     currentChatId    = null;
     currentPartnerId = null;
@@ -9879,77 +9964,97 @@ function closeChat() {
 }
 
 function setupGlobalGestures() {
-    let startX = 0, startY = 0, _swipeActive = false;
+    let startX = 0, startY = 0;
+    let swipeEl = null;   // элемент который тянем
+    let swipeLocked = false; // направление зафиксировано
+    let swipeConfirmed = false; // свайп подтверждён как горизонтальный
+
+    function getSwipeTarget() {
+        const chatWin = document.getElementById('chat-window');
+        if (chatWin && chatWin.classList.contains('active')) return chatWin;
+        const chView = document.getElementById('channel-view');
+        if (chView) return chView;
+        return null;
+    }
+
     document.addEventListener('touchstart', (e) => {
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
-        // Свайп с левого края — back gesture
-        _swipeActive = startX < 28;
-    }, { passive: true });
-
-    document.addEventListener('touchmove', (e) => {
-        if (!_swipeActive) return;
-        const chatWin = document.getElementById('chat-window');
-        const chView  = document.getElementById('channel-view');
-        const dx = e.touches[0].clientX - startX;
-        if (dx > 8) { // порог 8px чтобы случайные движения не срабатывали
-            if (chatWin && chatWin.classList.contains('active')) {
-                chatWin.classList.add('swiping');
-                chatWin.style.transform = 'translate3d(' + Math.min(dx, window.innerWidth) + 'px,0,0)';
-                chatWin.style.opacity = String(Math.max(0.55, 1 - dx / (window.innerWidth * 1.2)));
-            } else if (chView) {
-                chView.style.transition = 'none';
-                chView.style.transform = 'translate3d(' + Math.min(dx, window.innerWidth) + 'px,0,0)';
-                chView.style.opacity = String(Math.max(0.55, 1 - dx / (window.innerWidth * 1.2)));
-            }
+        swipeEl = null;
+        swipeLocked = false;
+        swipeConfirmed = false;
+        // Только с левого края экрана
+        if (startX > 32) return;
+        const target = getSwipeTarget();
+        if (target) {
+            swipeEl = target;
+            swipeEl.classList.add('swiping');
         }
     }, { passive: true });
 
-    document.addEventListener('touchend', (e) => {
-        if (!_swipeActive) return;
-        _swipeActive = false;
-        const dx = e.changedTouches[0].clientX - startX;
-        const dy = Math.abs(e.changedTouches[0].clientY - startY);
-        const chatWin = document.getElementById('chat-window');
-        const chView  = document.getElementById('channel-view');
-
-        const restoreEl = (el) => {
-            el.classList.remove('swiping');
-            el.style.transform  = '';
-            el.style.opacity    = '';
-        };
-
-        if (dx > window.innerWidth * 0.35 && dy < 120) {
-            // Подтверждаем назад
-            if (chatWin && chatWin.classList.contains('active')) { closeChat(); }
-            else if (chView) { _closeChannelView(); }
-        } else {
-            // Отменяем — возвращаем на место
-            if (chatWin && chatWin.classList.contains('active')) restoreEl(chatWin);
-            if (chView) restoreEl(chView);
-        }
-    }, { passive: true });
     document.addEventListener('touchmove', (e) => {
-        const chatWin = document.getElementById('chat-window');
-        if (!chatWin?.classList.contains('active')) return;
+        if (!swipeEl) return;
         const dx = e.touches[0].clientX - startX;
         const dy = Math.abs(e.touches[0].clientY - startY);
-        if (startX < 30 && dx > 0 && dy < Math.abs(dx)) {
-            const ind = document.getElementById('swipe-indicator');
-            if (ind) ind.style.opacity = Math.min(dx / 120, 1) * 0.8;
-            chatWin.style.transform = `translateX(${Math.min(dx * 0.4, 60)}px)`;
+
+        // Фиксируем направление при первых 12px движения
+        if (!swipeLocked) {
+            if (Math.max(Math.abs(dx), dy) < 12) return;
+            swipeLocked = true;
+            // Если движение больше вертикальное — отменяем свайп
+            if (dy > Math.abs(dx)) {
+                swipeEl.classList.remove('swiping');
+                swipeEl = null;
+                return;
+            }
+            swipeConfirmed = true;
         }
+        if (!swipeConfirmed) return;
+
+        // Только тянем вправо
+        if (dx <= 0) return;
+        const clampedDx = Math.min(dx, window.innerWidth);
+        swipeEl.style.transform = 'translate3d(' + clampedDx + 'px,0,0)';
+        swipeEl.style.opacity = String(Math.max(0.5, 1 - clampedDx / (window.innerWidth * 1.3)));
     }, { passive: true });
-    document.addEventListener('touchend', (e) => {
-        const chatWin = document.getElementById('chat-window');
-        if (!chatWin?.classList.contains('active')) return;
-        const dx = e.changedTouches[0].clientX - startX;
-        chatWin.style.transform = '';
-        const ind = document.getElementById('swipe-indicator');
-        if (ind) ind.style.opacity = '0';
-        if (startX < 40 && dx > 80) closeChat();
-    }, { passive: true });
-}
+
+    const finishSwipe = (e) => {
+        if (!swipeEl) return;
+        const el = swipeEl;
+        swipeEl = null;
+        el.classList.remove('swiping');
+        const dx = (e.changedTouches ? e.changedTouches[0].clientX : startX) - startX;
+        const threshold = window.innerWidth * 0.38;
+
+        if (swipeConfirmed && dx > threshold) {
+            // Анимируем полное закрытие
+            el.style.transition = 'transform .22s cubic-bezier(.22,1,.36,1), opacity .22s';
+            el.style.transform  = 'translate3d(100%,0,0)';
+            el.style.opacity    = '0';
+            setTimeout(() => {
+                el.style.transform = '';
+                el.style.opacity   = '';
+                el.style.transition = '';
+                if (el.id === 'chat-window') closeChat();
+                else _closeChannelView();
+            }, 220);
+        } else {
+            // Возвращаем на место с анимацией
+            el.style.transition = 'transform .25s cubic-bezier(.22,1,.36,1), opacity .2s';
+            el.style.transform  = 'translate3d(0,0,0)';
+            el.style.opacity    = '1';
+            setTimeout(() => {
+                el.style.transform  = '';
+                el.style.opacity    = '';
+                el.style.transition = '';
+            }, 250);
+        }
+        swipeConfirmed = false;
+        swipeLocked    = false;
+    };
+
+    document.addEventListener('touchend',    finishSwipe, { passive: true });
+    document.addEventListener('touchcancel', finishSwipe, { passive: true });
 
 // ══════════════════════════════════════════════════════════
 //  WEB PUSH — iOS Safari 16.4+ и все современные браузеры
@@ -11910,4 +12015,4 @@ function closeMusicPlayer() {
         #music-section { will-change:transform; }
     `;
     document.head.appendChild(s);
-})();
+})();}
