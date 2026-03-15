@@ -2343,41 +2343,49 @@ def block_user(user_id):
 @app.route('/get_moments')
 @login_required
 def get_moments():
+    """
+    Правило: видишь моменты только тех кого сохранил + свои.
+    Если тебя не сохранили — твои моменты они не видят.
+    """
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
 
-    # Только заблокированные не показываем
+    # Кого я сохранил — только их моменты вижу
+    my_saved_ids = set(db.session.execute(
+        text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
+    # Кого я заблокировал
     i_blocked_ids = set(db.session.execute(
         text('SELECT blocked_id FROM blocked_user WHERE blocker_id = :uid'),
         {'uid': uid}
     ).scalars().all())
 
-    # Все активные моменты за 24ч — БЕЗ ФИЛЬТРОВ по visibility и контактам
+    # Кто скрыл от меня
+    hidden_ids = set(db.session.execute(
+        text('SELECT user_id FROM moment_hidden_from WHERE hidden_from_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
     rows = db.session.execute(text('''
-        SELECT
-            m.id          AS moment_id,
-            m.user_id,
-            m.media_url,
-            m.text,
-            m.geo_name,
-            m.timestamp,
-            u.name        AS user_name,
-            u.avatar      AS user_avatar
+        SELECT m.id AS moment_id, m.user_id, m.media_url, m.text, m.geo_name, m.timestamp,
+               u.name AS user_name, u.avatar AS user_avatar,
+               COALESCE(u.moments_visibility,'all') AS vis
         FROM moment m
         JOIN "user" u ON u.id = m.user_id
         WHERE m.timestamp >= :cutoff
           AND (m.expires_at IS NULL OR m.expires_at > :now)
           AND u.is_blocked = FALSE
-        ORDER BY m.timestamp DESC
-        LIMIT 300
+        ORDER BY m.timestamp DESC LIMIT 300
     '''), {'cutoff': cutoff, 'now': now_utc}).fetchall()
 
     moment_ids = [r.moment_id for r in rows]
     view_counts = {}
     if moment_ids:
         for vc in db.session.execute(
-            text('SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id = ANY(:ids) GROUP BY moment_id'),
+            text('SELECT moment_id, COUNT(*) cnt FROM moment_view WHERE moment_id=ANY(:ids) GROUP BY moment_id'),
             {'ids': moment_ids}
         ).fetchall():
             view_counts[vc.moment_id] = vc.cnt
@@ -2386,9 +2394,12 @@ def get_moments():
     for r in rows:
         author_id = r.user_id
         is_mine   = (author_id == uid)
-        # Единственный фильтр — заблокированные
-        if not is_mine and author_id in i_blocked_ids:
-            continue
+        if not is_mine:
+            if author_id in i_blocked_ids: continue
+            if author_id in hidden_ids:    continue
+            if r.vis == 'nobody':          continue
+            # Главное: вижу только тех кого сохранил
+            if author_id not in my_saved_ids: continue
         ts = r.timestamp
         data.append({
             'id':            r.moment_id,
@@ -2403,7 +2414,6 @@ def get_moments():
             'view_count':    view_counts.get(r.moment_id, 0),
             'is_mine':       is_mine,
         })
-
     return jsonify(data)
 
 
