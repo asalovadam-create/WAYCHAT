@@ -289,6 +289,19 @@ def _run_early_migrations():
         'CREATE INDEX IF NOT EXISTS ix_channel_username ON channel(username)',
         'CREATE INDEX IF NOT EXISTS ix_channel_sub ON channel_subscriber(channel_id)',
         'CREATE INDEX IF NOT EXISTS ix_channel_post ON channel_post(channel_id, created_at)',
+        "ALTER TABLE channel ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE channel ADD COLUMN IF NOT EXISTS verified_type VARCHAR(30) DEFAULT ''",
+        '''CREATE TABLE IF NOT EXISTS channel_verify_request (
+            id SERIAL PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            reason TEXT DEFAULT '',
+            status VARCHAR(20) DEFAULT 'pending',
+            admin_note TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT NOW(),
+            resolved_at TIMESTAMP
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_ch_verify_req ON channel_verify_request(channel_id)',
     ]
     for sql in early_sqls:
         try:
@@ -668,14 +681,16 @@ class GroupMember(db.Model):
 class Channel(db.Model):
     """Канал — публичный или приватный, только владелец постит"""
     __tablename__ = 'channel'
-    id          = db.Column(db.Integer,     primary_key=True)
-    username    = db.Column(db.String(64),  unique=True, nullable=False, index=True)  # @username
-    name        = db.Column(db.String(120), nullable=False)
-    description = db.Column(db.Text,        default='')
-    avatar      = db.Column(db.String(300), default='')
-    owner_id    = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
-    is_private  = db.Column(db.Boolean,     default=False)
-    created_at  = db.Column(db.DateTime,    default=datetime.utcnow)
+    id            = db.Column(db.Integer,     primary_key=True)
+    username      = db.Column(db.String(64),  unique=True, nullable=False, index=True)
+    name          = db.Column(db.String(120), nullable=False)
+    description   = db.Column(db.Text,        default='')
+    avatar        = db.Column(db.String(300), default='')
+    owner_id      = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
+    is_private    = db.Column(db.Boolean,     default=False)
+    is_verified   = db.Column(db.Boolean,     default=False)   # синяя галочка
+    verified_type = db.Column(db.String(30),  default='')      # 'official' и др.
+    created_at    = db.Column(db.DateTime,    default=datetime.utcnow)
 
 
 class ChannelSubscriber(db.Model):
@@ -705,6 +720,19 @@ class ChannelPostReaction(db.Model):
     user_id = db.Column(db.Integer,    db.ForeignKey('user.id'),         nullable=False)
     emoji   = db.Column(db.String(10), nullable=False)
     __table_args__ = (db.UniqueConstraint('post_id', 'user_id', name='uq_ch_reaction'),)
+
+
+class ChannelVerifyRequest(db.Model):
+    """Заявки каналов на верификацию"""
+    __tablename__ = 'channel_verify_request'
+    id         = db.Column(db.Integer, primary_key=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channel.id'), nullable=False, index=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'),    nullable=False)
+    reason     = db.Column(db.Text,    default='')   # причина от пользователя
+    status     = db.Column(db.String(20), default='pending')  # pending/approved/rejected
+    admin_note = db.Column(db.Text,    default='')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_at= db.Column(db.DateTime, nullable=True)
 
 
 class MomentView(db.Model):
@@ -3723,13 +3751,17 @@ def my_channels():
         result.append({'id':c.id,'username':c.username,'name':c.name,'avatar':c.avatar or '',
             'description':c.description or '','is_owner':True,'subscribers':sub_cnt(c.id),
             'last_post_time': to_moscow_str(lp.created_at) if lp else '',
-            'last_post_text': (lp.text or '')[:60] if lp else ''})
+            'last_post_text': (lp.text or '')[:60] if lp else '',
+            'is_verified':   c.is_verified or False,
+            'verified_type': c.verified_type or ''})
     for r in sub_rows:
         lp = last_p(r.id)
         result.append({'id':r.id,'username':r.username,'name':r.name,'avatar':r.avatar or '',
             'description':r.description or '','is_owner':False,'subscribers':sub_cnt(r.id),
             'last_post_time': to_moscow_str(lp.created_at) if lp else '',
-            'last_post_text': (lp.text or '')[:60] if lp else ''})
+            'last_post_text': (lp.text or '')[:60] if lp else '',
+            'is_verified':   c.is_verified or False,
+            'verified_type': c.verified_type or ''})
     return jsonify(result)
 
 
@@ -3778,7 +3810,9 @@ def channel_info(ch_id):
         'subscribers': ChannelSubscriber.query.filter_by(channel_id=ch_id).count(),
         'is_owner': ch.owner_id == uid,
         'is_subscribed': bool(ChannelSubscriber.query.filter_by(channel_id=ch_id,user_id=uid).first()),
-        'is_private': ch.is_private,
+        'is_private':    ch.is_private,
+        'is_verified':   ch.is_verified or False,
+        'verified_type': ch.verified_type or '',
     })
 
 
@@ -3812,7 +3846,7 @@ def channel_posts(ch_id):
     return jsonify({
         'channel':{'id':ch.id,'username':ch.username,'name':ch.name,'avatar':ch.avatar or '',
             'description':ch.description or '','subscribers':sub_cnt,
-            'is_owner':is_owner,'is_subscribed':is_sub},
+            'is_owner':is_owner,'is_subscribed':is_sub,'is_verified':ch.is_verified or False,'verified_type':ch.verified_type or ''},
         'posts':result,
     })
 
@@ -3876,6 +3910,144 @@ def channel_upload_avatar(ch_id):
     if not url: return jsonify({'ok':False,'error':'Upload failed'}), 500
     ch.avatar = url; db.session.commit()
     return jsonify({'ok':True,'avatar':url})
+
+
+
+# ══════════════════════════════════════════════════════════
+#  ВЕРИФИКАЦИЯ КАНАЛОВ
+# ══════════════════════════════════════════════════════════
+
+@app.route('/api/channels/<int:ch_id>/request_verify', methods=['POST'])
+@login_required
+def channel_request_verify(ch_id):
+    """Пользователь подаёт заявку на верификацию канала"""
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id:
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    if ch.is_verified:
+        return jsonify({'ok': False, 'error': 'Канал уже верифицирован'}), 400
+    # Проверяем нет ли уже pending заявки
+    existing = ChannelVerifyRequest.query.filter_by(
+        channel_id=ch_id, status='pending'
+    ).first()
+    if existing:
+        return jsonify({'ok': False, 'error': 'Заявка уже отправлена, ожидайте'}), 400
+    data   = request.get_json() or {}
+    reason = (data.get('reason') or '').strip()[:1000]
+    req = ChannelVerifyRequest(
+        channel_id=ch_id,
+        user_id=current_user.id,
+        reason=reason,
+        status='pending',
+    )
+    db.session.add(req)
+    db.session.commit()
+    return jsonify({'ok': True, 'message': 'Заявка отправлена! Ожидайте проверки администрацией.'})
+
+
+@app.route('/api/channels/<int:ch_id>/verify_status')
+@login_required
+def channel_verify_status(ch_id):
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error': 'Not found'}), 404
+    req = ChannelVerifyRequest.query.filter_by(channel_id=ch_id).order_by(
+        ChannelVerifyRequest.created_at.desc()
+    ).first()
+    return jsonify({
+        'is_verified':    ch.is_verified,
+        'verified_type':  ch.verified_type or '',
+        'request_status': req.status if req else None,
+        'request_id':     req.id if req else None,
+        'admin_note':     req.admin_note if req else '',
+        'created_at':     req.created_at.isoformat() if req else None,
+    })
+
+
+# ── Admin routes for channel verification ──
+
+@app.route('/admin/api/channel_verify_requests')
+@login_required
+@require_admin
+def admin_channel_verify_requests():
+    status = request.args.get('status', 'pending')
+    reqs   = ChannelVerifyRequest.query.filter_by(status=status).order_by(
+        ChannelVerifyRequest.created_at.desc()
+    ).limit(100).all()
+    result = []
+    for r in reqs:
+        ch  = db.session.get(Channel, r.channel_id)
+        usr = db.session.get(User,    r.user_id)
+        result.append({
+            'id':           r.id,
+            'channel_id':   r.channel_id,
+            'channel_name': ch.name if ch else '?',
+            'channel_username': ch.username if ch else '?',
+            'channel_avatar':   ch.avatar   if ch else '',
+            'subs':         ChannelSubscriber.query.filter_by(channel_id=r.channel_id).count(),
+            'owner_name':   usr.name     if usr else '?',
+            'owner_username': usr.username if usr else '?',
+            'reason':       r.reason or '',
+            'status':       r.status,
+            'admin_note':   r.admin_note or '',
+            'created_at':   r.created_at.isoformat() if r.created_at else '',
+        })
+    return jsonify({'requests': result, 'total': len(result)})
+
+
+@app.route('/admin/api/channel_verify_approve', methods=['POST'])
+@login_required
+@require_admin
+def admin_channel_verify_approve():
+    data    = request.get_json() or {}
+    req_id  = data.get('request_id')
+    note    = (data.get('note') or '').strip()[:500]
+    req     = db.session.get(ChannelVerifyRequest, req_id)
+    if not req: return jsonify({'error': 'Not found'}), 404
+    ch = db.session.get(Channel, req.channel_id)
+    if not ch: return jsonify({'error': 'Channel not found'}), 404
+
+    req.status      = 'approved'
+    req.admin_note  = note
+    req.resolved_at = datetime.utcnow()
+    ch.is_verified  = True
+    ch.verified_type = 'official'
+    db.session.commit()
+    _admin_log('verify_channel', req.channel_id, f'channel=@{ch.username}')
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/api/channel_verify_reject', methods=['POST'])
+@login_required
+@require_admin
+def admin_channel_verify_reject():
+    data   = request.get_json() or {}
+    req_id = data.get('request_id')
+    note   = (data.get('note') or '').strip()[:500]
+    req    = db.session.get(ChannelVerifyRequest, req_id)
+    if not req: return jsonify({'error': 'Not found'}), 404
+    ch = db.session.get(Channel, req.channel_id)
+
+    req.status      = 'rejected'
+    req.admin_note  = note
+    req.resolved_at = datetime.utcnow()
+    db.session.commit()
+    _admin_log('reject_channel_verify', req.channel_id, f'channel=@{ch.username if ch else "?"}')
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/api/channel_unverify', methods=['POST'])
+@login_required
+@require_admin
+def admin_channel_unverify():
+    data = request.get_json() or {}
+    ch_id = data.get('channel_id')
+    ch = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error': 'Not found'}), 404
+    ch.is_verified  = False
+    ch.verified_type = ''
+    db.session.commit()
+    _admin_log('unverify_channel', ch_id, f'channel=@{ch.username}')
+    return jsonify({'ok': True})
 
 
 
