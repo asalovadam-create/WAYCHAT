@@ -736,21 +736,27 @@ body {
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
-.nav-bar {
-    position:fixed;bottom:0;left:0;right:0;height:64px;display:flex;align-items:flex-start;
-    justify-content:space-around;padding-top:8px;padding-bottom:max(env(safe-area-inset-bottom),4px);
-    border-top:0.5px solid var(--border);z-index:1000;background:rgba(0,0,0,0.92);
-    backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);
+/* Nav bar hidden — replaced by FAB */
+.nav-bar { display:none !important; }
+.nav-item { display:none !important; }
+.nav-badge { position:fixed;top:12px;right:12px;background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px;z-index:9000;pointer-events:none; }
+
+/* FAB кнопка + */
+.fab-main {
+    position:fixed;
+    bottom:max(env(safe-area-inset-bottom),24px);
+    right:20px;
+    width:56px;height:56px;
+    border-radius:50%;
+    background:var(--accent);
+    box-shadow:0 4px 20px rgba(16,185,129,.45),0 2px 8px rgba(0,0,0,.3);
+    border:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    z-index:1000;
+    transition:transform .15s,box-shadow .15s;
+    -webkit-tap-highlight-color:transparent;
 }
-.nav-item {
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    gap:3px;opacity:0.35;transition:opacity 0.2s,transform 0.2s;width:72px;cursor:pointer;position:relative;
-}
-.nav-item.active { opacity:1; }
-.nav-item.active .nav-icon-wrap { transform:scale(1.08); }
-.nav-icon-wrap { width:28px;height:28px;display:flex;align-items:center;justify-content:center;transition:transform 0.2s cubic-bezier(0.34,1.56,0.64,1); }
-.nav-text { font-size:10px;font-weight:600;letter-spacing:-0.2px;color:var(--text); }
-.nav-badge { position:absolute;top:-2px;right:8px;background:var(--accent);color:#000;font-size:9px;font-weight:800;min-width:16px;height:16px;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid #000; }
+.fab-main:active { transform:scale(.92); box-shadow:0 2px 10px rgba(16,185,129,.3); }
 
 /* ПОИСК */
 .search-box {
@@ -978,22 +984,20 @@ body {
 
 <div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:100dvh">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:84px">
+    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(env(safe-area-inset-bottom),16px)">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section" class="pt-14">
-            <div class="px-5 pt-2 pb-3">
-                <div class="section-header-row">
-                    <h1 class="section-title">Чаты</h1>
-                    <div style="position:absolute;right:16px;top:50%;transform:translateY(-50%)">
-                        <button onclick="openNewChatSheet()" class="fab-plus" title="Новый чат"
-                            style="width:32px;height:32px">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-                                <line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
-                                <line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
-                            </svg>
-                        </button>
+            <div class="px-4 pt-2 pb-3">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <!-- Аватарка профиля слева — кликабельна -->
+                    <div id="nav-ava-box" onclick="openProfileSheet()" style="width:34px;height:34px;border-radius:50%;overflow:hidden;flex-shrink:0;cursor:pointer;-webkit-tap-highlight-color:transparent">
+                        ${getAvatarHtml(currentUser,'w-full h-full')}
                     </div>
+                    <!-- Название по центру -->
+                    <h1 style="flex:1;text-align:center;font-size:18px;font-weight:800;letter-spacing:-.3px;margin:0">Чаты</h1>
+                    <!-- Заглушка справа для симметрии -->
+                    <div style="width:34px"></div>
                 </div>
             </div>
 
@@ -1301,24 +1305,15 @@ body {
         </div>
     </div>
 
-    <!-- ══ НАВ-БАР ══ -->
-    <div class="nav-bar">
-        <div id="tab-moments" onclick="switchTab('moments')" class="nav-item">
-            <div class="nav-icon-wrap">${ICONS.moments}</div>
-            <span class="nav-text">Моменты</span>
-        </div>
-        <div id="tab-chats" onclick="switchTab('chats')" class="nav-item active">
-            <div class="nav-icon-wrap" style="width:44px;height:44px;margin-top:-6px">${ICONS.chats}</div>
-            <span class="nav-text">Чаты</span>
-            <div id="total-unread-badge" class="nav-badge hidden">0</div>
-        </div>
-        <div id="tab-settings" onclick="switchTab('settings')" class="nav-item">
-            <div id="nav-ava-box" class="nav-icon-wrap" style="width:30px;height:30px">
-                ${getAvatarHtml(currentUser, 'w-8 h-8')}
-            </div>
-            <span class="nav-text">Профиль</span>
-        </div>
-    </div>
+    <!-- ══ FAB + (вместо навбара) ══ -->
+    <button class="fab-main" id="fab-main-btn" onclick="openNewChatSheet()" aria-label="Новый чат">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <line x1="12" y1="5" x2="12" y2="19" stroke="#000" stroke-width="2.8" stroke-linecap="round"/>
+            <line x1="5" y1="12" x2="19" y2="12" stroke="#000" stroke-width="2.8" stroke-linecap="round"/>
+        </svg>
+    </button>
+    <!-- Unread badge -->
+    <div id="total-unread-badge" class="nav-badge hidden" style="top:max(calc(env(safe-area-inset-top)+8px),16px);right:16px;pointer-events:none;z-index:9999">0</div>
 </div>
 
 <!-- ══ МИНИ-ПЛЕЕР (глобальный, поверх всего) ══ -->
@@ -1829,7 +1824,7 @@ function renderChannelsList(channels) {
         item.className = 'chat-item'; // same class as regular chats
         item.dataset.channelItem = '1';
         item.dataset.channelId   = String(ch.id);
-        item.onclick = function() { _openChannelInfo(ch.id); };
+        item.onclick = function() { openChannelById(ch.id); };
 
         // Avatar — square rounded like TG channels
         // Avatar — square rounded like TG channels
@@ -2555,6 +2550,9 @@ async function openChat(id, name, avatar) {
     hasMoreMessages  = true;
 
     win.classList.add('active');
+    // Скрываем FAB пока открыт чат
+    var fab = document.getElementById('fab-main-btn');
+    if (fab) fab.style.display = 'none';
     const displayName = getContactDisplayName(id, name);
     document.getElementById('chat-name').textContent = displayName;
     document.getElementById('chat-status').textContent = 'загрузка...';
@@ -2913,13 +2911,19 @@ function buildMessageRow(msg, animate = true) {
           ${_callbackBtn}
         </div>`;
     } else if (type === 'image' || type === 'photo') {
-        // Фото без рамки + кнопка переслать
+        // Фото без рамки + время + кнопка переслать
         contentHtml = '<div style="position:relative;overflow:hidden;border-radius:14px;max-width:280px;cursor:zoom-in" onclick="openImgZoom(this.querySelector(\'img\').src)">'
             + '<img src="'+msg.file_url+'" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover" loading="lazy"'
             + ' onerror="this.style.display=\'none\';this.parentElement.innerHTML=\'<div style=padding:16px;color:rgba(255,255,255,.4);font-size:13px>Не удалось загрузить</div>\'">'
+            // Время на фото
+            + '<div style="position:absolute;bottom:6px;'+(isMe?'left':'right')+':8px;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);border-radius:10px;padding:2px 7px;font-size:10px;color:rgba(255,255,255,.9);display:flex;align-items:center;gap:4px">'
+            + displayTime
+            + (isMe ? '<span style="color:'+(msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,.6)')+'">'+( msg.is_read ? ICONS.checkDouble : ICONS.check)+'</span>' : '')
+            + '</div>'
+            // Forward button
             + '<button onclick="event.stopPropagation();_forwardMessage('+JSON.stringify(msg).replace(/"/g,'&quot;')+')" '
-            + 'style="position:absolute;bottom:8px;right:8px;width:32px;height:32px;border-radius:50%;background:rgba(0,0,0,.5);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)">'
-            + '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + 'style="position:absolute;top:8px;right:8px;width:30px;height:30px;border-radius:50%;background:rgba(0,0,0,.5);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)">'
+            + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
             + '</button>'
             + '</div>';
     } else if (type === 'video') {
@@ -4717,6 +4721,62 @@ async function createGroup() {
 // ══════════════════════════════════════════════════════════
 //  ACTION SHEET — кнопка "+" (новый чат / группа / канал)
 // ══════════════════════════════════════════════════════════
+
+function openProfileSheet() {
+    vibrate(8);
+    var old = document.getElementById('profile-sheet');
+    if (old) { old.remove(); return; }
+
+    var ov = document.createElement('div');
+    ov.id = 'profile-sheet';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);display:flex;flex-direction:column;justify-content:flex-end';
+    ov.addEventListener('click', function(e){ if(e.target===ov) ov.remove(); });
+
+    var ava = currentUser.avatar && !currentUser.avatar.includes('default') && !currentUser.avatar.startsWith('emoji:')
+        ? '<img src="'+currentUser.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+        : '<div style="width:100%;height:100%;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#000">'+(currentUser.name||'?')[0].toUpperCase()+'</div>';
+
+    function shRow(icon, label, sub, fn, color) {
+        var el = document.createElement('div');
+        el.style.cssText = 'display:flex;align-items:center;gap:14px;padding:14px 20px;cursor:pointer;-webkit-tap-highlight-color:transparent;border-bottom:.5px solid rgba(255,255,255,.05)';
+        el.innerHTML = '<div style="width:42px;height:42px;border-radius:14px;background:'+(color||'rgba(255,255,255,.08)')+';display:flex;align-items:center;justify-content:center;flex-shrink:0">'+icon+'</div>'
+            + '<div style="flex:1"><div style="font-size:16px;font-weight:600">'+label+'</div>'+(sub?'<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">'+sub+'</div>':'')+'</div>'
+            + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.2)" stroke-width="1.8" stroke-linecap="round"/></svg>';
+        el.addEventListener('click', function(){ ov.remove(); setTimeout(fn,60); });
+        return el;
+    }
+
+    var sheet = document.createElement('div');
+    sheet.style.cssText = 'background:rgba(18,18,22,.98);backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);border-radius:24px 24px 0 0;padding:0 0 max(env(safe-area-inset-bottom),12px);border-top:1px solid rgba(255,255,255,.08)';
+
+    sheet.innerHTML = ''
+        + '<div style="width:36px;height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin:12px auto 16px"></div>'
+        // Profile card
+        + '<div onclick="event.stopPropagation()" style="display:flex;align-items:center;gap:14px;padding:4px 20px 16px;border-bottom:.5px solid rgba(255,255,255,.07);cursor:pointer;-webkit-tap-highlight-color:transparent" id="profile-card-row">'
+        + '<div style="width:54px;height:54px;border-radius:50%;overflow:hidden;flex-shrink:0">'+ava+'</div>'
+        + '<div style="flex:1"><div style="font-size:17px;font-weight:700">'+escHtml(currentUser.name||'')+'</div>'
+        + '<div style="font-size:13px;color:rgba(255,255,255,.4);margin-top:2px">@'+escHtml(currentUser.username||'')+'</div></div>'
+        + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.2)" stroke-width="1.8" stroke-linecap="round"/></svg>'
+        + '</div>';
+
+    sheet.appendChild(shRow(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="#fbbf24" stroke-width="2"/><line x1="12" y1="1" x2="12" y2="3" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="21" x2="12" y2="23" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="1" y1="12" x2="3" y2="12" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="21" y1="12" x2="23" y2="12" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Моменты', 'Твои истории', function(){ switchTab('moments'); }, 'rgba(251,191,36,.12)'
+    ));
+    sheet.appendChild(shRow(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/></svg>',
+        'Настройки', 'Профиль, уведомления', function(){ switchTab('settings'); }, 'rgba(167,139,250,.12)'
+    ));
+
+    ov.appendChild(sheet);
+    document.body.appendChild(ov);
+
+    // Profile card click → settings
+    ov.querySelector('#profile-card-row').addEventListener('click', function(){
+        ov.remove(); setTimeout(function(){ switchTab('settings'); }, 60);
+    });
+}
+
 function _closeNewChatSheet() {
     const el = document.getElementById('new-chat-sheet');
     if (el) el.remove();
@@ -4898,14 +4958,47 @@ async function submitCreateChannel(btn) {
 }
 
 async function openChannelById(chId) {
+    // Мгновенный показ из кэша
+    var cachedCh = _channelsListCache.find(function(c){ return c.id == chId; });
+    if (cachedCh) {
+        _currentChannel = cachedCh;
+        renderChannelView(cachedCh, []); // skeleton: пустые посты
+        // Грузим посты в фоне
+        _loadChannelPosts(chId);
+        return;
+    }
     try {
         const r = await apiFetch('/api/channels/' + chId + '/posts');
         if (!r?.ok) { showToast('Не удалось открыть канал', 'error'); return; }
         const data = await r.json();
         if (data.error) { showToast(data.error, 'error'); return; }
         _currentChannel = data.channel;
+        // Update cache
+        var ci = _channelsListCache.findIndex(function(c){ return c.id == chId; });
+        if (ci >= 0) Object.assign(_channelsListCache[ci], data.channel);
+        else _channelsListCache.push(data.channel);
         renderChannelView(data.channel, data.posts);
     } catch(e) { showToast('Ошибка загрузки', 'error'); }
+}
+
+async function _loadChannelPosts(chId) {
+    try {
+        const r = await apiFetch('/api/channels/' + chId + '/posts');
+        if (!r?.ok) return;
+        const data = await r.json();
+        if (data.error) return;
+        // Update header with fresh data
+        var ci = _channelsListCache.findIndex(function(c){ return c.id == chId; });
+        if (ci >= 0) Object.assign(_channelsListCache[ci], data.channel);
+        // Update posts list if channel still open
+        const list = document.getElementById('channel-posts-list');
+        if (list) {
+            const isOwner = data.channel.is_owner;
+            list.innerHTML = data.posts.length
+                ? data.posts.map(function(p){ return renderChannelPost(p, isOwner, chId); }).join('')
+                : '<div style="flex:1;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.2);font-size:15px">' + (isOwner ? 'Напиши первый пост ниже' : 'Постов пока нет') + '</div>';
+        }
+    } catch(e) {}
 }
 
 
@@ -5186,9 +5279,31 @@ function _chPickMedia(chId) {
     if (inp) inp.click();
 }
 async function _chHandleMedia(inp, chId) {
-    _chMediaFile = inp.files[0] || null;
-    if (_chMediaFile) showToast('Медиа прикреплено ✓', 'success');
+    const file = inp.files[0];
+    if (!file) return;
+    _chMediaFile = file;
+    const url = URL.createObjectURL(file);
+    const isVid = file.type.startsWith('video');
+
+    // Show preview inside the input bar area
+    var old = document.getElementById('ch-media-prev');
+    if (old) old.remove();
+    const prev = document.createElement('div');
+    prev.id = 'ch-media-prev';
+    prev.style.cssText = 'padding:6px 8px 0;display:flex;align-items:center;gap:8px';
+    var mediaEl = isVid
+        ? '<video src="'+url+'" style="width:60px;height:60px;object-fit:cover;border-radius:10px;flex-shrink:0" muted playsinline></video>'
+        : '<img src="'+url+'" style="width:60px;height:60px;object-fit:cover;border-radius:10px;flex-shrink:0">';
+    prev.innerHTML = mediaEl
+        + '<div style="flex:1;font-size:13px;color:rgba(255,255,255,.6)">'+(isVid?'📹 Видео':'📷 Фото')+'</div>'
+        + '<button onclick="_clearChMediaPrev()" style="width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,.1);border:none;cursor:pointer;color:white;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>'
+        + '</button>';
+    const bar = document.getElementById('ch-input-bar');
+    if (bar) bar.insertBefore(prev, bar.firstChild);
 }
+function _clearChMediaPrev() { var m=document.getElementById("ch-media-prev"); if(m) m.remove(); _chMediaFile=null; }
+
 async function _chSendPost(chId) {
     const inp  = document.getElementById('ch-text-inp-' + chId);
     const text = inp ? inp.value.trim() : '';
@@ -5480,43 +5595,67 @@ async function _submitVerifyRequest(chId) {
 function renderChannelPost(p, isOwner, chId) {
     const reacts = (p.reactions||[]).map(function(r) {
         const active = p.my_reaction === r.emoji;
-        return '<button onclick="reactChannelPost('+chId+','+p.id+',\'' + r.emoji + '\')" style="display:inline-flex;align-items:center;gap:4px;background:'+(active?'rgba(16,185,129,.25)':'rgba(255,255,255,.07)')+';border:1px solid '+(active?'var(--accent)':'rgba(255,255,255,.1)')+';border-radius:20px;padding:4px 10px;font-size:13px;cursor:pointer;color:white;margin:2px">'+r.emoji+' <span style="font-size:11px;opacity:.7">'+r.count+'</span></button>';
+        return '<button onclick="reactChannelPost('+chId+','+p.id+',\''+r.emoji+'\')" style="display:inline-flex;align-items:center;gap:4px;background:'+(active?'rgba(16,185,129,.2)':'rgba(255,255,255,.06)')+';border:1px solid '+(active?'var(--accent)':'rgba(255,255,255,.08)')+';border-radius:20px;padding:3px 8px;font-size:13px;cursor:pointer;color:white">'+ r.emoji+' <span style="font-size:11px;opacity:.6">'+r.count+'</span></button>';
     }).join('');
 
-    // Process text: @mentions and links blue
+    // Text with @mentions and links blue
     var postText = '';
     if (p.text) {
         var safe = escHtml(p.text);
         safe = safe.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" style="color:#60a5fa;text-decoration:none">$1</a>');
-        safe = safe.replace(/@([a-zA-Z0-9_]{2,32})/g, '<span style="color:#60a5fa;font-weight:500">@$1</span>');
-        postText = '<div style="font-size:15px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin-bottom:6px">'+safe+'</div>';
+        safe = safe.replace(/@([a-zA-Z0-9_]{2,32})/g, '<span class="mention" data-u="$1" onclick="_openMentionProfile(this.dataset.u)" style="color:#60a5fa;font-weight:500;cursor:pointer">@$1</span>');
+        postText = safe;
     }
 
+    // Media — full width, time overlay like TG
+    var now = new Date(); var h = now.getHours(); var m = ('0'+now.getMinutes()).slice(-2);
+    var timeStr = p.created_at || (h+':'+m);
+
+    if (p.media_url && !p.text) {
+        // Media only — full bleed with time stamp on image
+        var mediaEl = p.media_url.match(/\.(mp4|mov|webm)/i)
+            ? '<video src="'+p.media_url+'" controls playsinline style="width:100%;display:block;max-height:70vh;object-fit:cover"></video>'
+            : '<img src="'+p.media_url+'" style="width:100%;display:block;max-height:70vh;object-fit:cover" loading="lazy">';
+        var reactRow = (reacts || isOwner) ? '<div style="padding:6px 12px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+            + '<button onclick="openReactPicker('+chId+','+p.id+')" style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:3px 8px;font-size:13px;cursor:pointer;color:rgba(255,255,255,.6)">😊</button>'
+            + reacts
+            + '<span style="margin-left:auto;font-size:11px;color:rgba(255,255,255,.35);display:flex;align-items:center;gap:4px">'
+            + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.35)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.35)" stroke-width="2"/></svg>'
+            + p.views + ' &nbsp;' + timeStr
+            + (isOwner?'&nbsp;<button onclick="deleteChannelPost('+chId+','+p.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);padding:0;-webkit-tap-highlight-color:transparent"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>':'')
+            + '</span>'
+            + '</div>' : '';
+        return '<div style="margin-bottom:2px">'
+            + '<div style="position:relative;overflow:hidden">'
+            + mediaEl
+            + '<div style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);border-radius:10px;padding:2px 7px;font-size:11px;color:rgba(255,255,255,.85)">'
+            + '<svg width="9" height="9" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:3px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.8)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.8)" stroke-width="2"/></svg>'
+            + p.views + ' &nbsp;' + timeStr
+            + '</div></div>'
+            + reactRow + '</div>';
+    }
+
+    // Text only or text+media
     var mediaHtml = '';
     if (p.media_url) {
         if (p.media_url.match(/\.(mp4|mov|webm)/i)) {
-            mediaHtml = '<video src="'+p.media_url+'" controls playsinline style="width:100%;border-radius:14px;margin-bottom:8px;max-height:360px;display:block"></video>';
+            mediaHtml = '<div style="margin:-12px -14px 12px;position:relative"><video src="'+p.media_url+'" controls playsinline style="width:100%;display:block;max-height:50vh;object-fit:cover"></video></div>';
         } else {
-            mediaHtml = '<img src="'+p.media_url+'" style="width:100%;border-radius:14px;margin-bottom:8px;max-height:420px;object-fit:cover;display:block" loading="lazy" onerror="this.style.display=\'none\'">';
+            mediaHtml = '<div style="margin:-12px -14px 12px;position:relative"><img src="'+p.media_url+'" style="width:100%;display:block;max-height:50vh;object-fit:cover" loading="lazy"><div style="position:absolute;bottom:8px;right:8px;background:rgba(0,0,0,.45);backdrop-filter:blur(8px);border-radius:10px;padding:2px 7px;font-size:11px;color:rgba(255,255,255,.85)">'+timeStr+'</div></div>';
         }
     }
 
-    var footerHtml = '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">'
-        + '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap">'
-        + '<button onclick="openReactPicker('+chId+','+p.id+')" style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:3px 8px;font-size:13px;cursor:pointer;color:white;-webkit-tap-highlight-color:transparent">😊</button>'
+    return '<div style="background:rgba(255,255,255,.04);border-radius:18px;margin:6px 10px;padding:12px 14px;border:1px solid rgba(255,255,255,.05)">'
+        + mediaHtml
+        + (postText ? '<div style="font-size:15px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin-bottom:8px">'+postText+'</div>' : '')
+        + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
+        + '<button onclick="openReactPicker('+chId+','+p.id+')" style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:3px 8px;font-size:13px;cursor:pointer;color:rgba(255,255,255,.6);-webkit-tap-highlight-color:transparent">😊</button>'
         + reacts
-        + '</div>'
-        + '<div style="display:flex;align-items:center;gap:8px">'
-        + '<span style="font-size:11px;color:rgba(255,255,255,.3)">'
-        + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:2px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.35)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.35)" stroke-width="2"/></svg>'
-        + p.views + '</span>'
-        + '<span style="font-size:11px;color:rgba(255,255,255,.3)">'+p.created_at+'</span>'
-        + (isOwner ? '<button onclick="deleteChannelPost('+chId+','+p.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);padding:2px 0;-webkit-tap-highlight-color:transparent"><svg width="12" height="12" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>' : '')
-        + '</div></div>';
-
-    return '<div style="padding:10px 14px 8px;border-bottom:.5px solid rgba(255,255,255,.04)">'
-        + mediaHtml + postText + footerHtml
-        + '</div>';
+        + '<span style="margin-left:auto;font-size:11px;color:rgba(255,255,255,.3);display:flex;align-items:center;gap:4px">'
+        + '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="rgba(255,255,255,.35)" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.35)" stroke-width="2"/></svg>'
+        + p.views + ' &nbsp;' + timeStr
+        + (isOwner?'&nbsp;<button onclick="deleteChannelPost('+chId+','+p.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.25);padding:0;-webkit-tap-highlight-color:transparent"><svg width="11" height="11" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>':'')
+        + '</span></div></div>';
 }
 
 function openReactPicker(chId, postId) {
@@ -6518,6 +6657,13 @@ async function setEmojiAvatar() {
 }
 
 function updateAllAvatarUI() {
+    // Шапка чатов — аватарка профиля
+    (function(){ var b=document.getElementById('nav-ava-box'); if(!b||!currentUser) return;
+      var src=currentUser.avatar; var initLetter=((currentUser.name||'?')[0]).toUpperCase();
+      if(src&&!src.includes('default')&&!src.startsWith('emoji:'))
+        b.innerHTML='<img src="'+src+'" style="width:34px;height:34px;object-fit:cover;border-radius:50%">';
+      else b.innerHTML='<div style="width:34px;height:34px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#000">'+initLetter+'</div>';
+    })();
     const sBox = document.getElementById('settings-ava-box');
     const nBox = document.getElementById('nav-ava-box');
     const mBox = document.getElementById('moments-my-ava');
@@ -6804,6 +6950,11 @@ async function toggleNotifications() {
     } catch(e){ console.warn('toggle notif:',e); }
 }
 
+// Pending media for chat
+var _pendingMediaFile = null;
+var _pendingMediaUrl  = '';
+var _pendingMediaType = '';
+
 async function pickMedia(context) {
     if (context === 'msg' && !currentChatId) return;
     const input = document.createElement('input');
@@ -6811,27 +6962,96 @@ async function pickMedia(context) {
     input.accept = 'image/*,video/*';
     input.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;pointer-events:none';
     document.body.appendChild(input);
-    input.onchange = async () => {
+    input.onchange = () => {
         const file = input.files[0];
         try { document.body.removeChild(input); } catch(e) {}
         if (!file) return;
         if (context === 'moment') { _showMomentEditor(file); return; }
-        // Сообщение — грузим как раньше
-        showToast('Загрузка...', 'info', 15000);
-        const fd = new FormData();
-        fd.append('file', file);
-        try {
-            // Прямой fetch без таймаута для медиафайлов
-            const r = await fetch('/upload_media', {method:'POST', body:fd, credentials:'include'});
-            if (!r || !r.ok) throw new Error('upload failed');
-            const d = await r.json();
-            if (currentChatId) {
-                socket.emit('send_message', {chat_id:currentChatId, type_msg: d.type||(file.type.startsWith('video')?'video':'image'), file_url:d.url, sender_id:currentUser.id});
-                showToast('Отправлено','success');
-            }
-        } catch(e){ showToast('Ошибка загрузки','error'); }
+        // Show preview above input bar
+        _showChatMediaPreview(file);
     };
     input.click();
+}
+
+function _showChatMediaPreview(file) {
+    _pendingMediaFile = file;
+    _pendingMediaUrl  = URL.createObjectURL(file);
+    _pendingMediaType = file.type.startsWith('video') ? 'video' : 'image';
+
+    // Remove old preview
+    document.getElementById('chat-media-preview')?.remove();
+
+    const isVid = _pendingMediaType === 'video';
+    const prev = document.createElement('div');
+    prev.id = 'chat-media-preview';
+    prev.style.cssText = 'padding:8px 12px 4px;display:flex;align-items:flex-start;gap:10px;animation:slideUp .2s ease';
+
+    var mediaEl = isVid
+        ? '<video src="'+_pendingMediaUrl+'" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex-shrink:0" muted playsinline></video>'
+        : '<img src="'+_pendingMediaUrl+'" style="width:72px;height:72px;object-fit:cover;border-radius:12px;flex-shrink:0">';
+
+    prev.innerHTML = '<div style="position:relative;flex-shrink:0">'
+        + mediaEl
+        + '<div style="position:absolute;inset:0;border-radius:12px;background:rgba(0,0,0,.15)"></div>'
+        + '</div>'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="font-size:13px;font-weight:600;color:rgba(255,255,255,.8);margin-bottom:2px">'+(isVid?'📹 Видео':'📷 Фото')+'</div>'
+        + '<div style="font-size:12px;color:rgba(255,255,255,.4)">'+file.name+'</div>'
+        + '<div id="send-media-btn" onclick="_sendChatMedia()" style="margin-top:6px;display:inline-flex;align-items:center;gap:5px;background:var(--accent);border-radius:12px;padding:5px 12px;font-size:13px;font-weight:600;color:#000;cursor:pointer;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Отправить</div>'
+        + '</div>'
+        + '<button onclick="_clearChatMediaPreview()" style="width:26px;height:26px;border-radius:50%;background:rgba(255,255,255,.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>'
+        + '</button>';
+
+    // Insert before input bar
+    const inputBar = document.querySelector('.input-bar');
+    if (inputBar) inputBar.parentNode.insertBefore(prev, inputBar);
+}
+
+function _clearChatMediaPreview() {
+    document.getElementById('chat-media-preview')?.remove();
+    _pendingMediaFile = null;
+    _pendingMediaUrl  = '';
+    _pendingMediaType = '';
+}
+
+async function _sendChatMedia() {
+    if (!_pendingMediaFile || !currentChatId) return;
+    const file = _pendingMediaFile;
+    const type = _pendingMediaType;
+    _clearChatMediaPreview();
+
+    // Optimistic preview in messages
+    var tmpId = 'tmp_media_' + Date.now();
+    var tmpMsg = {
+        id: tmpId, chat_id: currentChatId,
+        sender_id: currentUser.id, sender_name: currentUser.name,
+        type: type, file_url: URL.createObjectURL(file),
+        is_read: false, timestamp: _nowMoscow(), _optimistic: true, content: ''
+    };
+    renderNewMessage(tmpMsg, true);
+    scrollDown(false);
+
+    showToast('Загрузка...', 'info', 20000);
+    try {
+        const fd = new FormData(); fd.append('file', file);
+        const r = await fetch('/upload_media', {method:'POST', body:fd, credentials:'include'});
+        if (!r?.ok) throw new Error('upload failed');
+        const d = await r.json();
+        // Remove optimistic
+        document.querySelector('[data-msg-id="'+tmpId+'"]')?.remove();
+        socket.emit('send_message', {
+            chat_id: currentChatId,
+            type_msg: d.type || type,
+            file_url: d.url,
+            sender_id: currentUser.id
+        });
+        showToast('Отправлено ✓', 'success');
+    } catch(e) {
+        document.querySelector('[data-msg-id="'+tmpId+'"]')?.remove();
+        showToast('Ошибка загрузки', 'error');
+    }
 }
 
 // ── Редактор момента: превью + перетаскиваемая гео-метка ──
@@ -9032,6 +9252,7 @@ function scrollDown(smooth = true) {
 }
 
 function closeChat() {
+    var fab = document.getElementById('fab-main-btn'); if(fab) fab.style.display='flex';
     document.getElementById('chat-window')?.classList.remove('active');
     if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
     currentChatId    = null;
