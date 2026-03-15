@@ -331,8 +331,23 @@ function initSocket() {
     });
 
     socket.on('disconnect', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('connect_error', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('reconnect', () => { wsConnected = true; updateConnStatus(true); });
+    socket.on('connect_error', (err) => {
+        wsConnected = false;
+        updateConnStatus(false);
+        console.warn('Socket connect error:', err?.message || err);
+    });
+    socket.on('reconnect', (attempt) => {
+        wsConnected = true;
+        updateConnStatus(true);
+        // После переподключения — обновляем данные
+        if (attempt > 1) {
+            loadChats(true);
+            if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
+        }
+    });
+    socket.on('reconnect_attempt', (attempt) => {
+        console.log('Reconnect attempt:', attempt);
+    });
 
     socket.on('new_message', onNewMessage);
 
@@ -486,11 +501,40 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    // ── 1. Профиль из кэша — мгновенно ──
-    try {
-        const cache = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-        if (cache) Object.assign(currentUser, JSON.parse(cache));
-    } catch(e){}
+    // ── 1. Ждём currentUser из window (устанавливается в index.html ДО загрузки main.js) ──
+    if (window.currentUser && window.currentUser.id > 0) {
+        Object.assign(currentUser, window.currentUser);
+    } else {
+        // Пробуем кэш пока /api/me отвечает
+        try {
+            const cache = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
+            if (cache) {
+                const parsed = JSON.parse(cache);
+                if (parsed && parsed.id > 0) Object.assign(currentUser, parsed);
+            }
+        } catch(e) {}
+        // Ждём максимум 2с пока window.currentUser установится через /api/me
+        if (!currentUser.id || currentUser.id <= 0) {
+            await new Promise(resolve => {
+                let attempts = 0;
+                const check = setInterval(() => {
+                    attempts++;
+                    if (window.currentUser && window.currentUser.id > 0) {
+                        Object.assign(currentUser, window.currentUser);
+                        clearInterval(check); resolve();
+                    } else if (attempts > 40) { // 40 * 50ms = 2s
+                        clearInterval(check); resolve();
+                    }
+                }, 50);
+            });
+        }
+    }
+
+    // Если нет пользователя после всех попыток — не рендерим приложение
+    if (!currentUser.id || currentUser.id <= 0) {
+        console.warn('WayChat: no user, waiting for redirect to /login');
+        return;
+    }
 
     applyTheme(activeTheme); // один вызов вместо двух
     renderApp();
