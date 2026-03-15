@@ -1172,8 +1172,8 @@ body {
                 <!-- Аватар по центру внизу -->
                 <div style="position:absolute;bottom:0;left:0;right:0;display:flex;flex-direction:column;align-items:center;padding-bottom:20px;z-index:2">
                     <div style="position:relative;margin-bottom:14px">
-                        <div id="settings-ava-box" style="width:96px;height:96px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6)">
-                            ${getAvatarHtml(currentUser, 'w-full h-full')}
+                        <div id="settings-ava-box" style="width:96px;height:96px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center">
+                            ${getAvatarHtml(currentUser, 'w-full h-full', false, 'width:96px;height:96px;object-fit:cover;border-radius:50%')}
                         </div>
                         <div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);display:flex;gap:8px">
                             <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
@@ -1776,45 +1776,38 @@ function renderChannelsList(channels) {
     const container = document.getElementById('chat-list');
     if (!container) return;
 
-    // Remove old channel items
-    container.querySelectorAll('[data-channel-item]').forEach(el => el.remove());
-    const oldDivider = container.querySelector('[data-channels-divider]');
-    if (oldDivider) oldDivider.remove();
-
+    // Remove old channel items and divider
+    container.querySelectorAll('[data-channel-item],[data-channels-divider]').forEach(el => el.remove());
     if (!channels.length) return;
-
-    // Divider
-    const divider = document.createElement('div');
-    divider.dataset.channelsDivider = '1';
-    divider.style.cssText = 'padding:8px 16px 4px;display:flex;align-items:center;gap:8px';
-    divider.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 8.5c0 4.7-4.5 8.5-10 8.5-1.4 0-2.7-.2-3.9-.7L2 18l1.3-4.2C2.5 12.5 2 11 2 9.5 2 4.8 6.5 1 12 1s10 3.8 10 7.5z" stroke="rgba(255,255,255,.35)" stroke-width="2"/></svg>'
-        + '<span style="font-size:12px;font-weight:600;color:rgba(255,255,255,.35);letter-spacing:0.4px;text-transform:uppercase">Каналы</span>';
-    container.appendChild(divider);
 
     channels.forEach(function(ch) {
         const item = document.createElement('div');
-        item.className = 'channel-item';
+        item.className = 'chat-item'; // same class as regular chats
         item.dataset.channelItem = '1';
-        item.dataset.channelId = String(ch.id);
+        item.dataset.channelId   = String(ch.id);
         item.onclick = function() { openChannelById(ch.id); };
 
+        // Avatar — square rounded like TG channels
+        // Avatar — square rounded like TG channels
+        const _chi = escHtml(ch.name.charAt(0).toUpperCase());
         const avaHtml = ch.avatar
-            ? '<img src="'+ch.avatar+'" style="width:52px;height:52px;border-radius:50%;object-fit:cover;flex-shrink:0">'
-            : '<div style="width:52px;height:52px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;color:black;flex-shrink:0">' + (ch.name.charAt(0).toUpperCase()) + '</div>';
-
-        const subsText = ch.subscribers === 1 ? '1 подп.' : (ch.subscribers || 0) + ' подп.';
-        const ownerBadge = ch.is_owner ? '<span style="font-size:10px;background:var(--accent);color:black;border-radius:6px;padding:1px 5px;font-weight:700;margin-left:4px">Мой</span>' : '';
+            ? '<div style="width:56px;height:56px;border-radius:16px;overflow:hidden;flex-shrink:0"><img src="'+ch.avatar+'" style="width:56px;height:56px;object-fit:cover"></div>'
+            : '<div style="width:56px;height:56px;border-radius:16px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#000;flex-shrink:0">'+_chi+'</div>';
+        const subsText  = (ch.subscribers||0) + ' подп.';
+        const ownerDot  = ch.is_owner ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:5px;vertical-align:2px"></span>' : '';
+        const lastText  = ch.last_post_text
+            ? escHtml(ch.last_post_text.slice(0, 55))
+            : '<span style="color:rgba(255,255,255,.3)">@'+escHtml(ch.username)+' · '+subsText+'</span>';
 
         item.innerHTML = avaHtml
-            + '<div style="flex:1;min-width:0">'
-            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
-            + '<div style="font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(ch.name) + ownerBadge + '</div>'
-            + '<div style="font-size:12px;color:rgba(255,255,255,.4);flex-shrink:0">' + (ch.last_post_time || '') + '</div>'
+            + '<div style="flex:1;min-width:0;padding-bottom:10px">'
+            + '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px">'
+            + '<span style="font-weight:600;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">'+escHtml(ch.name)+ownerDot+'</span>'
+            + '<span style="font-size:12px;color:rgba(255,255,255,.4);flex-shrink:0">'+(ch.last_post_time||'')+'</span>'
             + '</div>'
-            + '<div style="font-size:13px;color:rgba(255,255,255,.45);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
-            + (ch.last_post_text || ('<span style="opacity:.5">@' + escHtml(ch.username) + ' · ' + subsText + '</span>'))
+            + '<div style="font-size:14px;color:rgba(255,255,255,.45);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+lastText+'</div>'
             + '</div>'
-            + '</div>';
+            + '<div style="width:.5px;position:absolute;bottom:0;left:70px;right:0;background:rgba(255,255,255,.06)"></div>';
 
         container.appendChild(item);
     });
@@ -4785,49 +4778,129 @@ async function openChannelById(chId) {
     } catch(e) { showToast('Ошибка загрузки', 'error'); }
 }
 
+function _closeChannelView() { var v = document.getElementById("channel-view"); if (v) v.remove(); }
+
 function renderChannelView(ch, posts) {
     vibrate(8);
+    const old = document.getElementById('channel-view');
+    if (old) old.remove();
     const ov = document.createElement('div');
     ov.id = 'channel-view';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#000;display:flex;flex-direction:column;animation:slideUp 0.28s cubic-bezier(0.25,1,0.5,1)';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#000;display:flex;flex-direction:column';
 
-    const subsText = ch.subscribers === 1 ? '1 подписчик' : ch.subscribers + ' подписчиков';
     const isOwner  = ch.is_owner;
     const isSub    = ch.is_subscribed;
+    const subCnt   = ch.subscribers || 0;
+    const subsText = subCnt === 1 ? '1 подписчик' : subCnt + ' подписчиков';
+    const avaHtml  = ch.avatar
+        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+        : '<div style="width:100%;height:100%;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:#000">'+escHtml(ch.name.charAt(0).toUpperCase())+'</div>';
 
-    ov.innerHTML = `
-    <!-- Шапка -->
-    <div style="position:sticky;top:0;z-index:10;background:rgba(0,0,0,.92);backdrop-filter:blur(20px);padding:max(env(safe-area-inset-top),48px) 16px 12px;border-bottom:.5px solid rgba(255,255,255,.07)">
-        <div style="display:flex;align-items:center;gap:12px">
-            <button onclick="document.getElementById('channel-view')?.remove()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
-            </button>
-            <div style="flex:1;display:flex;align-items:center;gap:10px">
-                <div style="width:38px;height:38px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:black">
-                    ${ch.avatar ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover">' : (ch.name.charAt(0).toUpperCase())}
-                </div>
-                <div>
-                    <div style="font-size:16px;font-weight:700;line-height:1.1">${escHtml(ch.name)}</div>
-                    <div style="font-size:12px;color:rgba(255,255,255,.45)">@${escHtml(ch.username)} · ${subsText}</div>
-                </div>
-            </div>
-            ${isOwner
-                ? '<button onclick="openNewPostModal('+ch.id+')" style="background:var(--accent);color:black;border:none;border-radius:12px;padding:8px 14px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg> Пост</button>'
-                : '<button id="sub-btn-'+ch.id+'" onclick="toggleChannelSub('+ch.id+',this)" style="background:'+(isSub?'rgba(255,255,255,.1)':'var(--accent)')+';color:'+(isSub?'white':'black')+';border:none;border-radius:12px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit">'+(isSub?'Отписаться':'Подписаться')+'</button>'
-            }
-        </div>
-        ${ch.description ? '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-top:10px;line-height:1.4">'+escHtml(ch.description)+'</div>' : ''}
-    </div>
+    // iOS 26 glass header
+    const headerHtml = ''
+        + '<div style="position:relative;overflow:hidden">'
+        // Blur bg
+        + '<div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(16,185,129,.18) 0%,rgba(0,0,0,.7) 100%);z-index:0"></div>'
+        // Safe area + back button
+        + '<div style="position:relative;z-index:2;padding:max(env(safe-area-inset-top),14px) 16px 0;display:flex;align-items:center;justify-content:space-between">'
+        + '<button onclick="_closeChannelView()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;color:var(--accent);font-size:15px;font-weight:600;font-family:inherit;padding:8px 0;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="9" height="16" viewBox="0 0 9 16" fill="none"><path d="M8 1L1 8L8 15" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        + 'Назад</button>'
+        + (isOwner ? '<button onclick="openChannelSettings('+ch.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.5);padding:8px;-webkit-tap-highlight-color:transparent"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg></button>' : '<div></div>')
+        + '</div>'
+        // Big avatar centered
+        + '<div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding:16px 16px 20px">'
+        + '<div style="width:80px;height:80px;border-radius:50%;overflow:hidden;border:3px solid rgba(255,255,255,.15);box-shadow:0 4px 24px rgba(0,0,0,.5);margin-bottom:12px">'+avaHtml+'</div>'
+        + '<div style="font-size:20px;font-weight:800;letter-spacing:-.3px;text-align:center">'+escHtml(ch.name)+'</div>'
+        // Glass pill: subscribers
+        + '<div style="margin-top:6px;display:flex;align-items:center;gap:12px">'
+        + '<div style="background:rgba(255,255,255,.1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:5px 14px;font-size:12px;color:rgba(255,255,255,.7)">'
+        + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:4px"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.6)" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="rgba(255,255,255,.6)" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="rgba(255,255,255,.6)" stroke-width="2" stroke-linecap="round"/></svg>'
+        + subsText + '</div>'
+        + '<div style="background:rgba(255,255,255,.08);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:5px 14px;font-size:12px;color:rgba(255,255,255,.55)">@'+escHtml(ch.username)+'</div>'
+        + '</div>'
+        + (ch.description ? '<div style="font-size:13px;color:rgba(255,255,255,.45);margin-top:8px;text-align:center;max-width:280px;line-height:1.4">'+escHtml(ch.description)+'</div>' : '')
+        // Sub/unsubscribe button for non-owners
+        + (!isOwner ? '<button id="sub-btn-'+ch.id+'" onclick="toggleChannelSub('+ch.id+',this)" style="margin-top:12px;background:'+(isSub?'rgba(255,255,255,.1)':'var(--accent)')+';color:'+(isSub?'white':'black')+';border:none;border-radius:20px;padding:9px 28px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">'+(isSub?'Отписаться':'Подписаться')+'</button>' : '')
+        + '</div>'
+        + '</div>';
 
-    <!-- Посты -->
-    <div id="channel-posts-list" style="flex:1;overflow-y:auto;padding:8px 0">
-        ${posts.length === 0
-            ? '<div style="text-align:center;opacity:.25;padding:60px 20px;font-size:15px">'+(isOwner?'Создайте первый пост →':'Постов пока нет')+'</div>'
-            : posts.map(p => renderChannelPost(p, isOwner, ch.id)).join('')
-        }
-    </div>`;
+    // Posts list
+    const postsHtml = posts.length === 0
+        ? '<div style="text-align:center;opacity:.25;padding:60px 20px;font-size:15px">'+(isOwner?'Напиши первый пост ниже':'Постов пока нет')+'</div>'
+        : posts.map(function(p) { return renderChannelPost(p, isOwner, ch.id); }).join('');
+
+    // Owner input bar (like TG)
+    const inputBar = isOwner ? (''
+        + '<div id="ch-input-bar" style="padding:8px 12px max(env(safe-area-inset-bottom),12px);background:rgba(0,0,0,.92);backdrop-filter:blur(20px);border-top:.5px solid rgba(255,255,255,.08);display:flex;align-items:flex-end;gap:8px">'
+        + '<button onclick="_chPickMedia('+ch.id+')" style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/></svg>'
+        + '</button>'
+        + '<input id="ch-post-input" type="file" accept="image/*,video/*" style="display:none" onchange="_chHandleMedia(this,'+ch.id+')">'
+        + '<textarea id="ch-text-inp-'+ch.id+'" placeholder="Публикация..." rows="1"'
+        + ' style="flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:9px 16px;color:white;font-size:15px;font-family:inherit;resize:none;outline:none;max-height:120px;overflow-y:auto;line-height:1.4"'
+        + "></textarea>"
+        + '<button onclick="_chSendPost('+ch.id+')" style="width:34px;height:34px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        + '</button>'
+        + '</div>'
+    ) : '';
+
+    ov.innerHTML = headerHtml
+        + '<div id="channel-posts-list" style="flex:1;overflow-y:auto;padding:0 0 8px">' + postsHtml + '</div>'
+        + inputBar;
 
     document.body.appendChild(ov);
+}
+
+// Channel owner: pick media for post
+let _chMediaFile = null;
+function _chPickMedia(chId) {
+    const inp = document.getElementById('ch-post-input');
+    if (inp) inp.click();
+}
+async function _chHandleMedia(inp, chId) {
+    _chMediaFile = inp.files[0] || null;
+    if (_chMediaFile) showToast('Медиа прикреплено ✓', 'success');
+}
+async function _chSendPost(chId) {
+    const inp  = document.getElementById('ch-text-inp-' + chId);
+    const text = inp ? inp.value.trim() : '';
+    let media_url = '', media_type = '';
+
+    if (!text && !_chMediaFile) { showToast('Введи текст или прикрепи медиа', 'info'); return; }
+
+    const btn = document.querySelector('#ch-input-bar button:last-child');
+    if (btn) { btn.disabled = true; btn.style.opacity = '.5'; }
+
+    try {
+        if (_chMediaFile) {
+            const fd = new FormData(); fd.append('file', _chMediaFile);
+            const mr = await apiFetch('/upload_media', { method:'POST', body:fd });
+            if (mr?.ok) { const md = await mr.json(); if (md.success) { media_url = md.url; media_type = md.type; } }
+        }
+        const r = await apiFetch('/api/channels/'+chId+'/post', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({text, media_url, media_type})
+        });
+        const d = await r.json();
+        if (!d.ok) { showToast(d.error||'Ошибка', 'error'); return; }
+        if (inp) { inp.value = ''; inp.style.height = 'auto'; }
+        _chMediaFile = null;
+        vibrate(15);
+        // Refresh posts
+        const pr = await apiFetch('/api/channels/'+chId+'/posts');
+        const pd = await pr.json();
+        if (pd.posts) {
+            const list = document.getElementById('channel-posts-list');
+            if (list) list.innerHTML = pd.posts.length ? pd.posts.map(function(p){return renderChannelPost(p,true,chId);}).join('') : '<div style="text-align:center;opacity:.25;padding:60px">Постов пока нет</div>';
+        }
+    } catch(e) { showToast('Ошибка', 'error'); }
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+}
+
+function openChannelSettings(chId) {
+    showToast('Настройки канала — скоро', 'info');
 }
 
 function renderChannelPost(p, isOwner, chId) {
