@@ -9,12 +9,14 @@
     <link rel="apple-touch-icon" sizes="192x192" href="/static/img/icon-192.png">
     <link rel="icon" type="image/png" sizes="512x512" href="/static/img/icon-512.png">
     <link rel="icon" type="image/png" sizes="192x192" href="/static/img/icon-192.png">
-
     <link rel="manifest" href="/static/manifest.json">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
 
     <link rel="preconnect" href="https://cdn.tailwindcss.com">
     <link rel="preconnect" href="https://cdn.socket.io">
-    <link rel="preconnect" href="https://unpkg.com">
 
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -23,6 +25,10 @@
     <meta name="theme-color" content="#000000">
     <meta name="format-detection" content="telephone=no">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+
+    <!-- preload иконка чтобы грузилась до JS -->
+    <link rel="preload" href="/static/img/icon-192.png" as="image">
+    <link rel="preload" href="/static/logo.png" as="image">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -33,8 +39,7 @@
 
         body, html, #root {
             height: 100%;
-            margin: 0;
-            padding: 0;
+            margin: 0; padding: 0;
             background: #000000;
             color: white;
             overflow: hidden;
@@ -43,11 +48,11 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
         }
 
-        #root { animation: appFadeIn 0.4s ease-out; }
+        #root { animation: appFadeIn 0.35s ease-out; }
 
         @keyframes appFadeIn {
-            from { opacity: 0; transform: scale(0.98); }
-            to   { opacity: 1; transform: scale(1); }
+            from { opacity: 0; }
+            to   { opacity: 1; }
         }
 
         .no-scrollbar::-webkit-scrollbar { display: none; }
@@ -62,92 +67,77 @@
             to   { opacity:1; transform:translateY(0); }
         }
 
-        /* ══ SPLASH SCREEN ══ */
+        /* ══ SPLASH ══ */
         #splash {
             position: fixed;
             inset: 0;
             z-index: 999999;
-            background: #000000;
+            background: #000;
             display: flex;
-            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 0;
-            transition: opacity 0.35s ease, transform 0.35s ease;
+            transition: opacity 0.3s ease;
         }
         #splash.hide {
             opacity: 0;
-            transform: scale(1.04);
             pointer-events: none;
         }
-        #splash-logo {
-            width: 96px;
-            height: 96px;
-            border-radius: 24px;
-            object-fit: cover;
-            box-shadow: 0 8px 40px rgba(16,185,129,0.35);
-            animation: splashPop 0.5s cubic-bezier(0.34,1.56,0.64,1) forwards;
+
+        /* Логотип по центру */
+        #splash-icon {
+            width: 110px;
+            height: 110px;
+            border-radius: 26px;
+            overflow: hidden;
+            flex-shrink: 0;
+            box-shadow: 0 0 0 1px rgba(16,185,129,0.25),
+                        0 12px 48px rgba(16,185,129,0.2);
         }
-        @keyframes splashPop {
-            from { opacity:0; transform: scale(0.6); }
-            to   { opacity:1; transform: scale(1); }
-        }
+
+        /* Текст внизу экрана */
         #splash-name {
-            margin-top: 20px;
-            font-size: 28px;
-            font-weight: 800;
-            letter-spacing: -0.5px;
-            color: #ffffff;
-            animation: splashFadeUp 0.45s 0.15s ease both;
-        }
-        #splash-tagline {
-            margin-top: 6px;
-            font-size: 14px;
-            color: rgba(255,255,255,0.35);
-            font-weight: 500;
-            animation: splashFadeUp 0.45s 0.25s ease both;
-        }
-        @keyframes splashFadeUp {
-            from { opacity:0; transform: translateY(10px); }
-            to   { opacity:1; transform: translateY(0); }
-        }
-        #splash-dot {
             position: absolute;
-            bottom: max(env(safe-area-inset-bottom), 48px);
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 6px;
-            animation: splashFadeUp 0.45s 0.4s ease both;
-        }
-        #splash-dot span {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.2);
-            animation: dotPulse 1.2s ease-in-out infinite;
-        }
-        #splash-dot span:nth-child(2) { animation-delay: 0.2s; }
-        #splash-dot span:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes dotPulse {
-            0%, 100% { background: rgba(255,255,255,0.15); transform: scale(1); }
-            50%       { background: #10b981; transform: scale(1.3); }
+            bottom: max(env(safe-area-inset-bottom), 52px);
+            left: 0; right: 0;
+            text-align: center;
+            font-family: 'Pacifico', cursive;
+            font-size: 34px;
+            font-weight: 400;
+            letter-spacing: 0.5px;
+            background: linear-gradient(135deg, #ffffff 0%, #10b981 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
     </style>
 </head>
 <body class="bg-black">
 
-    <!-- ══ SPLASH SCREEN — показывается сразу, до загрузки JS ══ -->
+    <!-- ══ SPLASH — без анимации, без вопросиков, мгновенно ══ -->
     <div id="splash">
-        <img id="splash-logo"
-             src="/static/img/icon-192.png"
-             onerror="this.src='/static/logo.png'"
-             alt="WayChat">
-        <div id="splash-name">WayChat</div>
-        <div id="splash-tagline">Мессенджер нового поколения</div>
-        <div id="splash-dot">
-            <span></span><span></span><span></span>
+
+        <!-- Иконка приложения — preload выше даёт мгновенную загрузку из кэша -->
+        <div id="splash-icon">
+            <img
+                src="/static/img/icon-192.png"
+                width="110" height="110"
+                style="display:block;width:110px;height:110px;object-fit:cover"
+                onerror="this.style.display='none';this.parentNode.querySelector('svg').style.display='block'"
+                alt="WayChat">
+            <!-- Fallback SVG если иконка не загрузилась -->
+            <svg display="none" width="110" height="110" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="100" height="100" fill="#0a0a0e"/>
+                <circle cx="50" cy="50" r="36" fill="rgba(16,185,129,0.12)"/>
+                <path d="M28 38 C28 33 32 29 37 29 L63 29 C68 29 72 33 72 38 L72 56 C72 61 68 65 63 65 L54 65 L46 73 L46 65 L37 65 C32 65 28 61 28 56 Z" fill="#10b981"/>
+                <circle cx="40" cy="47" r="3.5" fill="black" opacity="0.85"/>
+                <circle cx="50" cy="47" r="3.5" fill="black" opacity="0.85"/>
+                <circle cx="60" cy="47" r="3.5" fill="black" opacity="0.85"/>
+            </svg>
         </div>
+
+        <!-- Рукописный шрифт как у Instagram -->
+        <div id="splash-name">WayChat</div>
+
     </div>
 
     {# FIX: используем getattr чтобы birthday не падал если поле ещё не смигрировано #}
@@ -192,56 +182,43 @@
     <script src="/static/js/main.js"></script>
 
     <script>
-    // ── Скрываем splash после загрузки приложения ──
+    // ── Скрываем splash как только интерфейс готов ──
     (function() {
         function hideSplash() {
-            var splash = document.getElementById('splash');
-            if (!splash) return;
-            splash.classList.add('hide');
-            setTimeout(function() { splash.remove(); }, 380);
+            var s = document.getElementById('splash');
+            if (!s) return;
+            s.classList.add('hide');
+            setTimeout(function() { if (s.parentNode) s.remove(); }, 320);
         }
-
-        // Скрываем как только renderApp отработал (root не пустой)
-        var _splashTimer = setInterval(function() {
-            var root = document.getElementById('root');
-            if (root && root.children.length > 0) {
-                clearInterval(_splashTimer);
-                // Небольшая задержка чтобы интерфейс успел нарисоваться
-                setTimeout(hideSplash, 120);
+        // Проверяем что root заполнен
+        var t = setInterval(function() {
+            var r = document.getElementById('root');
+            if (r && r.children.length > 0) {
+                clearInterval(t);
+                setTimeout(hideSplash, 100);
             }
-        }, 50);
-
-        // Максимум 4 секунды — потом скрываем в любом случае
-        setTimeout(function() {
-            clearInterval(_splashTimer);
-            hideSplash();
-        }, 4000);
+        }, 40);
+        // Страховка — максимум 3.5 сек
+        setTimeout(function() { clearInterval(t); hideSplash(); }, 3500);
     })();
 
-    // ── SW регистрация ──
+    // ── SW ──
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', function() {
             navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' })
-                .then(function() { console.log('✅ SW зарегистрирован'); })
-                .catch(function(err) { console.warn('SW ошибка:', err); });
+                .catch(function(e) { console.warn('SW:', e); });
         });
     }
 
-    // ══ ANDROID — «Установить приложение» ══
-    let _pwaPrompt = null;
-    let _pwaShown  = false;
-
+    // ══ ANDROID install ══
+    var _pwaPrompt = null, _pwaShown = false;
     window.addEventListener('beforeinstallprompt', function(e) {
-        e.preventDefault();
-        _pwaPrompt = e;
-        if (!window.matchMedia('(display-mode: standalone)').matches
-            && !localStorage.getItem('wc_pwa_installed')) {
+        e.preventDefault(); _pwaPrompt = e;
+        if (!window.matchMedia('(display-mode: standalone)').matches && !localStorage.getItem('wc_pwa_installed'))
             setTimeout(_showAndroidInstallSheet, 3500);
-        }
     });
-
     window.addEventListener('appinstalled', function() {
-        localStorage.setItem('wc_pwa_installed', '1');
+        localStorage.setItem('wc_pwa_installed','1');
         document.getElementById('wc-android-sheet')?.remove();
         document.getElementById('wc-android-banner')?.remove();
     });
@@ -249,52 +226,25 @@
     function _showAndroidInstallSheet() {
         if (_pwaShown || !_pwaPrompt) return;
         if (localStorage.getItem('wc_pwa_dismissed_at')) {
-            var ago = Date.now() - parseInt(localStorage.getItem('wc_pwa_dismissed_at'));
-            if (ago < 3 * 24 * 60 * 60 * 1000) { _showAndroidInstallBanner(); return; }
+            if (Date.now() - +localStorage.getItem('wc_pwa_dismissed_at') < 259200000) { _showAndroidInstallBanner(); return; }
         }
         _pwaShown = true;
-
         var sheet = document.createElement('div');
         sheet.id = 'wc-android-sheet';
         sheet.style.cssText = 'position:fixed;inset:0;z-index:99990;background:rgba(0,0,0,0.7);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;flex-direction:column;align-items:center;justify-content:flex-end';
-
-        sheet.innerHTML = `
-            <div style="background:#161618;border-radius:28px 28px 0 0;padding:8px 24px calc(env(safe-area-inset-bottom)+28px);width:100%;max-width:480px;box-shadow:0 -4px 40px rgba(0,0,0,0.6);border-top:0.5px solid rgba(255,255,255,0.1);animation:slideUpSheet 0.4s cubic-bezier(.32,.72,0,1) forwards">
-                <div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 22px"></div>
-                <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
-                    <img src="/static/img/icon-192.png" onerror="this.src='/static/logo.png'" style="width:60px;height:60px;border-radius:14px;flex-shrink:0;box-shadow:0 4px 16px rgba(0,0,0,0.4)">
-                    <div>
-                        <div style="font-size:18px;font-weight:800;letter-spacing:-0.3px">WayChat</div>
-                        <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:3px">Установить как приложение</div>
-                    </div>
-                </div>
-                <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
-                    ${['📵 Работает без браузера и адресной строки','🔔 Push‑уведомления и звонки в фоне','⚡ Быстрее загружается, меньше батареи'].map(t=>`<div style="font-size:14px;color:rgba(255,255,255,0.7)">${t}</div>`).join('')}
-                </div>
-                <button id="wc-pwa-install" style="width:100%;padding:16px;background:#10b981;border:none;border-radius:16px;color:#000;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px">Установить приложение</button>
-                <button id="wc-pwa-later" style="width:100%;padding:12px;background:none;border:none;color:rgba(255,255,255,0.3);font-size:14px;cursor:pointer;font-family:inherit">Не сейчас</button>
-            </div>`;
-
+        sheet.innerHTML = '<div style="background:#161618;border-radius:28px 28px 0 0;padding:8px 24px calc(env(safe-area-inset-bottom)+28px);width:100%;max-width:480px;border-top:0.5px solid rgba(255,255,255,0.1);animation:slideUpSheet 0.4s cubic-bezier(.32,.72,0,1) forwards"><div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 22px"></div><div style="display:flex;align-items:center;gap:16px;margin-bottom:20px"><div style="width:60px;height:60px;border-radius:14px;background:#0a0a0e;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="40" height="40" viewBox="0 0 100 100" fill="none"><circle cx="50" cy="50" r="36" fill="rgba(16,185,129,0.15)"/><path d="M28 38 C28 33 32 29 37 29 L63 29 C68 29 72 33 72 38 L72 56 C72 61 68 65 63 65 L54 65 L46 73 L46 65 L37 65 C32 65 28 61 28 56 Z" fill="#10b981"/><circle cx="40" cy="47" r="3.5" fill="black" opacity="0.85"/><circle cx="50" cy="47" r="3.5" fill="black" opacity="0.85"/><circle cx="60" cy="47" r="3.5" fill="black" opacity="0.85"/></svg></div><div><div style="font-size:18px;font-weight:800">WayChat</div><div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:3px">Установить как приложение</div></div></div><button id="wc-pwa-install" style="width:100%;padding:16px;background:#10b981;border:none;border-radius:16px;color:#000;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:10px">Установить приложение</button><button id="wc-pwa-later" style="width:100%;padding:12px;background:none;border:none;color:rgba(255,255,255,0.3);font-size:14px;cursor:pointer;font-family:inherit">Не сейчас</button></div>';
         document.body.appendChild(sheet);
-
         sheet.querySelector('#wc-pwa-install').onclick = async function() {
-            sheet.remove();
-            if (!_pwaPrompt) return;
+            sheet.remove(); if (!_pwaPrompt) return;
             _pwaPrompt.prompt();
             var r = await _pwaPrompt.userChoice;
-            if (r.outcome === 'accepted') { localStorage.setItem('wc_pwa_installed','1'); _pwaPrompt = null; }
+            if (r.outcome==='accepted') { localStorage.setItem('wc_pwa_installed','1'); _pwaPrompt=null; }
         };
         sheet.querySelector('#wc-pwa-later').onclick = function() {
-            sheet.remove();
-            localStorage.setItem('wc_pwa_dismissed_at', String(Date.now()));
-            setTimeout(_showAndroidInstallBanner, 5000);
+            sheet.remove(); localStorage.setItem('wc_pwa_dismissed_at',String(Date.now())); setTimeout(_showAndroidInstallBanner,5000);
         };
         sheet.addEventListener('click', function(e) {
-            if (e.target === sheet) {
-                sheet.remove();
-                localStorage.setItem('wc_pwa_dismissed_at', String(Date.now()));
-                setTimeout(_showAndroidInstallBanner, 5000);
-            }
+            if (e.target===sheet) { sheet.remove(); localStorage.setItem('wc_pwa_dismissed_at',String(Date.now())); setTimeout(_showAndroidInstallBanner,5000); }
         });
     }
 
@@ -302,53 +252,22 @@
         if (!_pwaPrompt || document.getElementById('wc-android-banner')) return;
         var b = document.createElement('div');
         b.id = 'wc-android-banner';
-        b.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom)+74px);left:12px;right:12px;z-index:9989;background:rgba(22,22,24,0.97);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:18px;padding:12px 14px;display:flex;align-items:center;gap:11px;box-shadow:0 8px 40px rgba(0,0,0,0.5),0 0 0 0.5px rgba(255,255,255,0.08);animation:slideUpBanner 0.35s cubic-bezier(.32,.72,0,1) forwards';
-        b.innerHTML = `<img src="/static/img/icon-96.png" onerror="this.src='/static/logo.png'" style="width:40px;height:40px;border-radius:10px;flex-shrink:0"><div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700;color:#fff">Добавить WayChat на экран</div><div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-top:1px">Работает как нативное приложение</div></div><button id="wc-banner-add" style="background:#10b981;border:none;border-radius:11px;padding:8px 14px;color:#000;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;font-family:inherit">Добавить</button><button id="wc-banner-x" style="background:none;border:none;color:rgba(255,255,255,0.3);font-size:20px;cursor:pointer;padding:2px 4px;line-height:1">×</button>`;
+        b.style.cssText = 'position:fixed;bottom:calc(env(safe-area-inset-bottom)+74px);left:12px;right:12px;z-index:9989;background:rgba(22,22,24,0.97);backdrop-filter:blur(20px);border-radius:18px;padding:12px 14px;display:flex;align-items:center;gap:11px;box-shadow:0 8px 40px rgba(0,0,0,0.5);animation:slideUpBanner 0.35s cubic-bezier(.32,.72,0,1) forwards';
+        b.innerHTML = '<div style="width:40px;height:40px;border-radius:10px;background:#0a0a0e;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="26" height="26" viewBox="0 0 100 100" fill="none"><path d="M28 38 C28 33 32 29 37 29 L63 29 C68 29 72 33 72 38 L72 56 C72 61 68 65 63 65 L54 65 L46 73 L46 65 L37 65 C32 65 28 61 28 56 Z" fill="#10b981"/><circle cx="40" cy="47" r="3.5" fill="black" opacity="0.85"/><circle cx="50" cy="47" r="3.5" fill="black" opacity="0.85"/><circle cx="60" cy="47" r="3.5" fill="black" opacity="0.85"/></svg></div><div style="flex:1;min-width:0"><div style="font-size:13.5px;font-weight:700;color:#fff">Добавить WayChat на экран</div><div style="font-size:11.5px;color:rgba(255,255,255,0.4);margin-top:1px">Работает как нативное приложение</div></div><button id="wc-banner-add" style="background:#10b981;border:none;border-radius:11px;padding:8px 14px;color:#000;font-size:13px;font-weight:700;cursor:pointer;flex-shrink:0;font-family:inherit">Добавить</button><button id="wc-banner-x" style="background:none;border:none;color:rgba(255,255,255,0.3);font-size:20px;cursor:pointer;padding:2px 4px">×</button>';
         document.body.appendChild(b);
-        b.querySelector('#wc-banner-add').onclick = async function() {
-            b.remove();
-            if (!_pwaPrompt) return;
-            _pwaPrompt.prompt();
-            var r = await _pwaPrompt.userChoice;
-            if (r.outcome === 'accepted') _pwaPrompt = null;
-        };
+        b.querySelector('#wc-banner-add').onclick = async function() { b.remove(); if(!_pwaPrompt)return; _pwaPrompt.prompt(); };
         b.querySelector('#wc-banner-x').onclick = function() { b.remove(); };
     }
 
-    // ══ iOS — «Добавить на экран Домой» ══
+    // ══ iOS hint ══
     var _isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.MSStream;
     var _isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-
     if (_isIOS && !_isStandalone && !localStorage.getItem('wc_ios_hint_v3')) {
         setTimeout(function() {
-            localStorage.setItem('wc_ios_hint_v3', '1');
+            localStorage.setItem('wc_ios_hint_v3','1');
             var hint = document.createElement('div');
-            hint.id = 'wc-ios-hint';
             hint.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(18,18,20,0.98);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:8px 20px calc(20px + env(safe-area-inset-bottom));border-top:0.5px solid rgba(255,255,255,0.1);animation:slideUpSheet 0.4s cubic-bezier(.32,.72,0,1) forwards';
-            hint.innerHTML = `
-                <div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 18px"></div>
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                    <div style="display:flex;align-items:center;gap:12px">
-                        <img src="/static/img/icon-192.png" onerror="this.src='/static/logo.png'" style="width:44px;height:44px;border-radius:11px">
-                        <div>
-                            <div style="font-size:15px;font-weight:800;color:#fff">Установить WayChat</div>
-                            <div style="font-size:12px;color:rgba(255,255,255,0.4);margin-top:2px">Добавить на экран Домой</div>
-                        </div>
-                    </div>
-                    <button id="wc-ios-close" style="background:rgba(255,255,255,0.1);border:none;border-radius:50%;width:28px;height:28px;color:rgba(255,255,255,0.5);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button>
-                </div>
-                <div style="display:flex;flex-direction:column;gap:13px;margin-bottom:18px">
-                    <div style="display:flex;align-items:center;gap:13px">
-                        <div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M8 12H5a2 2 0 00-2 2v5a2 2 0 002 2h14a2 2 0 002-2v-5a2 2 0 00-2-2h-3M12 3v12M9 6l3-3 3 3" stroke="rgba(255,255,255,0.6)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                        </div>
-                        <div style="font-size:14px;color:rgba(255,255,255,0.8)">Нажми <strong style="color:#fff">«Поделиться»</strong> в нижней панели Safari</div>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:13px">
-                        <div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px">＋</div>
-                        <div style="font-size:14px;color:rgba(255,255,255,0.8)">Выбери <strong style="color:#fff">«На экран Домой»</strong></div>
-                    </div>
-                </div>`;
+            hint.innerHTML = '<div style="width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);margin:10px auto 18px"></div><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><div style="display:flex;align-items:center;gap:12px"><div style="width:44px;height:44px;border-radius:11px;background:#0a0a0e;display:flex;align-items:center;justify-content:center"><svg width="30" height="30" viewBox="0 0 100 100" fill="none"><path d="M28 38 C28 33 32 29 37 29 L63 29 C68 29 72 33 72 38 L72 56 C72 61 68 65 63 65 L54 65 L46 73 L46 65 L37 65 C32 65 28 61 28 56 Z" fill="#10b981"/><circle cx="40" cy="47" r="3.5" fill="black" opacity="0.85"/><circle cx="50" cy="47" r="3.5" fill="black" opacity="0.85"/><circle cx="60" cy="47" r="3.5" fill="black" opacity="0.85"/></svg></div><div><div style="font-size:15px;font-weight:800;color:#fff">Установить WayChat</div><div style="font-size:12px;color:rgba(255,255,255,0.4)">Добавить на экран Домой</div></div></div><button id="wc-ios-close" style="background:rgba(255,255,255,0.1);border:none;border-radius:50%;width:28px;height:28px;color:rgba(255,255,255,0.5);font-size:16px;cursor:pointer">×</button></div><div style="display:flex;flex-direction:column;gap:12px;margin-bottom:16px"><div style="display:flex;align-items:center;gap:12px"><div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M8 12H5a2 2 0 00-2 2v5a2 2 0 002 2h14a2 2 0 002-2v-5a2 2 0 00-2-2h-3M12 3v12M9 6l3-3 3 3" stroke="rgba(255,255,255,0.6)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><div style="font-size:14px;color:rgba(255,255,255,0.8)">Нажми <b style="color:#fff">«Поделиться»</b> внизу Safari</div></div><div style="display:flex;align-items:center;gap:12px"><div style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:18px">＋</div><div style="font-size:14px;color:rgba(255,255,255,0.8)">Выбери <b style="color:#fff">«На экран Домой»</b></div></div></div>';
             document.body.appendChild(hint);
             hint.querySelector('#wc-ios-close').onclick = function() { hint.remove(); };
             setTimeout(function() { hint.remove(); }, 15000);
