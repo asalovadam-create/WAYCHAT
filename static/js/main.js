@@ -501,42 +501,28 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    // ── 1. Ждём currentUser из window (устанавливается в index.html ДО загрузки main.js) ──
+    // ── 1. currentUser уже установлен в index.html СИНХРОННО до загрузки main.js ──
     if (window.currentUser && window.currentUser.id > 0) {
         Object.assign(currentUser, window.currentUser);
     } else {
-        // Пробуем кэш пока /api/me отвечает
+        // Fallback: читаем кэш напрямую
         try {
-            const cache = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-            if (cache) {
-                const parsed = JSON.parse(cache);
-                if (parsed && parsed.id > 0) Object.assign(currentUser, parsed);
+            const c = localStorage.getItem('waychat_user_cache')
+                   || localStorage.getItem('varto_user_cache');
+            if (c) {
+                const p = JSON.parse(c);
+                if (p && p.id > 0) Object.assign(currentUser, p);
             }
         } catch(e) {}
-        // Ждём максимум 2с пока window.currentUser установится через /api/me
-        if (!currentUser.id || currentUser.id <= 0) {
-            await new Promise(resolve => {
-                let attempts = 0;
-                const check = setInterval(() => {
-                    attempts++;
-                    if (window.currentUser && window.currentUser.id > 0) {
-                        Object.assign(currentUser, window.currentUser);
-                        clearInterval(check); resolve();
-                    } else if (attempts > 40) { // 40 * 50ms = 2s
-                        clearInterval(check); resolve();
-                    }
-                }, 50);
-            });
-        }
     }
 
-    // Если нет пользователя после всех попыток — не рендерим приложение
+    // Нет пользователя — редирект
     if (!currentUser.id || currentUser.id <= 0) {
-        console.warn('WayChat: no user, waiting for redirect to /login');
+        window.location.href = '/login';
         return;
     }
 
-    applyTheme(activeTheme); // один вызов вместо двух
+    applyTheme(activeTheme);
     renderApp();
     updateAllAvatarUI();
     setupGlobalGestures();
@@ -762,7 +748,10 @@ function getMoscowTime(dateStr) {
 //  РЕНДЕР ПРИЛОЖЕНИЯ
 // ══════════════════════════════════════════════════════════
 function renderApp() {
-    document.getElementById('root').innerHTML = `
+    try {
+        var rootEl = document.getElementById('root');
+        if (!rootEl) { console.error('WayChat: #root not found!'); return; }
+        rootEl.innerHTML = `
 <style>
 :root {
     --accent: #10b981;
@@ -1669,6 +1658,11 @@ body {
 </div>
 <div class="swipe-indicator" id="swipe-indicator"></div>
 `;
+    } catch(e) {
+        console.error("WayChat: renderApp error", e);
+        var r=document.getElementById("root"); if(r) r.innerHTML='<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-direction:column;gap:12px"><div>🔄</div><div style="opacity:.5">Загрузка...</div></div>';
+        setTimeout(function(){location.reload();},3000);
+    }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -10316,7 +10310,13 @@ async function doLogout() {
     window.location.href = '/login';
 }
 
-window.onload = init;
+// DOMContentLoaded быстрее чем window.onload (не ждёт изображения)
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    // DOM уже готов (скрипт загружен async или defer)
+    init();
+}
 // ══════════════════════════════════════════════════════════════════
 //  🎵 MUSIC PLAYER v4 — Background play, Canvas EQ, Long video
 // ══════════════════════════════════════════════════════════════════
