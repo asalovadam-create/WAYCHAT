@@ -832,20 +832,21 @@ body {
 .input-bar {
     padding:8px 8px max(calc(env(safe-area-inset-bottom)+8px),8px);
     border-top:.5px solid rgba(255,255,255,.07);
-    background:rgba(28,28,30,0.98);
+    background:rgba(14,14,18,0.97);
     backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
 }
-.input-wrap { display:flex;align-items:flex-end;gap:6px; }
+.input-wrap { display:flex;align-items:center;gap:6px; }
 .input-inner {
     flex:1;background:rgba(255,255,255,.08);
     border:1px solid rgba(255,255,255,.09);
-    border-radius:22px;padding:9px 14px;
-    transition:border-color 0.2s;min-height:42px;
+    border-radius:22px;padding:0 14px;
+    transition:border-color 0.2s;
+    height:38px;
     display:flex;align-items:center;
 }
 .input-inner:focus-within { border-color:rgba(255,255,255,.2); }
-#msg-input { flex:1;background:transparent;outline:none;color:white;font-size:15px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
-#msg-input::placeholder { color:rgba(255,255,255,0.3); }
+#msg-input { flex:1;background:transparent;outline:none;color:white;font-size:15px;padding:0;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none;height:100%;display:flex;align-items:center; }
+#msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:38px;height:38px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow);-webkit-tap-highlight-color:transparent; }
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.09);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -1381,7 +1382,7 @@ body {
         </div>
         <div style="font-size:11px;color:var(--text-2);margin-bottom:4px" id="typing-name-label"></div>
     </div>
-    <div class="input-bar glass" style="border-top:0.5px solid var(--border)">
+    <div class="input-bar" style="">
         <div class="input-wrap">
             <button onclick="pickMedia('msg')" class="icon-btn">${ICONS.attach}</button>
             <div class="input-inner" id="input-area">
@@ -1827,7 +1828,7 @@ function renderChannelsList(channels) {
         item.className = 'chat-item'; // same class as regular chats
         item.dataset.channelItem = '1';
         item.dataset.channelId   = String(ch.id);
-        item.onclick = function() { openChannelById(ch.id); };
+        item.onclick = function() { _openChannelInfo(ch.id); };
 
         // Avatar — square rounded like TG channels
         // Avatar — square rounded like TG channels
@@ -2475,7 +2476,7 @@ function renderRecentContacts() {
 }
 
 function handleSearch() {
-    const q = document.getElementById('search-input')?.value.trim();
+    const q = (document.getElementById('search-input')?.value.trim() || '').replace(/^@/, '');
     if (!q) { renderRecentContacts(); return; }
     clearTimeout(searchTimeout);
     searchTimeout = setTimeout(async () => {
@@ -3696,7 +3697,16 @@ function handleInputKeydown(e) {
 
 function autoResize(el) {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    var h = Math.min(el.scrollHeight, 120);
+    el.style.height = h + 'px';
+    // Expand the pill container when multiline
+    var inner = el.closest('.input-inner');
+    if (inner) {
+        inner.style.height = h > 22 ? (h + 16) + 'px' : '';
+        inner.style.alignItems = h > 22 ? 'flex-start' : 'center';
+        inner.style.paddingTop = h > 22 ? '9px' : '';
+        inner.style.paddingBottom = h > 22 ? '9px' : '';
+    }
 }
 
 function sendText() {
@@ -5042,56 +5052,116 @@ function _openChSettings() {
 }
 
 function _openChannelInfo(chId) {
-    var ch = null;
-    // Try to find in cache
-    if (_channelsListCache) ch = _channelsListCache.find(function(c){return String(c.id)===String(chId);});
-    if (!ch) { ch = {id:chId,name:'',username:'',description:'',subscribers:0,is_verified:false}; }
+    var ch = _channelsListCache.find(function(c){return String(c.id)===String(chId);});
+    if (!ch) {
+        // Fetch from server if not in cache
+        apiFetch('/api/channels/'+chId).then(function(r){ return r?.json(); }).then(function(d){
+            if (d && d.id) { _channelsListCache.push(d); _openChannelInfo(chId); }
+        }).catch(function(){});
+        return;
+    }
+    var old = document.getElementById('ch-info-page');
+    if (old) old.remove();
 
-    var subCnt   = ch.subscribers || 0;
-    var subsText = subCnt === 1 ? '1 подписчик' : subCnt + ' подписчиков';
-    var avaHtml  = ch.avatar
-        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
-        : '<div style="width:100%;height:100%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:#000">'+escHtml((ch.name||'?').charAt(0).toUpperCase())+'</div>';
+    var subCnt = ch.subscribers || 0;
+    var subsText = subCnt + ' подписчиков';
+    var avaEl = ch.avatar
+        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover">'
+        : '<div style="width:100%;height:100%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:40px;font-weight:800;color:#000">'+escHtml((ch.name||'?')[0].toUpperCase())+'</div>';
 
     var ov = document.createElement('div');
-    ov.id = 'ch-info-sheet';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8500;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
-    ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
+    ov.id = 'ch-info-page';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8500;background:#000;display:flex;flex-direction:column;overflow-y:auto';
 
-    ov.innerHTML = '<div style="'
-        + 'width:100%;max-width:500px;'
-        + 'background:rgba(28,28,30,0.98);'
-        + 'backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);'
-        + 'border-radius:24px 24px 0 0;'
-        + 'padding:0 0 max(env(safe-area-inset-bottom),24px);'
-        + 'border-top:1px solid rgba(255,255,255,.1)">'
-        // Handle
-        + '<div style="width:36px;height:4px;background:rgba(255,255,255,.2);border-radius:2px;margin:12px auto 20px"></div>'
-        // Avatar big
-        + '<div style="display:flex;flex-direction:column;align-items:center;padding:0 20px 20px">'
-        + '<div style="width:88px;height:88px;border-radius:50%;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.5);margin-bottom:14px">'
-        + avaHtml + '</div>'
-        // Name + badge
-        + '<div style="font-size:22px;font-weight:800;text-align:center;display:flex;align-items:center;gap:6px;margin-bottom:4px">'
-        + escHtml(ch.name)+(ch.is_verified ? _channelVerifyBadge(22) : '')
-        + '</div>'
-        + '@' + escHtml(ch.username)
-        // Glass pills row
-        + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center">'
-        + '<div style="background:rgba(255,255,255,.08);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:6px 16px;font-size:13px;color:rgba(255,255,255,.7)">'
-        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:5px"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="rgba(255,255,255,.5)" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/></svg>'
-        + subsText + '</div>'
-        + (ch.is_verified ? ('<div style="background:rgba(74,158,224,.15);border:1px solid rgba(74,158,224,.3);border-radius:20px;padding:6px 16px;font-size:13px;color:#4A9EE0;display:flex;align-items:center;gap:5px">'+_channelVerifyBadge(14)+'Верифицирован</div>') : '')
-        + '</div>'
-        // Description
-        + (ch.description ? '<div style="font-size:14px;color:rgba(255,255,255,.5);margin-top:14px;text-align:center;line-height:1.5;max-width:300px">'+escHtml(ch.description)+'</div>' : '')
-        + '</div>'
-        // Settings button for owner
-        + (ch.is_owner ? '<div style="padding:0 16px"><button onclick="_openChSettings()" style="width:100%;padding:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);border-radius:16px;color:rgba(255,255,255,.7);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">⚙️ Настройки канала</button></div>' : '')
+    // ── Topbar ──
+    var topbarHtml = '<div style="position:sticky;top:0;z-index:10;padding:max(env(safe-area-inset-top),50px) 16px 12px;display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,.85);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:.5px solid rgba(255,255,255,.06)">'
+        + '<button onclick="document.getElementById(\'ch-info-page\')?.remove()" style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.09);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent">'
+        + '<svg width="11" height="19" viewBox="0 0 11 19" fill="none"><path d="M9.5 1.5L1.5 9.5L9.5 17.5" stroke="white" stroke-width="2.2" stroke-linecap="round"/></svg>'
+        + '</button>'
+        + (ch.is_owner
+            ? '<button onclick="document.getElementById(\'ch-info-page\')?.remove();openChannelEdit('+ch.id+')" style="background:rgba(255,255,255,.09);border:none;border-radius:20px;padding:7px 16px;color:white;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:6px;-webkit-tap-highlight-color:transparent">'
+              + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>Изм.'
+              + '</button>'
+            : '<div></div>')
         + '</div>';
 
+    // ── Hero: avatar + name ──
+    var heroHtml = '<div style="display:flex;flex-direction:column;align-items:center;padding:28px 20px 20px">'
+        + '<div style="width:100px;height:100px;border-radius:50%;overflow:hidden;margin-bottom:16px;box-shadow:0 6px 30px rgba(0,0,0,.6)">' + avaEl + '</div>'
+        + '<div style="font-size:24px;font-weight:800;letter-spacing:-.3px;text-align:center;display:flex;align-items:center;gap:6px">'
+        + escHtml(ch.name) + (ch.is_verified ? _channelVerifyBadge(24) : '')
+        + '</div>'
+        + '<div style="font-size:14px;color:rgba(255,255,255,.45);margin-top:4px">'+subsText+'</div>'
+        + '</div>';
+
+    // ── Action buttons row (4 кнопки) ──
+    function actionBtn(icon, label, onclick) {
+        return '<div onclick="'+onclick+'" style="display:flex;flex-direction:column;align-items:center;gap:6px;cursor:pointer;-webkit-tap-highlight-color:transparent">'
+            + '<div style="width:52px;height:52px;border-radius:16px;background:rgba(255,255,255,.08);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.07);display:flex;align-items:center;justify-content:center">'
+            + icon + '</div>'
+            + '<div style="font-size:11px;color:rgba(255,255,255,.5);font-weight:500;text-align:center">'+label+'</div>'
+            + '</div>';
+    }
+
+    var origin = window.location.origin;
+    var link = origin+'/channel/'+(ch.username||ch.id);
+
+    var actionsHtml = '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;padding:0 16px 20px">'
+        + actionBtn('<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 2h-3a5 5 0 00-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 011-1h3z" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/></svg>', 'Посты',
+            'document.getElementById(\'ch-info-page\')?.remove();openChannelById('+ch.id+')')
+        + actionBtn('<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/></svg>', 'Ссылка',
+            'copyChannelLink(\''+link+'\')')
+        + actionBtn('<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="18" cy="5" r="3" stroke="rgba(255,255,255,.7)" stroke-width="2"/><circle cx="6" cy="12" r="3" stroke="rgba(255,255,255,.7)" stroke-width="2"/><circle cx="18" cy="19" r="3" stroke="rgba(255,255,255,.7)" stroke-width="2"/><path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/></svg>', 'Поделиться',
+            'shareChannel('+ch.id+',\''+link+'\')')
+        + (ch.is_owner
+            ? actionBtn('<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="rgba(255,255,255,.7)" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="rgba(255,255,255,.7)" stroke-width="2"/></svg>', 'Настр.',
+                'document.getElementById(\'ch-info-page\')?.remove();openChannelSettings('+ch.id+')')
+            : actionBtn('<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="rgba(255,255,255,.7)" stroke-width="2" stroke-linecap="round"/></svg>', ch.is_subscribed?'Отписаться':'Подписаться',
+                'toggleChannelSub('+ch.id+',this)')
+          )
+        + '</div>';
+
+    // ── Info card: description + stats ──
+    var infoRows = '';
+    if (ch.description) {
+        infoRows += '<div style="padding:12px 14px;border-bottom:.5px solid rgba(255,255,255,.05)">'
+            + '<div style="font-size:11px;font-weight:600;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">описание</div>'
+            + '<div style="font-size:14px;color:rgba(255,255,255,.8);line-height:1.5">'+escHtml(ch.description)+'</div>'
+            + '</div>';
+    }
+    infoRows += '<div onclick="document.getElementById(\'ch-info-page\')?.remove();openChannelById('+ch.id+')" style="display:flex;align-items:center;padding:13px 14px;border-bottom:.5px solid rgba(255,255,255,.05);cursor:pointer;-webkit-tap-highlight-color:transparent">'
+        + '<div style="width:36px;height:36px;border-radius:10px;background:rgba(59,130,246,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:12px">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/></svg>'
+        + '</div>'
+        + '<div style="flex:1;font-size:15px;font-weight:500">Публикации</div>'
+        + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.25)" stroke-width="1.8" stroke-linecap="round"/></svg>'
+        + '</div>';
+    infoRows += '<div style="display:flex;align-items:center;padding:13px 14px;border-bottom:.5px solid rgba(255,255,255,.05)">'
+        + '<div style="width:36px;height:36px;border-radius:10px;background:rgba(16,185,129,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:12px">'
+        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#10b981" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="#10b981" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="#10b981" stroke-width="2" stroke-linecap="round"/></svg>'
+        + '</div>'
+        + '<div style="flex:1;font-size:15px;font-weight:500">Подписчики</div>'
+        + '<div style="font-size:14px;color:rgba(255,255,255,.4);font-weight:600;margin-right:8px">'+subCnt+'</div>'
+        + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.25)" stroke-width="1.8" stroke-linecap="round"/></svg>'
+        + '</div>';
+    if (ch.is_owner) {
+        infoRows += '<div onclick="document.getElementById(\'ch-info-page\')?.remove();openChannelSettings('+ch.id+')" style="display:flex;align-items:center;padding:13px 14px;cursor:pointer;-webkit-tap-highlight-color:transparent">'
+            + '<div style="width:36px;height:36px;border-radius:10px;background:rgba(245,158,11,.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-right:12px">'
+            + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="#f59e0b" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06A1.65 1.65 0 0015 19.4a1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="#f59e0b" stroke-width="2"/></svg>'
+            + '</div>'
+            + '<div style="flex:1;font-size:15px;font-weight:500">Настройки канала</div>'
+            + '<svg width="8" height="13" viewBox="0 0 8 13" fill="none"><path d="M1 1l6 5.5-6 5.5" stroke="rgba(255,255,255,.25)" stroke-width="1.8" stroke-linecap="round"/></svg>'
+            + '</div>';
+    }
+
+    var infoCard = '<div style="margin:0 12px 20px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.07);border-radius:18px;overflow:hidden">'
+        + infoRows + '</div>';
+
+    ov.innerHTML = topbarHtml + heroHtml + actionsHtml + infoCard;
+    window._currentInfoSheetCh = ch;
     document.body.appendChild(ov);
 }
+
 
 
 // Channel owner: pick media for post
