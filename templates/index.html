@@ -49,10 +49,14 @@
     <style>
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
 
-        body, html, #root {
-            height: 100%;
+        html {
+            height: -webkit-fill-available;
+        }
+        body, #root {
+            height: 100dvh;
+            height: -webkit-fill-available;
             margin: 0; padding: 0;
-            background: #000000;
+            background: #111113;
             color: white;
             overflow: hidden;
             user-select: none;
