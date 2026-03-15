@@ -25,38 +25,24 @@
     <meta name="theme-color" content="#111113">
     <meta name="format-detection" content="telephone=no">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
-    <!-- Fixes for different screen sizes -->
+    <!-- Full screen fix — правильный способ для iOS Safari -->
     <style>
-        /* ═══ CRITICAL FULL SCREEN FIX ═══ */
         :root {
             --sat: env(safe-area-inset-top, 0px);
             --sab: env(safe-area-inset-bottom, 0px);
-            --sal: env(safe-area-inset-left, 0px);
-            --sar: env(safe-area-inset-right, 0px);
         }
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; margin:0; padding:0; }
-        /* html занимает ВЕСЬ экран включая safe area */
-        html {
-            width: 100%;
-            height: 100%;
-            background: #111113;
-        }
-        /* body — полный экран, background закрашивает safe area */
+        /* НЕ ставим position:fixed на body — это баг Safari */
         body {
             width: 100%;
-            height: 100%;
-            min-height: 100dvh;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
+            min-height: 100vh;
             background: #111113;
             overflow: hidden;
         }
-        /* root — используем весь viewport */
         #root {
             width: 100%;
-            height: 100%;
-            position: relative;
-            overflow: hidden;
+            min-height: 100vh;
+            padding-bottom: env(safe-area-inset-bottom);
         }
     </style>
 
@@ -70,9 +56,7 @@
     <style>
         * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
 
-        html {
-            height: -webkit-fill-available;
-        }
+        /* html height intentionally not set — let browser handle it */
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             color: white;
