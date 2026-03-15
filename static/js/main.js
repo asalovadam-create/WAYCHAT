@@ -710,7 +710,7 @@ function renderApp() {
     --glow: 0 0 20px rgba(16,185,129,0.4);
     --accent-10: rgba(16,185,129,0.1);
     --accent-30: rgba(16,185,129,0.3);
-    --bg: #000000;
+    --bg: #111113;
     --surface: rgba(18,18,22,0.95);
     --surface2: rgba(28,28,35,0.8);
     --border: rgba(255,255,255,0.07);
@@ -723,14 +723,11 @@ function renderApp() {
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: var(--bg); color: var(--text);
-    overflow: hidden; margin: 0; height: 100dvh;
+    background: #111113; color: var(--text);
+    overflow: hidden; margin: 0;
+    height: 100dvh; height: -webkit-fill-available;
     -webkit-font-smoothing: antialiased;
     -webkit-text-size-adjust: 100%;
-    background-image:
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' opacity='0.015'%3E%3Ccircle cx='30' cy='30' r='12' fill='none' stroke='%2310b981' stroke-width='1'/%3E%3Ccircle cx='90' cy='90' r='12' fill='none' stroke='%233b82f6' stroke-width='1'/%3E%3Cpath d='M30 18 Q50 50 90 30' fill='none' stroke='%2310b981' stroke-width='0.7'/%3E%3Cpath d='M30 90 Q60 70 90 90' fill='none' stroke='%233b82f6' stroke-width='0.7'/%3E%3C/svg%3E"),
-        radial-gradient(ellipse at 10% 5%, rgba(16,185,129,0.04) 0%, transparent 40%),
-        radial-gradient(ellipse at 90% 95%, rgba(59,130,246,0.04) 0%, transparent 40%);
 }
 .glass { background:rgba(8,8,12,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%); }
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
@@ -744,19 +741,19 @@ body {
 /* FAB кнопка + */
 .fab-main {
     position:fixed;
-    bottom:max(env(safe-area-inset-bottom),24px);
-    right:20px;
-    width:56px;height:56px;
+    bottom:max(calc(env(safe-area-inset-bottom) + 16px),20px);
+    right:18px;
+    width:52px;height:52px;
     border-radius:50%;
     background:var(--accent);
-    box-shadow:0 4px 20px rgba(16,185,129,.45),0 2px 8px rgba(0,0,0,.3);
+    box-shadow:0 4px 18px rgba(16,185,129,.4),0 2px 6px rgba(0,0,0,.3);
     border:none;cursor:pointer;
     display:flex;align-items:center;justify-content:center;
     z-index:1000;
     transition:transform .15s,box-shadow .15s;
     -webkit-tap-highlight-color:transparent;
 }
-.fab-main:active { transform:scale(.92); box-shadow:0 2px 10px rgba(16,185,129,.3); }
+.fab-main:active { transform:scale(.9); box-shadow:0 2px 10px rgba(16,185,129,.25); }
 
 /* ПОИСК */
 .search-box {
@@ -781,12 +778,20 @@ body {
 
 /* ЧАТЫ — iOS 26 style */
 .chat-item {
-    display:flex;align-items:center;gap:13px;padding:10px 14px;
+    display:flex;align-items:center;gap:13px;padding:9px 14px 9px 16px;
     border-radius:0;transition:background 0.12s;cursor:pointer;position:relative;
+    background:transparent;
 }
-.chat-item:active { background:rgba(255,255,255,0.05); }
+.chat-item:active { background:rgba(255,255,255,0.04); }
 .chat-item-divider {
     height:0.5px;margin-left:72px;
+    background:rgba(255,255,255,0.09);
+}
+.chat-item::after {
+    content:'';
+    position:absolute;
+    bottom:0;left:72px;right:0;
+    height:0.5px;
     background:rgba(255,255,255,0.07);
 }
 /* Channel item */
@@ -982,12 +987,12 @@ body {
 .animate-up  { animation:slideUp 0.3s ease; }
 </style>
 
-<div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:100dvh">
+<div id="app" style="width:100%;height:100dvh;height:-webkit-fill-available;display:flex;flex-direction:column;overflow:hidden;background:#111113">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(env(safe-area-inset-bottom),16px)">
+    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px)">
 
         <!-- ══ ЧАТЫ ══ -->
-        <div id="chats-section" class="pt-14">
+        <div id="chats-section" style="padding-top:max(env(safe-area-inset-top),44px)">
             <div class="px-4 pt-2 pb-3">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
                     <!-- Аватарка профиля слева — кликабельна -->
@@ -1019,7 +1024,7 @@ body {
             </div>
 
             <!-- ══ ПОИСК ══ -->
-            <div class="px-5 mb-4">
+            <div style="padding:0 14px 10px">
                 <div class="search-box">
                     <span style="flex-shrink:0;opacity:.5">${ICONS.search}</span>
                     <input id="search-input" style="background:transparent;outline:none;width:100%;color:white;font-size:15px;font-family:inherit"
@@ -1029,7 +1034,7 @@ body {
                 </div>
             </div>
             <div id="search-results" class="px-5 hidden"></div>
-            <div id="chat-list" class="px-3"></div>
+            <div id="chat-list"></div>
         </div>
 
         <!-- ══ МОМЕНТЫ ══ -->
