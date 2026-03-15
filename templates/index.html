@@ -26,9 +26,8 @@
     <meta name="format-detection" content="telephone=no">
     <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
 
-    <!-- preload иконка чтобы грузилась до JS -->
-    <link rel="preload" href="/static/img/icon-192.png" as="image">
-    <link rel="preload" href="/static/logo.png" as="image">
+    <!-- preload логотип — грузится до JS, нет вопросительного знака -->
+    <link rel="preload" href="/static/logo.png" as="image" type="image/png">
 
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -116,23 +115,13 @@
     <!-- ══ SPLASH — без анимации, без вопросиков, мгновенно ══ -->
     <div id="splash">
 
-        <!-- Иконка приложения — preload выше даёт мгновенную загрузку из кэша -->
+        <!-- Логотип приложения -->
         <div id="splash-icon">
             <img
-                src="/static/img/icon-192.png"
+                src="/static/logo.png"
                 width="110" height="110"
-                style="display:block;width:110px;height:110px;object-fit:cover"
-                onerror="this.style.display='none';this.parentNode.querySelector('svg').style.display='block'"
+                style="display:block;width:110px;height:110px;object-fit:cover;border-radius:26px"
                 alt="WayChat">
-            <!-- Fallback SVG если иконка не загрузилась -->
-            <svg display="none" width="110" height="110" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <rect width="100" height="100" fill="#0a0a0e"/>
-                <circle cx="50" cy="50" r="36" fill="rgba(16,185,129,0.12)"/>
-                <path d="M28 38 C28 33 32 29 37 29 L63 29 C68 29 72 33 72 38 L72 56 C72 61 68 65 63 65 L54 65 L46 73 L46 65 L37 65 C32 65 28 61 28 56 Z" fill="#10b981"/>
-                <circle cx="40" cy="47" r="3.5" fill="black" opacity="0.85"/>
-                <circle cx="50" cy="47" r="3.5" fill="black" opacity="0.85"/>
-                <circle cx="60" cy="47" r="3.5" fill="black" opacity="0.85"/>
-            </svg>
         </div>
 
         <!-- Рукописный шрифт как у Instagram -->
