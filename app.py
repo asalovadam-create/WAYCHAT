@@ -1956,7 +1956,7 @@ def set_group_admin():
 # ══════════════════════════════════════════════════════════
 @app.route('/search_users')
 @login_required
-@rate_limit('search', max_calls=20, window_sec=60)
+@rate_limit('search', max_calls=30, window_sec=60)
 def search_users():
     q     = request.args.get('q', '').strip()
     phone = request.args.get('phone', '').strip()
@@ -1976,26 +1976,73 @@ def search_users():
                 User.phone.like(f'%{clean_phone[-7:]}%') if len(clean_phone) >= 7 else text('0'),
             )
         ).limit(5).all()
-    else:
-        q_lower = q.lower()
-        users = User.query.filter(
-            User.id != uid,
-            User.is_blocked == False,
+        return jsonify([{
+            'id': u.id, 'name': u.name, 'username': u.username,
+            'avatar_url': u.avatar, 'avatar': u.avatar,
+            'online': u.online_status, 'phone': u.phone,
+        } for u in users])
+
+    q_lower = q.lower()
+
+    # Точные совпадения сначала (starts_with), потом contains — макс 5
+    exact = User.query.filter(
+        User.id != uid, User.is_blocked == False,
+        or_(
+            func.lower(User.name).like(f'{q_lower}%'),
+            func.lower(User.username).like(f'{q_lower}%'),
+        )
+    ).limit(5).all()
+    exact_ids = {u.id for u in exact}
+
+    fuzzy = []
+    if len(exact) < 5:
+        fuzzy = User.query.filter(
+            User.id != uid, User.is_blocked == False,
+            User.id.notin_(exact_ids),
             or_(
                 func.lower(User.name).like(f'%{q_lower}%'),
                 func.lower(User.username).like(f'%{q_lower}%'),
             )
-        ).limit(20).all()
+        ).limit(5 - len(exact)).all()
 
-    return jsonify([{
-        'id':         u.id,
-        'name':       u.name,
-        'username':   u.username,
-        'avatar_url': u.avatar,
-        'avatar':     u.avatar,
-        'online':     u.online_status,
-        'phone':      u.phone,
-    } for u in users])
+    users = exact + fuzzy
+
+    # Каналы по запросу (макс 3)
+    ch_exact = Channel.query.filter(
+        or_(
+            func.lower(Channel.name).like(f'{q_lower}%'),
+            func.lower(Channel.username).like(f'{q_lower}%'),
+        )
+    ).limit(3).all()
+    ch_ids = {c.id for c in ch_exact}
+    ch_fuzzy = []
+    if len(ch_exact) < 3:
+        ch_fuzzy = Channel.query.filter(
+            Channel.id.notin_(ch_ids),
+            or_(
+                func.lower(Channel.name).like(f'%{q_lower}%'),
+                func.lower(Channel.username).like(f'%{q_lower}%'),
+            )
+        ).limit(3 - len(ch_exact)).all()
+    channels = ch_exact + ch_fuzzy
+
+    result = []
+    for u in users:
+        result.append({
+            'type': 'user',
+            'id': u.id, 'name': u.name, 'username': u.username,
+            'avatar_url': u.avatar, 'avatar': u.avatar,
+            'online': u.online_status, 'phone': u.phone,
+        })
+    for c in channels:
+        subs = ChannelSubscriber.query.filter_by(channel_id=c.id).count()
+        result.append({
+            'type': 'channel',
+            'id': c.id, 'name': c.name, 'username': c.username,
+            'avatar': c.avatar or '', 'subscribers': subs,
+            'is_verified': c.is_verified or False,
+        })
+    return jsonify(result)
 
 
 @app.route('/update_profile', methods=['POST'])
@@ -2945,6 +2992,8 @@ def handle_msg(data):
                 payload['is_group_msg'] = True
                 payload['group_id']     = group.id
                 members = GroupMember.query.filter_by(group_id=group.id).all()
+                # Эмитим в комнату чата — мгновенно для всех участников внутри чата
+                emit('new_message', payload, room=f'chat_{chat_id}')
                 for m in members:
                     _chat_cache.delete(m.user_id)
                     emit('new_message', payload, room=f'user_{m.user_id}')
@@ -2956,11 +3005,14 @@ def handle_msg(data):
                                 f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
         else:
             payload['is_group_msg'] = False
+            # Эмитим в комнату чата — все кто сделал enter_chat получат мгновенно
+            emit('new_message', payload, room=f'chat_{chat_id}')
             parts = chat.room_key.replace('chat_', '').split('_')
             for uid_str in parts:
                 if uid_str.isdigit():
                     uid_int = int(uid_str)
                     _chat_cache.delete(uid_int)
+                    # Также эмитим в личную комнату (для обновления списка чатов)
                     emit('new_message', payload, room=f'user_{uid_str}')
                     if uid_int != uid:
                         is_online = _online_cache.get(uid_int)
@@ -3753,15 +3805,19 @@ def my_channels():
             'last_post_time': to_moscow_str(lp.created_at) if lp else '',
             'last_post_text': (lp.text or '')[:60] if lp else '',
             'is_verified':   c.is_verified or False,
-            'verified_type': c.verified_type or ''})
+            'verified_type': c.verified_type or '',
+            '_sort_ts':      lp.created_at.timestamp() if lp else 0})
     for r in sub_rows:
         lp = last_p(r.id)
         result.append({'id':r.id,'username':r.username,'name':r.name,'avatar':r.avatar or '',
             'description':r.description or '','is_owner':False,'subscribers':sub_cnt(r.id),
             'last_post_time': to_moscow_str(lp.created_at) if lp else '',
             'last_post_text': (lp.text or '')[:60] if lp else '',
-            'is_verified':   c.is_verified or False,
-            'verified_type': c.verified_type or ''})
+            'is_verified':   getattr(r, 'is_verified', False) or False,
+            'verified_type': getattr(r, 'verified_type', '') or '',
+            '_sort_ts':      lp.created_at.timestamp() if lp else 0})
+    # Сортируем по времени последнего поста — новейший сверху
+    result.sort(key=lambda x: x.pop('_sort_ts', 0), reverse=True)
     return jsonify(result)
 
 
@@ -3899,6 +3955,34 @@ def channel_react(ch_id, post_id):
     db.session.commit()
     return jsonify({'ok':True})
 
+
+
+
+@app.route('/api/channels/<int:ch_id>/edit', methods=['POST'])
+@login_required
+def channel_edit(ch_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id:
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    data = request.get_json() or {}
+    if 'name' in data and data['name'].strip():
+        ch.name = data['name'].strip()[:120]
+    if 'description' in data:
+        ch.description = data['description'].strip()[:500]
+    if 'username' in data and data['username'].strip():
+        new_uname = data['username'].strip().lower()[:64]
+        existing = Channel.query.filter(Channel.username == new_uname, Channel.id != ch_id).first()
+        if existing:
+            return jsonify({'ok': False, 'error': 'Username занят'}), 400
+        ch.username = new_uname
+    if 'is_private' in data:
+        ch.is_private = bool(data['is_private'])
+    db.session.commit()
+    return jsonify({'ok': True, 'channel': {
+        'id': ch.id, 'name': ch.name, 'username': ch.username,
+        'description': ch.description or '', 'is_private': ch.is_private,
+        'avatar': ch.avatar or '', 'is_verified': ch.is_verified,
+    }})
 
 @app.route('/api/channels/<int:ch_id>/upload_avatar', methods=['POST'])
 @login_required
