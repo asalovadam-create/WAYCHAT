@@ -492,12 +492,14 @@ async function init() {
         if (cache) Object.assign(currentUser, JSON.parse(cache));
     } catch(e){}
 
-    applyTheme(activeTheme);
+    applyTheme(activeTheme); // один вызов вместо двух
     renderApp();
-    applyTheme(activeTheme);
     updateAllAvatarUI();
     setupGlobalGestures();
-    setTimeout(_initStoriesPullToRefresh, 300); // Инициализируем pull-to-refresh для stories
+    // Делегирование событий — сразу после рендера
+    setupChatListDelegation();
+    requestAnimationFrame(() => setupMsgDelegation());
+    setTimeout(_initStoriesPullToRefresh, 500); // не критично — откладываем
     // Загружаем моменты сразу — нужно для мини-кружков на iOS
     (function() {
         function _loadMomentsForBar() {
@@ -525,7 +527,7 @@ async function init() {
             const parsed = JSON.parse(cachedChats);
             if (Array.isArray(parsed) && parsed.length > 0) {
                 recentChats = parsed;
-                renderChatList(parsed); // МГНОВЕННЫЙ рендер
+                requestAnimationFrame(() => renderChatList(parsed)); // не блокируем парсинг JS
             }
         }
     } catch(e) {}
@@ -537,9 +539,10 @@ async function init() {
     setTimeout(() => {
         if (!wsConnected && Date.now() - _lastChatsLoad > 2000) loadChats(true);
     }, 2500);
-    setTimeout(syncProfileData, 500);
-    setTimeout(_updatePermsSummary, 1000);
-    setTimeout(initPushNotifications, 800);
+    // Некритичные инициализации — откладываем после загрузки чатов
+    setTimeout(syncProfileData, 1000);
+    setTimeout(_updatePermsSummary, 2000);
+    setTimeout(initPushNotifications, 1500);
     // БАГ 5: Если запустили как PWA — сразу запрашиваем уведомления
     const _isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     if (_isPWA && 'Notification' in window && Notification.permission === 'default') {
@@ -551,11 +554,13 @@ async function init() {
     }
 
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
+        if (document.visibilityState !== 'visible') return;
+        // rAF: не делаем DOM операции сразу при разблокировке экрана
+        requestAnimationFrame(() => {
             const now = Date.now();
             if (now - _lastChatsLoad > 30000) loadChats();
             if (currentTab === 'moments' && now - momentsLastLoad > 60000) loadMoments();
-        }
+        });
     });
 }
 
@@ -684,18 +689,28 @@ function updateConnStatus(online) {
 // ══════════════════════════════════════════════════════════
 //  МОСКОВСКОЕ ВРЕМЯ
 // ══════════════════════════════════════════════════════════
+// Кэш времени: одинаковые timestamps не пересчитываем
+const _tmCache = new Map();
+// Московский оффсет (кэшируем на сессию)
+const _MSK_OFF = 3 * 60;
+
 function getMoscowTime(dateStr) {
     if (!dateStr) return '';
+    const cached = _tmCache.get(dateStr);
+    if (cached !== undefined) return cached;
     try {
         const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return dateStr;
-        const moscowOffset = 3 * 60;
-        const localOffset  = d.getTimezoneOffset();
-        const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
-        const nowMsk = new Date(Date.now() + (moscowOffset + (new Date().getTimezoneOffset())) * 60000);
-        const isToday = moscow.toDateString() === nowMsk.toDateString();
-        if (isToday) return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
-        return moscow.getDate().toString().padStart(2,'0') + '.' + (moscow.getMonth()+1).toString().padStart(2,'0');
+        if (isNaN(d.getTime())) { _tmCache.set(dateStr, dateStr); return dateStr; }
+        const localOff = d.getTimezoneOffset();
+        const moscow   = new Date(d.getTime() + (_MSK_OFF + localOff) * 60000);
+        const nowMsk   = new Date(Date.now() + (_MSK_OFF + (new Date().getTimezoneOffset())) * 60000);
+        const isToday  = moscow.toDateString() === nowMsk.toDateString();
+        const result   = isToday
+            ? moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0')
+            : moscow.getDate().toString().padStart(2,'0') + '.' + (moscow.getMonth()+1).toString().padStart(2,'0');
+        if (_tmCache.size > 1000) _tmCache.clear(); // eviction
+        _tmCache.set(dateStr, result);
+        return result;
     } catch(e) { return dateStr; }
 }
 
@@ -732,7 +747,9 @@ body {
     color: var(--text);
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
     -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeSpeed; /* быстрее optimizeLegibility */
     /* NO position:fixed — Safari safe-area bug */
 }
 .glass { background:rgba(8,8,12,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%); }
@@ -787,6 +804,8 @@ body {
     display:flex;align-items:center;gap:13px;padding:9px 14px 9px 16px;
     border-radius:0;transition:background 0.12s;cursor:pointer;position:relative;
     background:transparent;
+    contain:layout style; /* изолируем reflow от остального дерева */
+    will-change:transform; /* GPU слой для плавного скролла */
 }
 .chat-item:active { background:rgba(255,255,255,0.04); }
 .chat-item-divider {
@@ -809,8 +828,8 @@ body {
 .online-dot { position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid #000;border-radius:50%;box-shadow:0 0 6px var(--accent); }
 
 /* ЧАТ ОКНО */
-.chat-view { position:fixed;inset:0;z-index:2000;background:#000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.35s cubic-bezier(0.22,1,0.36,1);will-change:transform; }
-.chat-view.active { transform:translateX(0); }
+.chat-view { position:fixed;inset:0;z-index:2000;background:#0d1117;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.22,1,0.36,1);will-change:transform;backface-visibility:hidden;-webkit-backface-visibility:hidden; }
+.chat-view.active { transform:translate3d(0,0,0); }
 .chat-wallpaper {
     background-color: #0d1117;
     background-image:
@@ -819,14 +838,14 @@ body {
 }
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:12px 12px 16px;overflow-y:auto;scroll-behavior:smooth;-webkit-overflow-scrolling:touch;overscroll-behavior:contain; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:12px 12px 16px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;transform:translateZ(0);will-change:scroll-position; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
-.msg-row { display:flex;width:100%;margin-bottom:1px; }
+.msg-row { display:flex;width:100%;margin-bottom:1px;contain:layout style; }
 .msg-row.out { justify-content:flex-end; }
 .msg-row.in  { justify-content:flex-start;align-items:flex-end;gap:6px; }
 
-.bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
+.bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word;contain:paint; }
 .msg-row.out .bubble { background:var(--accent);border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 12px rgba(16,185,129,0.25); }
 .msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3); }
 
@@ -995,7 +1014,7 @@ body {
 
 <div id="app" style="width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#111113">
     <div id="conn-status" class="conn-status" style="opacity:0;flex-shrink:0"></div>
-    <div id="main-content" style="flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px)">
+    <div id="main-content" style="flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px);transform:translateZ(0)">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section" style="padding-top:max(env(safe-area-inset-top),44px)">
@@ -1987,9 +2006,21 @@ async function loadChats(force = false) {
 }
 // Debounced loadChats — не вызываем чаще раз в 1.5с при потоке сообщений
 let _loadChatsDebTimer = null;
+let _loadChatsLastCall = 0;
 function _debouncedLoadChats() {
+    const now = Date.now();
+    // Минимум 800мс между вызовами
+    if (now - _loadChatsLastCall < 800) {
+        clearTimeout(_loadChatsDebTimer);
+        _loadChatsDebTimer = setTimeout(() => {
+            _loadChatsLastCall = Date.now();
+            loadChats();
+        }, 800);
+        return;
+    }
+    _loadChatsLastCall = now;
     clearTimeout(_loadChatsDebTimer);
-    _loadChatsDebTimer = setTimeout(() => loadChats(), 1200);
+    _loadChatsDebTimer = setTimeout(() => loadChats(), 300);
 }
 
 // ════════════════════════════════════
@@ -2198,6 +2229,39 @@ function showChatSkeleton() {
 // Флаг — идёт ли рендер (защита от concurrent вызовов)
 let _renderingChats = false;
 
+// Делегирование для chat-list long-press — один listener вместо N*4
+let _chatListDelegated = false;
+function setupChatListDelegation() {
+    if (_chatListDelegated) return;
+    _chatListDelegated = true;
+    const container = document.getElementById('chat-list');
+    if (!container) return;
+    let _lpt = null, _lf = false, _lDiv = null;
+
+    container.addEventListener('pointerdown', (e) => {
+        const item = e.target.closest('.chat-item');
+        if (!item) return;
+        _lDiv = item; _lf = false;
+        _lpt = setTimeout(() => {
+            _lf = true;
+            const isGrp   = item.dataset.isGroupStr === '1';
+            const pid     = +(item.dataset.partnerId);
+            const pname   = item.dataset.partnerName || '';
+            const pava    = item.dataset.partnerAva  || '';
+            const chatId  = +(item.dataset.chatId)   || 0;
+            vibrate(40);
+            _showChatListMenu(item, isGrp, pid, pname, chatId, pava);
+        }, 550);
+    });
+    const cancel = () => { clearTimeout(_lpt); };
+    container.addEventListener('pointerup',     cancel);
+    container.addEventListener('pointermove',   cancel);
+    container.addEventListener('pointercancel', cancel);
+    container.addEventListener('click', e => {
+        if (_lf) { e.stopImmediatePropagation(); _lf = false; }
+    }, true);
+}
+
 function renderChatList(chats) {
     if (_renderingChats) return; // не рендерим параллельно
     const container = document.getElementById('chat-list');
@@ -2309,16 +2373,18 @@ function renderChatList(chats) {
             // Клик
             div.onclick = ((_g,_pid,_pn,_pa) => () => { vibrate(8); _g ? openGroupChat(_pid,_pn,_pa) : openChat(_pid,_pn,_pa); })(isGroup,partnerId,partnerName,partnerAvatar);
 
-            // Long-press
-            let _lpt=null,_lf=false;
-            div.addEventListener('pointerdown',()=>{_lf=false;_lpt=setTimeout(()=>{_lf=true;vibrate(40);_showChatListMenu(div,isGroup,partnerId,partnerName,chat.chat_id,partnerAvatar);},550);});
-            const _lpc=()=>clearTimeout(_lpt);
-            div.addEventListener('pointerup',_lpc);div.addEventListener('pointermove',_lpc);div.addEventListener('pointercancel',_lpc);
-            div.addEventListener('click',e=>{if(_lf){e.stopImmediatePropagation();_lf=false;}},true);
+            // Long-press через dataset — данные в DOM, не в closures
+            div.dataset.chatId      = chat.chat_id || '';
+            div.dataset.isGroupStr  = isGroup ? '1' : '0';
+            div.dataset.partnerName = partnerName;
+            div.dataset.partnerAva  = partnerAvatar;
+            // Делегирование событий настроено в setupChatListDelegation()
         } else {
-            // Обновляем onclick (аватар/имя могли измениться)
-            div.onclick = ((_g,_pid,_pn,_pa) => () => { vibrate(8); _g ? openGroupChat(_pid,_pn,_pa) : openChat(_pid,_pn,_pa); })(isGroup,partnerId,partnerName,partnerAvatar);
-            // Онлайн-точка
+            // Обновляем dataset (имя/аватар могли измениться)
+            div.dataset.partnerName = partnerName;
+            div.dataset.partnerAva  = partnerAvatar;
+            div.dataset.chatId      = chat.chat_id || '';
+            // Онлайн-точка — меняем только display, не трогаем layout
             const dot = div.querySelector('[data-online-dot]');
             if (dot && !isGroup) dot.style.display = chat.online ? 'block' : 'none';
         }
@@ -2340,11 +2406,17 @@ function renderChatList(chats) {
         frag.appendChild(div);
     });
 
-    // Один DOM-update — заменяем содержимое контейнера целиком
-    container.innerHTML = '';
-    container.appendChild(frag);
+    // Diffing: переиспользуем существующие DOM-узлы, вставляем только новые
+    // container.innerHTML = '' убрано — вызывает reflow всего дерева
+    const children = Array.from(container.querySelectorAll('[data-chat-key]'));
+    const fragChildren = Array.from(frag.childNodes);
 
-    updateUnreadBadge(totalUnread);
+    // Быстрая вставка через один reflow
+    requestAnimationFrame(() => {
+        container.innerHTML = '';
+        container.appendChild(frag);
+        updateUnreadBadge(totalUnread);
+    });
     _renderingChats = false;
 }
 
@@ -2378,28 +2450,35 @@ function updatePartnerOnlineStatus(userId, isOnline) {
 // ══════════════════════════════════════════════════════════
 //  API FETCH
 // ══════════════════════════════════════════════════════════
+// Дедупликация: одновременные GET к одному URL — один реальный запрос
+const _pendingFetches = new Map();
+
 async function apiFetch(url, options = {}, _retry = 0) {
+    const isGET = !options.method || options.method === 'GET';
+
+    // Если уже летит такой же GET — возвращаем тот же Promise
+    if (isGET && _pendingFetches.has(url)) {
+        return _pendingFetches.get(url);
+    }
+
     const headers = { ...(options.headers || {}) };
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 15000); // 15s таймаут
-    try {
-        const res = await fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal });
-        clearTimeout(tid);
-        if (res.status === 401 || (res.redirected && res.url.includes('/login'))) {
-            location.href = '/login';
-            return null;
-        }
-        // Авто-retry при 503 (сервер перегружен) — 1 раз
-        if (res.status === 503 && _retry === 0 && options.method !== 'POST') {
-            await new Promise(r => setTimeout(r, 1500));
-            return apiFetch(url, options, 1);
-        }
-        return res;
-    } catch(e) {
-        clearTimeout(tid);
-        if (e.name === 'AbortError') console.warn('apiFetch timeout:', url);
-        return null;
-    }
+    const tid = setTimeout(() => controller.abort(), 15000);
+
+    const p = fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal })
+        .then(res => {
+            clearTimeout(tid);
+            if (res.status === 401 || (res.redirected && res.url.includes('/login'))) { location.href = '/login'; return null; }
+            if (res.status === 503 && _retry === 0 && options.method !== 'POST') {
+                return new Promise(r => setTimeout(r, 1500)).then(() => apiFetch(url, options, 1));
+            }
+            return res;
+        })
+        .catch(e => { clearTimeout(tid); if (e.name === 'AbortError') console.warn('apiFetch timeout:', url); return null; })
+        .finally(() => { if (isGET) _pendingFetches.delete(url); });
+
+    if (isGET) _pendingFetches.set(url, p);
+    return p;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2486,7 +2565,12 @@ function handleSearch() {
     const q = (document.getElementById('search-input')?.value.trim() || '').replace(/^@/, '');
     if (!q) { renderRecentContacts(); return; }
     clearTimeout(searchTimeout);
+    // Отменяем предыдущий запрос поиска если ещё летит
+    if (window._searchController) window._searchController.abort();
+    window._searchController = new AbortController();
+    const _sc = window._searchController;
     searchTimeout = setTimeout(async () => {
+        if (_sc.signal.aborted) return;
         const res = document.getElementById('search-results');
         if (!res) return;
         res.innerHTML = '<div style="padding:20px;text-align:center;opacity:.4;font-size:13px">Поиск...</div>';
@@ -2623,6 +2707,7 @@ async function openChat(id, name, avatar) {
             await loadMessages(true);
             setupVoiceRecording();
             setupScrollPagination();
+            setupMsgDelegation();
         }
     } catch(e) {
         console.error('openChat:', e);
@@ -2771,18 +2856,22 @@ function _trimOldMessages() {
 function renderMessagesFromCache(msgs) {
     const container = document.getElementById('messages');
     if (!container) return;
+    const frag = document.createDocumentFragment();
     let lastDate = null;
-    msgs.forEach(msg => {
+    const len = msgs.length;
+    for (let i = 0; i < len; i++) {
+        const msg = msgs[i];
         const msgDate = getMessageDate(msg);
         if (msgDate && msgDate !== lastDate) {
             const divider = document.createElement('div');
             divider.className = 'date-divider';
-            divider.innerHTML = `<div class="date-divider-inner">${msgDate}</div>`;
-            container.appendChild(divider);
+            divider.innerHTML = '<div class="date-divider-inner">'+msgDate+'</div>';
+            frag.appendChild(divider);
             lastDate = msgDate;
         }
-        container.appendChild(buildMessageRow(msg, false));
-    });
+        frag.appendChild(buildMessageRow(msg, false));
+    }
+    container.appendChild(frag); // один reflow вместо N
 }
 
 function getMessageDate(msg) {
@@ -2807,13 +2896,65 @@ function getMessageDate(msg) {
 function setupScrollPagination() {
     const container = document.getElementById('messages');
     if (!container) return;
+    // Убираем старый листенер
+    container.onscroll = null;
+    // Пассивный листенер — не блокирует main thread
     let loadTrigger = false;
-    container.onscroll = () => {
-        if (container.scrollTop < 100 && hasMoreMessages && !loadingMessages && !loadTrigger) {
-            loadTrigger = true;
-            loadMessages(false).finally(() => { loadTrigger = false; });
+    let rafId = null;
+    container.addEventListener('scroll', () => {
+        if (rafId) return; // throttle через rAF
+        rafId = requestAnimationFrame(() => {
+            rafId = null;
+            if (container.scrollTop < 120 && hasMoreMessages && !loadingMessages && !loadTrigger) {
+                loadTrigger = true;
+                loadMessages(false).finally(() => { loadTrigger = false; });
+            }
+        });
+    }, { passive: true });
+}
+
+// ═══ WeakMap: row → msg data (избегаем closures в каждом row) ═══
+const _msgRowCache = new WeakMap();
+let _delegationSetup = false;
+
+// Делегирование событий для ВСЕХ сообщений — один listener вместо N*3
+function setupMsgDelegation() {
+    if (_delegationSetup) return;
+    _delegationSetup = true;
+    const container = document.getElementById('messages');
+    if (!container) return;
+
+    let lpTimer = null;
+    let tapCount = 0, tapTimer = null;
+    let lpRow = null;
+
+    container.addEventListener('touchstart', (e) => {
+        const row = e.target.closest('.msg-row');
+        if (!row) return;
+        lpRow = row;
+        lpTimer = setTimeout(() => {
+            const msg = _msgRowCache.get(row);
+            if (msg) { vibrate([10,30,10]); showMsgContextMenu(row, msg); }
+        }, 600);
+    }, { passive: true });
+
+    container.addEventListener('touchend', (e) => {
+        clearTimeout(lpTimer);
+        const row = e.target.closest('.msg-row');
+        if (!row || row !== lpRow) { tapCount = 0; return; }
+        tapCount++;
+        if (tapCount >= 2) {
+            clearTimeout(tapTimer); tapCount = 0;
+            const msg = _msgRowCache.get(row);
+            if (msg) { activeReactionMsgId = msg.id; sendReaction('❤️'); showFloatingHeart(row); }
+        } else {
+            tapTimer = setTimeout(() => { tapCount = 0; }, 350);
         }
-    };
+    }, { passive: true });
+
+    container.addEventListener('touchmove', () => {
+        clearTimeout(lpTimer); lpRow = null;
+    }, { passive: true });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2827,27 +2968,12 @@ function buildMessageRow(msg, animate = true) {
     row.setAttribute('data-msg-id', msg.id || '');
     if (animate) row.classList.add('animate-msg');
 
-    // Долгое нажатие
-    let lpTimer;
-    row.addEventListener('touchstart', () => {
-        lpTimer = setTimeout(() => { vibrate([10,30,10]); showMsgContextMenu(row, msg); }, 600);
-    }, { passive: true });
-    row.addEventListener('touchend',  () => clearTimeout(lpTimer));
-    row.addEventListener('touchmove', () => clearTimeout(lpTimer));
-
-    // Двойной тап — лайк
-    let tapCount = 0, tapTimer = null;
-    row.addEventListener('touchend', () => {
-        tapCount++;
-        if (tapCount === 2) {
-            clearTimeout(tapTimer); tapCount = 0;
-            activeReactionMsgId = msg.id;
-            sendReaction('❤️');
-            showFloatingHeart(row);
-        } else {
-            tapTimer = setTimeout(() => { tapCount = 0; }, 350);
-        }
-    });
+    // Единый touchstart — long press + double tap через dataset
+    row.dataset.msgId = msg.id || '';
+    row.dataset.msgSender = msg.sender_id || '';
+    // Событие делегируется на контейнер #messages (см. setupMsgDelegation)
+    // Сохраняем msg в WeakMap для быстрого доступа
+    _msgRowCache.set(row, msg);
 
     const rawTime = msg.raw_timestamp || msg.timestamp || '';
     const displayTime = getMoscowTime(rawTime) || msg.timestamp || '';
@@ -3077,6 +3203,19 @@ function showFloatingHeart(row) {
     document.head.appendChild(style);
     document.body.appendChild(heart);
     setTimeout(() => { heart.remove(); style.remove(); }, 800);
+}
+
+// Виртуализация: не держим > 80 сообщений в DOM
+const VIRT_MAX = 80;
+function _pruneMsgs() {
+    const c = document.getElementById('messages');
+    if (!c) return;
+    const rows = c.querySelectorAll('.msg-row');
+    if (rows.length > VIRT_MAX + 20) {
+        const n = rows.length - VIRT_MAX;
+        for (let i = 0; i < n; i++) rows[i].remove();
+        window.hasMoreMessages = true;
+    }
 }
 
 function renderNewMessage(msg, animate = true) {
@@ -7346,9 +7485,11 @@ function _skeletonMomentRow() {
         + '</div></div>';
 }
 
+const _ESC = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+const _ESC_RE = /[&<>"']/g;
 function escHtml(s) {
     if (!s) return '';
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+    return String(s).replace(_ESC_RE, c => _ESC[c]);
 }
 
 function renderMomentsList(container, moments) {
@@ -9256,10 +9397,16 @@ async function syncProfileData() {
 // ══════════════════════════════════════════════════════════
 function scrollDown(smooth = true) {
     const m = document.getElementById('messages');
-    if (m) {
-        if (smooth) m.scrollTo({ top: m.scrollHeight, behavior: 'smooth' });
-        else m.scrollTop = m.scrollHeight;
-    }
+    if (!m) return;
+    // rAF избегает layout thrashing: читаем scrollHeight после paint
+    requestAnimationFrame(() => {
+        const sh = m.scrollHeight;
+        if (smooth && sh - m.scrollTop < 1200) {
+            m.scrollTo({ top: sh, behavior: 'smooth' });
+        } else {
+            m.scrollTop = sh; // instant если далеко
+        }
+    });
 }
 
 function closeChat() {
