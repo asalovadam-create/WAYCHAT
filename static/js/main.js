@@ -4355,10 +4355,7 @@ async function sendVoicePreview() {
 // ══════════════════════════════════════════════════════════
 function openCreateGroupModal() {
     vibrate(8);
-    if (savedContacts.length === 0) {
-        showToast('Сначала добавьте контакты', 'warning');
-        return;
-    }
+    // Можно создать группу даже без контактов — покажем пустой список
 
     const overlay = document.createElement('div');
     overlay.className = 'create-group-overlay';
@@ -4574,16 +4571,39 @@ function openNewChatSheet() {
     sheet.style.cssText = 'background:#1c1c1e;border-radius:18px 18px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),20px)';
 
     function sheetBtn(iconHtml, title, subtitle, action) {
-        const btn = document.createElement('button');
-        btn.style.cssText = 'width:100%;display:flex;align-items:center;gap:14px;padding:14px 20px;background:none;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;font-family:inherit;font-size:inherit;text-align:left';
+        // Используем div вместо button — iOS Safari иногда не стреляет click на button в fixed overlay
+        const btn = document.createElement('div');
+        btn.style.cssText = 'width:100%;display:flex;align-items:center;gap:14px;padding:16px 20px;cursor:pointer;-webkit-tap-highlight-color:transparent;color:white;user-select:none;-webkit-user-select:none;active-color:rgba(255,255,255,0.05)';
         btn.innerHTML = '<div style="width:44px;height:44px;border-radius:50%;background:#2c2c2e;display:flex;align-items:center;justify-content:center;flex-shrink:0">' + iconHtml + '</div>'
             + '<div><div style="font-size:16px;font-weight:600">' + title + '</div>'
             + '<div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:2px">' + subtitle + '</div></div>';
+
+        let _tapped = false;
+        // touchend — самый надёжный на iOS
+        btn.addEventListener('touchend', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (_tapped) return;
+            _tapped = true;
+            btn.style.background = 'rgba(255,255,255,0.06)';
+            _closeNewChatSheet();
+            setTimeout(function() { action(); _tapped = false; }, 60);
+        }, { passive: false });
+        // Fallback для мышки/десктопа
         btn.addEventListener('click', function(e) {
             e.stopPropagation();
+            if (_tapped) return;
+            _tapped = true;
             _closeNewChatSheet();
-            setTimeout(action, 80); // iOS: ждём закрытия перед открытием нового модала
+            setTimeout(function() { action(); _tapped = false; }, 60);
         });
+        // Visual feedback on touch
+        btn.addEventListener('touchstart', function() {
+            btn.style.background = 'rgba(255,255,255,0.06)';
+        }, { passive: true });
+        btn.addEventListener('touchcancel', function() {
+            btn.style.background = '';
+        }, { passive: true });
         return btn;
     }
 
