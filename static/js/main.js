@@ -4793,76 +4793,184 @@ function _closeChannelView() { var v = document.getElementById("channel-view"); 
 
 function renderChannelView(ch, posts) {
     vibrate(8);
-    const old = document.getElementById('channel-view');
+    var old = document.getElementById('channel-view');
     if (old) old.remove();
-    const ov = document.createElement('div');
+
+    var ov = document.createElement('div');
     ov.id = 'channel-view';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#000;display:flex;flex-direction:column';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;background:#1c1c1e;display:flex;flex-direction:column';
 
-    const isOwner  = ch.is_owner;
-    const isSub    = ch.is_subscribed;
-    const subCnt   = ch.subscribers || 0;
-    const subsText = subCnt === 1 ? '1 подписчик' : subCnt + ' подписчиков';
-    const avaHtml  = ch.avatar
-        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
-        : '<div style="width:100%;height:100%;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:#000">'+escHtml(ch.name.charAt(0).toUpperCase())+'</div>';
+    var isOwner  = ch.is_owner;
+    var isSub    = ch.is_subscribed;
+    var subCnt   = ch.subscribers || 0;
+    var subsText = subCnt === 1 ? '1 подписчик' : subCnt + ' подписчиков';
 
-    // iOS 26 glass header
-    const headerHtml = ''
-        + '<div style="position:relative;overflow:hidden">'
-        // Blur bg
-        + '<div style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(16,185,129,.18) 0%,rgba(0,0,0,.7) 100%);z-index:0"></div>'
-        // Safe area + back button
-        + '<div style="position:relative;z-index:2;padding:max(env(safe-area-inset-top),14px) 16px 0;display:flex;align-items:center;justify-content:space-between">'
-        + '<button onclick="_closeChannelView()" style="display:flex;align-items:center;gap:5px;background:none;border:none;cursor:pointer;color:var(--accent);font-size:15px;font-weight:600;font-family:inherit;padding:8px 0;-webkit-tap-highlight-color:transparent">'
-        + '<svg width="9" height="16" viewBox="0 0 9 16" fill="none"><path d="M8 1L1 8L8 15" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-        + 'Назад</button>'
-        + (isOwner ? '<button onclick="openChannelSettings('+ch.id+')" style="background:none;border:none;cursor:pointer;color:rgba(255,255,255,.5);padding:8px;-webkit-tap-highlight-color:transparent"><svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="5" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="19" r="1.5" fill="currentColor"/></svg></button>' : '<div></div>')
+    // Avatar element — круглая для шапки
+    var avaInner = ch.avatar
+        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover">'
+        : '<div style="width:100%;height:100%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#000">'+escHtml(ch.name.charAt(0).toUpperCase())+'</div>';
+
+    // ── TOPBAR (точь-в-точь TG: стрелка | название+подпись по центру | аватарка) ──
+    var topbar = '<div style="'
+        + 'position:sticky;top:0;z-index:10;'
+        + 'background:rgba(28,28,30,0.92);'
+        + 'backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);'
+        + 'border-bottom:.5px solid rgba(255,255,255,.08);'
+        + 'padding:max(env(safe-area-inset-top),44px) 12px 10px;'
+        + 'display:flex;align-items:center;gap:4px">'
+        // Back button
+        + '<button onclick="_closeChannelView()" style="width:36px;height:36px;border-radius:50%;background:none;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent;padding:0">'
+        + '<svg width="11" height="19" viewBox="0 0 11 19" fill="none"><path d="M9.5 1.5L1.5 9.5L9.5 17.5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        + '</button>'
+        // Center: name + subs
+        + '<div style="flex:1;text-align:center;padding:0 4px;min-width:0">'
+        + '<div style="font-size:16px;font-weight:700;line-height:1.1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;justify-content:center;gap:4px">'
+        + escHtml(ch.name)+(ch.is_verified ? _channelVerifyBadge(16) : '')
         + '</div>'
-        // Big avatar centered
-        + '<div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding:16px 16px 20px">'
-        + '<div style="width:80px;height:80px;border-radius:50%;overflow:hidden;border:3px solid rgba(255,255,255,.15);box-shadow:0 4px 24px rgba(0,0,0,.5);margin-bottom:12px">'+avaHtml+'</div>'
-        + '<div style="font-size:20px;font-weight:800;letter-spacing:-.3px;text-align:center;display:flex;align-items:center;justify-content:center;gap:4px">'+escHtml(ch.name)+(ch.is_verified ? _channelVerifyBadge(20) : '')+'</div>'
-        // Glass pill: subscribers
-        + '<div style="margin-top:6px;display:flex;align-items:center;gap:12px">'
-        + '<div style="background:rgba(255,255,255,.1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:5px 14px;font-size:12px;color:rgba(255,255,255,.7)">'
-        + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:4px"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.6)" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="rgba(255,255,255,.6)" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="rgba(255,255,255,.6)" stroke-width="2" stroke-linecap="round"/></svg>'
-        + subsText + '</div>'
-        + '<div style="background:rgba(255,255,255,.08);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:5px 14px;font-size:12px;color:rgba(255,255,255,.55)">@'+escHtml(ch.username)+'</div>'
+        + '<div style="font-size:12px;color:rgba(255,255,255,.45);margin-top:1px">'+subsText+'</div>'
         + '</div>'
-        + (ch.description ? '<div style="font-size:13px;color:rgba(255,255,255,.45);margin-top:8px;text-align:center;max-width:280px;line-height:1.4">'+escHtml(ch.description)+'</div>' : '')
-        // Sub/unsubscribe button for non-owners
-        + (!isOwner ? '<button id="sub-btn-'+ch.id+'" onclick="toggleChannelSub('+ch.id+',this)" style="margin-top:12px;background:'+(isSub?'rgba(255,255,255,.1)':'var(--accent)')+';color:'+(isSub?'white':'black')+';border:none;border-radius:20px;padding:9px 28px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">'+(isSub?'Отписаться':'Подписаться')+'</button>' : '')
+        // Avatar (clickable — opens profile/info)
+        + '<div id="ch-ava-btn" style="width:38px;height:38px;border-radius:50%;overflow:hidden;flex-shrink:0;cursor:pointer;-webkit-tap-highlight-color:transparent">'
+        + avaInner
         + '</div>'
         + '</div>';
 
-    // Posts list
-    const postsHtml = posts.length === 0
-        ? '<div style="text-align:center;opacity:.25;padding:60px 20px;font-size:15px">'+(isOwner?'Напиши первый пост ниже':'Постов пока нет')+'</div>'
+    // ── POSTS ──
+    var postsHtml = posts.length === 0
+        ? '<div style="flex:1;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);font-size:15px">'
+          + (isOwner ? 'Напиши первый пост ниже' : 'Постов пока нет') + '</div>'
         : posts.map(function(p) { return renderChannelPost(p, isOwner, ch.id); }).join('');
 
-    // Owner input bar (like TG)
-    const inputBar = isOwner ? (''
-        + '<div id="ch-input-bar" style="padding:8px 12px max(env(safe-area-inset-bottom),12px);background:rgba(0,0,0,.92);backdrop-filter:blur(20px);border-top:.5px solid rgba(255,255,255,.08);display:flex;align-items:flex-end;gap:8px">'
-        + '<button onclick="_chPickMedia('+ch.id+')" style="width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">'
-        + '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/></svg>'
-        + '</button>'
-        + '<input id="ch-post-input" type="file" accept="image/*,video/*" style="display:none" onchange="_chHandleMedia(this,'+ch.id+')">'
-        + '<textarea id="ch-text-inp-'+ch.id+'" placeholder="Публикация..." rows="1"'
-        + ' style="flex:1;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:9px 16px;color:white;font-size:15px;font-family:inherit;resize:none;outline:none;max-height:120px;overflow-y:auto;line-height:1.4"'
-        + "></textarea>"
-        + '<button onclick="_chSendPost('+ch.id+')" style="width:34px;height:34px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">'
-        + '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-        + '</button>'
-        + '</div>'
-    ) : '';
+    // ── INPUT BAR (owner only, TG-style) ──
+    var inputBar = '';
+    if (isOwner) {
+        inputBar = '<div id="ch-input-bar" style="'
+            + 'padding:8px 8px max(env(safe-area-inset-bottom),8px);'
+            + 'background:rgba(28,28,30,0.98);'
+            + 'backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);'
+            + 'border-top:.5px solid rgba(255,255,255,.07);'
+            + 'display:flex;align-items:flex-end;gap:6px">'
+            // Clip button (left)
+            + '<button onclick="_chPickMedia('+ch.id+')" style="'
+            + 'width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,.09);'
+            + 'border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;'
+            + 'flex-shrink:0;-webkit-tap-highlight-color:transparent;margin-bottom:0">'
+            + '<svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="rgba(255,255,255,.55)" stroke-width="2" stroke-linecap="round"/></svg>'
+            + '</button>'
+            + '<input id="ch-post-input" type="file" accept="image/*,video/*" style="display:none" onchange="_chHandleMedia(this,'+ch.id+')">'
+            // Text input pill (center)
+            + '<div style="flex:1;position:relative">'
+            + '<textarea id="ch-text-inp-'+ch.id+'" placeholder="Публикация..." rows="1"'
+            + ' style="'
+            + 'width:100%;padding:9px 16px;'
+            + 'background:rgba(255,255,255,.08);'
+            + 'border:1px solid rgba(255,255,255,.09);'
+            + 'border-radius:22px;color:white;font-size:15px;'
+            + 'font-family:inherit;resize:none;outline:none;'
+            + 'max-height:120px;overflow-y:auto;line-height:1.45;'
+            + 'box-sizing:border-box;display:block"'
+            + ' oninput="var h=this;h.style.height=\"auto\";h.style.height=Math.min(h.scrollHeight,120)+\"px\""></textarea>'
+            + '</div>'
+            // Send button (right) — accent green circle
+            + '<button onclick="_chSendPost('+ch.id+')" style="'
+            + 'width:38px;height:38px;border-radius:50%;background:var(--accent);'
+            + 'border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;'
+            + 'flex-shrink:0;-webkit-tap-highlight-color:transparent;margin-bottom:0">'
+            + '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9Z" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + '</button>'
+            + '</div>';
+    } else {
+        // Subscriber: show sub/unsub bar
+        inputBar = '<div style="'
+            + 'padding:10px 16px max(env(safe-area-inset-bottom),10px);'
+            + 'background:rgba(28,28,30,0.98);backdrop-filter:blur(20px);'
+            + 'border-top:.5px solid rgba(255,255,255,.07)">'
+            + '<button id="sub-btn-'+ch.id+'" onclick="toggleChannelSub('+ch.id+',this)" style="'
+            + 'width:100%;padding:13px;background:'+(isSub?'rgba(255,255,255,.08)':'var(--accent)')+';'
+            + 'color:'+(isSub?'rgba(255,255,255,.7)':'#000')+';border:none;border-radius:22px;'
+            + 'font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">'
+            + (isSub ? 'Отписаться' : 'Подписаться') + '</button>'
+            + '</div>';
+    }
 
-    ov.innerHTML = headerHtml
-        + '<div id="channel-posts-list" style="flex:1;overflow-y:auto;padding:0 0 8px">' + postsHtml + '</div>'
-        + inputBar;
+    // ── ASSEMBLE ──
+    var postsWrapper = document.createElement('div');
+    postsWrapper.id = 'channel-posts-list';
+    postsWrapper.style.cssText = 'flex:1;overflow-y:auto;display:flex;flex-direction:column';
+    postsWrapper.innerHTML = postsHtml;
+
+    ov.innerHTML = topbar;
+    ov.appendChild(postsWrapper);
+    ov.insertAdjacentHTML('beforeend', inputBar);
+
+    document.body.appendChild(ov);
+    // Wire up avatar click
+    var avaBtn = ov.querySelector('#ch-ava-btn');
+    if (avaBtn) {
+        avaBtn.addEventListener('click', function() { _openChannelInfo(ch.id); });
+    }
+}
+
+// Opens iOS26 glass info sheet when tapping avatar in channel header
+function _openChSettings() {
+    var ch = window._currentInfoSheetCh;
+    var sheet = document.getElementById('ch-info-sheet');
+    if (sheet) sheet.remove();
+    if (ch) openChannelSettings(ch.id, ch);
+}
+
+function _openChannelInfo(chId) {
+    var ch = null;
+    // Try to find in cache
+    if (_channelsListCache) ch = _channelsListCache.find(function(c){return String(c.id)===String(chId);});
+    if (!ch) { ch = {id:chId,name:'',username:'',description:'',subscribers:0,is_verified:false}; }
+
+    var subCnt   = ch.subscribers || 0;
+    var subsText = subCnt === 1 ? '1 подписчик' : subCnt + ' подписчиков';
+    var avaHtml  = ch.avatar
+        ? '<img src="'+ch.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">'
+        : '<div style="width:100%;height:100%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:#000">'+escHtml((ch.name||'?').charAt(0).toUpperCase())+'</div>';
+
+    var ov = document.createElement('div');
+    ov.id = 'ch-info-sheet';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8500;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;background:rgba(0,0,0,.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
+    ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
+
+    ov.innerHTML = '<div style="'
+        + 'width:100%;max-width:500px;'
+        + 'background:rgba(28,28,30,0.98);'
+        + 'backdrop-filter:blur(40px);-webkit-backdrop-filter:blur(40px);'
+        + 'border-radius:24px 24px 0 0;'
+        + 'padding:0 0 max(env(safe-area-inset-bottom),24px);'
+        + 'border-top:1px solid rgba(255,255,255,.1)">'
+        // Handle
+        + '<div style="width:36px;height:4px;background:rgba(255,255,255,.2);border-radius:2px;margin:12px auto 20px"></div>'
+        // Avatar big
+        + '<div style="display:flex;flex-direction:column;align-items:center;padding:0 20px 20px">'
+        + '<div style="width:88px;height:88px;border-radius:50%;overflow:hidden;box-shadow:0 8px 32px rgba(0,0,0,.5);margin-bottom:14px">'
+        + avaHtml + '</div>'
+        // Name + badge
+        + '<div style="font-size:22px;font-weight:800;text-align:center;display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+        + escHtml(ch.name)+(ch.is_verified ? _channelVerifyBadge(22) : '')
+        + '</div>'
+        + '@' + escHtml(ch.username)
+        // Glass pills row
+        + '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;justify-content:center">'
+        + '<div style="background:rgba(255,255,255,.08);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.1);border-radius:20px;padding:6px 16px;font-size:13px;color:rgba(255,255,255,.7)">'
+        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" style="display:inline;vertical-align:-1px;margin-right:5px"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="rgba(255,255,255,.5)" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="rgba(255,255,255,.5)" stroke-width="2" stroke-linecap="round"/></svg>'
+        + subsText + '</div>'
+        + (ch.is_verified ? ('<div style="background:rgba(74,158,224,.15);border:1px solid rgba(74,158,224,.3);border-radius:20px;padding:6px 16px;font-size:13px;color:#4A9EE0;display:flex;align-items:center;gap:5px">'+_channelVerifyBadge(14)+'Верифицирован</div>') : '')
+        + '</div>'
+        // Description
+        + (ch.description ? '<div style="font-size:14px;color:rgba(255,255,255,.5);margin-top:14px;text-align:center;line-height:1.5;max-width:300px">'+escHtml(ch.description)+'</div>' : '')
+        + '</div>'
+        // Settings button for owner
+        + (ch.is_owner ? '<div style="padding:0 16px"><button onclick="_openChSettings()" style="width:100%;padding:14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.08);border-radius:16px;color:rgba(255,255,255,.7);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:8px">⚙️ Настройки канала</button></div>' : '')
+        + '</div>';
 
     document.body.appendChild(ov);
 }
+
 
 // Channel owner: pick media for post
 let _chMediaFile = null;
