@@ -1795,6 +1795,7 @@ function renderChannelsList(channels) {
             : '<div style="width:56px;height:56px;border-radius:16px;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;color:#000;flex-shrink:0">'+_chi+'</div>';
         const subsText  = (ch.subscribers||0) + ' подп.';
         const ownerDot  = ch.is_owner ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:5px;vertical-align:2px"></span>' : '';
+        const verifyBadgeHtml = ch.is_verified ? _channelVerifyBadge(14) : '';
         const lastText  = ch.last_post_text
             ? escHtml(ch.last_post_text.slice(0, 55))
             : '<span style="color:rgba(255,255,255,.3)">@'+escHtml(ch.username)+' · '+subsText+'</span>';
@@ -1802,7 +1803,7 @@ function renderChannelsList(channels) {
         item.innerHTML = avaHtml
             + '<div style="flex:1;min-width:0;padding-bottom:10px">'
             + '<div style="display:flex;align-items:center;justify-content:space-between;gap:6px">'
-            + '<span style="font-weight:600;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">'+escHtml(ch.name)+ownerDot+'</span>'
+            + '<span style="font-weight:600;font-size:16px;display:flex;align-items:center;gap:2px;max-width:190px">'+escHtml(ch.name)+verifyBadgeHtml+ownerDot+'</span>'
             + '<span style="font-size:12px;color:rgba(255,255,255,.4);flex-shrink:0">'+(ch.last_post_time||'')+'</span>'
             + '</div>'
             + '<div style="font-size:14px;color:rgba(255,255,255,.45);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+lastText+'</div>'
@@ -4778,6 +4779,16 @@ async function openChannelById(chId) {
     } catch(e) { showToast('Ошибка загрузки', 'error'); }
 }
 
+
+// Синяя галочка верификации канала (как у Twitter/TG)
+function _channelVerifyBadge(size) {
+    size = size || 16;
+    return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:inline;vertical-align:-2px;margin-left:3px;flex-shrink:0">'
+        + '<path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2Z" fill="#4A9EE0"/>'
+        + '<path d="M10.5858 15.4142C10.1953 15.8047 9.5621 15.8047 9.17157 15.4142L6.34315 12.5858C5.95262 12.1953 5.95262 11.5621 6.34315 11.1716C6.73367 10.7811 7.36684 10.7811 7.75736 11.1716L9.87868 13.2929L16.2426 6.92893C16.6332 6.53841 17.2663 6.53841 17.6569 6.92893C18.0474 7.31946 18.0474 7.95262 17.6569 8.34315L10.5858 15.4142Z" fill="white"/>'
+        + '</svg>';
+}
+
 function _closeChannelView() { var v = document.getElementById("channel-view"); if (v) v.remove(); }
 
 function renderChannelView(ch, posts) {
@@ -4811,7 +4822,7 @@ function renderChannelView(ch, posts) {
         // Big avatar centered
         + '<div style="position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;padding:16px 16px 20px">'
         + '<div style="width:80px;height:80px;border-radius:50%;overflow:hidden;border:3px solid rgba(255,255,255,.15);box-shadow:0 4px 24px rgba(0,0,0,.5);margin-bottom:12px">'+avaHtml+'</div>'
-        + '<div style="font-size:20px;font-weight:800;letter-spacing:-.3px;text-align:center">'+escHtml(ch.name)+'</div>'
+        + '<div style="font-size:20px;font-weight:800;letter-spacing:-.3px;text-align:center;display:flex;align-items:center;justify-content:center;gap:4px">'+escHtml(ch.name)+(ch.is_verified ? _channelVerifyBadge(20) : '')+'</div>'
         // Glass pill: subscribers
         + '<div style="margin-top:6px;display:flex;align-items:center;gap:12px">'
         + '<div style="background:rgba(255,255,255,.1);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:5px 14px;font-size:12px;color:rgba(255,255,255,.7)">'
@@ -4899,8 +4910,109 @@ async function _chSendPost(chId) {
     if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
 
-function openChannelSettings(chId) {
-    showToast('Настройки канала — скоро', 'info');
+function openChannelSettings(chId, ch) {
+    vibrate(8);
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9100;background:rgba(0,0,0,.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;flex-direction:column;justify-content:flex-end';
+    ov.onclick = function(e) { if(e.target===ov) ov.remove(); };
+
+    const isVerified = ch && ch.is_verified;
+    const verifyStatus = ch && ch._verifyStatus;
+
+    const verifyBlock = isVerified
+        ? '<div style="display:flex;align-items:center;gap:8px;padding:14px 16px;background:rgba(74,158,224,.1);border-radius:14px;margin-bottom:12px">'
+          + _channelVerifyBadge(20)
+          + '<div><div style="font-size:14px;font-weight:700;color:#4A9EE0">Канал верифицирован</div><div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">Синяя галочка отображается подписчикам</div></div></div>'
+        : '<div onclick="openVerifyRequestModal('+chId+')" style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:rgba(255,255,255,.05);border-radius:14px;margin-bottom:12px;cursor:pointer;-webkit-tap-highlight-color:transparent">'
+          + '<div style="width:40px;height:40px;border-radius:50%;background:rgba(74,158,224,.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+          + _channelVerifyBadge(22) + '</div>'
+          + '<div><div style="font-size:15px;font-weight:600">Подать на верификацию</div>'
+          + '<div style="font-size:12px;color:rgba(255,255,255,.4);margin-top:1px">Получить синюю галочку</div></div>'
+          + '<svg style="margin-left:auto" width="8" height="14" viewBox="0 0 8 14" fill="none"><path d="M1 1l6 6-6 6" stroke="rgba(255,255,255,.3)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+          + '</div>';
+
+    ov.innerHTML = '<div style="background:#1c1c1e;border-radius:20px 20px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),16px)">'
+        + '<div style="width:36px;height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin:10px auto 16px"></div>'
+        + '<div style="padding:0 16px 12px;font-size:13px;font-weight:600;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:.5px">Настройки канала</div>'
+        + '<div style="padding:0 12px 8px">' + verifyBlock + '</div>'
+        + '</div>';
+
+    document.body.appendChild(ov);
+}
+
+function _closeVerifyReqModal() { var m = document.getElementById("verify-req-modal"); if(m) m.remove(); }
+
+async function openVerifyRequestModal(chId) {
+    // Check current status first
+    vibrate(8);
+    document.querySelector('[style*="z-index:9100"]')?.remove();
+
+    // Check existing request
+    let statusText = '';
+    try {
+        const sr = await apiFetch('/api/channels/'+chId+'/verify_status');
+        const sd = await sr.json();
+        if (sd.request_status === 'pending') {
+            showToast('Заявка уже отправлена, ожидайте проверки', 'info');
+            return;
+        }
+        if (sd.request_status === 'rejected') {
+            statusText = '<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.2);border-radius:12px;padding:12px 14px;margin-bottom:14px;font-size:13px;color:#ef4444">❌ Предыдущая заявка отклонена'
+                + (sd.admin_note ? '<br><span style="color:rgba(255,255,255,.5)">Причина: '+escHtml(sd.admin_note)+'</span>' : '')
+                + '</div>';
+        }
+    } catch(e) {}
+
+    const ov = document.createElement('div');
+    ov.id = 'verify-req-modal';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9200;background:rgba(0,0,0,.7);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;flex-direction:column;justify-content:flex-end';
+    ov.onclick = function(e) { if(e.target===ov) ov.remove(); };
+
+    ov.innerHTML = '<div style="background:#1c1c1e;border-radius:20px 20px 0 0;padding:8px 0 max(env(safe-area-inset-bottom),20px)">'
+        + '<div style="width:36px;height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin:10px auto 20px"></div>'
+        + '<div style="padding:0 20px">'
+        + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        + '<div style="width:48px;height:48px;border-radius:50%;background:rgba(74,158,224,.15);display:flex;align-items:center;justify-content:center">'
+        + _channelVerifyBadge(28) + '</div>'
+        + '<div><div style="font-size:18px;font-weight:800">Верификация канала</div>'
+        + '<div style="font-size:13px;color:rgba(255,255,255,.4);margin-top:2px">Синяя галочка для официальных каналов</div></div>'
+        + '</div>'
+        + statusText
+        + '<div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:12px;line-height:1.5">'
+        + 'Расскажите кратко — кто вы, зачем вам галочка, сколько подписчиков ожидаете.</div>'
+        + '<textarea id="verify-reason-inp" placeholder="Например: официальный канал бренда XXX, 5000+ подписчиков в TG..." rows="4"'
+        + ' style="width:100%;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:14px;color:white;font-size:15px;font-family:inherit;resize:none;outline:none;box-sizing:border-box;margin-bottom:12px"></textarea>'
+        + '<button onclick="_submitVerifyRequest('+chId+')" style="width:100%;padding:15px;background:#4A9EE0;border:none;border-radius:16px;color:white;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;-webkit-tap-highlight-color:transparent">Отправить заявку</button>'
+        + '<button onclick="_closeVerifyReqModal()" style="width:100%;padding:12px;background:none;border:none;color:rgba(255,255,255,.3);font-size:14px;cursor:pointer;font-family:inherit;margin-top:4px">Отмена</button>'
+        + '</div></div>';
+
+    document.body.appendChild(ov);
+}
+
+async function _submitVerifyRequest(chId) {
+    const inp    = document.getElementById('verify-reason-inp');
+    const reason = inp ? inp.value.trim() : '';
+    const btn    = document.querySelector('#verify-req-modal button');
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+        const r = await apiFetch('/api/channels/'+chId+'/request_verify', {
+            method: 'POST',
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({reason})
+        });
+        const d = await r.json();
+        if (d.ok) {
+            document.getElementById('verify-req-modal')?.remove();
+            showToast('✅ Заявка отправлена! Ожидайте проверки', 'success');
+            vibrate(20);
+        } else {
+            showToast(d.error || 'Ошибка', 'error');
+            if (btn) { btn.disabled = false; btn.textContent = 'Отправить заявку'; }
+        }
+    } catch(e) {
+        showToast('Ошибка отправки', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Отправить заявку'; }
+    }
 }
 
 function renderChannelPost(p, isOwner, chId) {
