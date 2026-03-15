@@ -129,7 +129,7 @@
         }
     </style>
 </head>
-<body class="bg-black">
+<body>
 
     <!-- ══ SPLASH — без анимации, без вопросиков, мгновенно ══ -->
     <div id="splash">
@@ -166,23 +166,65 @@
 
     <script>
         (function() {
+            // Сначала пробуем данные от сервера
+            var serverUser = null;
             try {
                 var bridge = document.getElementById('user-data-bridge');
                 var rawData = bridge ? bridge.dataset.user : null;
-                if (!rawData) throw new Error('no bridge');
-                window.currentUser = JSON.parse(rawData);
-                if (window.currentUser && window.currentUser.id) {
-                    try { localStorage.setItem('varto_user_cache', JSON.stringify(window.currentUser)); } catch(e) {}
+                if (rawData) {
+                    serverUser = JSON.parse(rawData);
                 }
-            } catch (e) {
+            } catch(e) {}
+
+            // Если сервер дал валидного пользователя — используем
+            if (serverUser && serverUser.id && serverUser.id > 0) {
+                window.currentUser = serverUser;
+                // Обновляем оба кэша
                 try {
-                    var cache = localStorage.getItem('varto_user_cache');
-                    window.currentUser = cache ? JSON.parse(cache) : { id: 0, name: 'Гость', avatar: '/static/default_avatar.png' };
-                } catch(e2) {
-                    window.currentUser = { id: 0, name: 'Гость', avatar: '/static/default_avatar.png' };
-                }
+                    localStorage.setItem('varto_user_cache',    JSON.stringify(serverUser));
+                    localStorage.setItem('waychat_user_cache',  JSON.stringify(serverUser));
+                } catch(e) {}
+                return;
             }
+
+            // Fallback: кэш из localStorage
+            try {
+                var cached = localStorage.getItem('waychat_user_cache')
+                          || localStorage.getItem('varto_user_cache');
+                if (cached) {
+                    var parsed = JSON.parse(cached);
+                    if (parsed && parsed.id && parsed.id > 0) {
+                        window.currentUser = parsed;
+                        return;
+                    }
+                }
+            } catch(e) {}
+
+            // Нет данных — редирект на логин
+            window.currentUser = null;
         })();
+
+        // Если пользователь не определён — редирект
+        if (!window.currentUser || !window.currentUser.id) {
+            // Проверяем сессию через API перед редиректом
+            fetch('/api/me', { credentials: 'include' })
+                .then(function(r) {
+                    if (r.ok) return r.json();
+                    throw new Error('not auth');
+                })
+                .then(function(u) {
+                    if (u && u.id) {
+                        window.currentUser = u;
+                        try { localStorage.setItem('waychat_user_cache', JSON.stringify(u)); } catch(e) {}
+                        // Всё ок — позволяем init() продолжить
+                    } else {
+                        window.location.href = '/login';
+                    }
+                })
+                .catch(function() {
+                    window.location.href = '/login';
+                });
+        }
     </script>
 
     <div id="root" class="h-full w-full"></div>
@@ -198,16 +240,16 @@
             s.classList.add('hide');
             setTimeout(function() { if (s.parentNode) s.remove(); }, 320);
         }
-        // Проверяем что root заполнен
+        // Скрываем как только root получил содержимое
         var t = setInterval(function() {
             var r = document.getElementById('root');
             if (r && r.children.length > 0) {
                 clearInterval(t);
-                setTimeout(hideSplash, 100);
+                hideSplash(); // мгновенно, без задержки
             }
-        }, 40);
-        // Страховка — максимум 3.5 сек
-        setTimeout(function() { clearInterval(t); hideSplash(); }, 3500);
+        }, 30);
+        // Страховка — максимум 1.8 сек (не ждём вечно)
+        setTimeout(function() { clearInterval(t); hideSplash(); }, 1800);
     })();
 
     // ── SW ──
