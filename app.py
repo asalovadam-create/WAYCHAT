@@ -165,8 +165,8 @@ try:
         'text/html', 'text/css', 'application/json',
         'application/javascript', 'text/javascript'
     ]
-    app.config['COMPRESS_LEVEL'] = 6
-    app.config['COMPRESS_MIN_SIZE'] = 500
+    app.config['COMPRESS_LEVEL'] = 9  # 9: max compression
+    app.config['COMPRESS_MIN_SIZE'] = 256  # 9: compress more
 except ImportError:
     pass
 
@@ -205,12 +205,12 @@ socketio = SocketIO(
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 30,
-    ping_interval         = 25,
+    ping_timeout          = 60000,   # 8: уменьшает reconnect storm на Render free
+    ping_interval         = 25000,   # 8: стандарт для мобильных сетей
     max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
-    compression_threshold = 1024,
+    compression_threshold = 512,     # 9: сжимаем всё > 512 байт
 )
 
 # ══════════════════════════════════════════════════════════
@@ -251,6 +251,57 @@ def _run_early_migrations():
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS cover_url VARCHAR(500) DEFAULT ''",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_data BYTEA",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50) DEFAULT 'audio/mpeg'",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS extra_data TEXT DEFAULT ''",
+        # Channels
+        '''CREATE TABLE IF NOT EXISTS channel (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(64) UNIQUE NOT NULL,
+            name VARCHAR(120) NOT NULL,
+            description TEXT DEFAULT '',
+            avatar VARCHAR(300) DEFAULT '',
+            owner_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            is_private BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+        '''CREATE TABLE IF NOT EXISTS channel_subscriber (
+            id SERIAL PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            joined_at TIMESTAMP DEFAULT NOW(),
+            UNIQUE(channel_id, user_id)
+        )''',
+        '''CREATE TABLE IF NOT EXISTS channel_post (
+            id SERIAL PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+            text TEXT DEFAULT '',
+            media_url VARCHAR(500) DEFAULT '',
+            media_type VARCHAR(20) DEFAULT '',
+            views INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        )''',
+        '''CREATE TABLE IF NOT EXISTS channel_post_reaction (
+            id SERIAL PRIMARY KEY,
+            post_id INTEGER NOT NULL REFERENCES channel_post(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            emoji VARCHAR(10) NOT NULL,
+            UNIQUE(post_id, user_id)
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_channel_username ON channel(username)',
+        'CREATE INDEX IF NOT EXISTS ix_channel_sub ON channel_subscriber(channel_id)',
+        'CREATE INDEX IF NOT EXISTS ix_channel_post ON channel_post(channel_id, created_at)',
+        "ALTER TABLE channel ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE channel ADD COLUMN IF NOT EXISTS verified_type VARCHAR(30) DEFAULT ''",
+        '''CREATE TABLE IF NOT EXISTS channel_verify_request (
+            id SERIAL PRIMARY KEY,
+            channel_id INTEGER NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+            user_id INTEGER NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
+            reason TEXT DEFAULT '',
+            status VARCHAR(20) DEFAULT 'pending',
+            admin_note TEXT DEFAULT '',
+            created_at TIMESTAMP DEFAULT NOW(),
+            resolved_at TIMESTAMP
+        )''',
+        'CREATE INDEX IF NOT EXISTS ix_ch_verify_req ON channel_verify_request(channel_id)',
     ]
     for sql in early_sqls:
         try:
@@ -563,8 +614,9 @@ class Message(db.Model):
     sender_name = db.Column(db.String(120), default='')
     type        = db.Column(db.String(10),  default='text')
     content     = db.Column(db.Text)
-    file_url    = db.Column(db.String(300))
-    is_read     = db.Column(db.Boolean,     default=False, index=True)
+    file_url        = db.Column(db.String(300))
+    extra_data      = db.Column(db.Text,  default='')  # JSON: forwarded_from, music meta
+    is_read         = db.Column(db.Boolean,     default=False, index=True)
     is_deleted  = db.Column(db.Boolean,     default=False, index=True)
     timestamp   = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
 
@@ -574,7 +626,12 @@ class Message(db.Model):
     )
 
     def to_dict(self):
-        return {
+        import json as _json
+        extra = {}
+        try:
+            if self.extra_data: extra = _json.loads(self.extra_data)
+        except Exception: pass
+        d = {
             'id':            self.id,
             'chat_id':       self.chat_id,
             'sender_id':     self.sender_id,
@@ -587,6 +644,8 @@ class Message(db.Model):
             'timestamp':     to_moscow_str(self.timestamp),
             'raw_timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else '',
         }
+        d.update(extra)  # forwarded_from, fwd_avatar, music_title, music_artist, music_url
+        return d
 
 
 class MessageReaction(db.Model):
@@ -616,6 +675,64 @@ class GroupMember(db.Model):
     is_admin  = db.Column(db.Boolean, default=False)
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('group_id', 'user_id', name='uq_group_member'),)
+
+
+
+class Channel(db.Model):
+    """Канал — публичный или приватный, только владелец постит"""
+    __tablename__ = 'channel'
+    id            = db.Column(db.Integer,     primary_key=True)
+    username      = db.Column(db.String(64),  unique=True, nullable=False, index=True)
+    name          = db.Column(db.String(120), nullable=False)
+    description   = db.Column(db.Text,        default='')
+    avatar        = db.Column(db.String(300), default='')
+    owner_id      = db.Column(db.Integer,     db.ForeignKey('user.id'), nullable=False)
+    is_private    = db.Column(db.Boolean,     default=False)
+    is_verified   = db.Column(db.Boolean,     default=False)   # синяя галочка
+    verified_type = db.Column(db.String(30),  default='')      # 'official' и др.
+    created_at    = db.Column(db.DateTime,    default=datetime.utcnow)
+
+
+class ChannelSubscriber(db.Model):
+    __tablename__ = 'channel_subscriber'
+    id         = db.Column(db.Integer, primary_key=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channel.id'), nullable=False, index=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'),    nullable=False)
+    joined_at  = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('channel_id', 'user_id', name='uq_channel_sub'),)
+
+
+class ChannelPost(db.Model):
+    __tablename__ = 'channel_post'
+    id         = db.Column(db.Integer, primary_key=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channel.id'), nullable=False, index=True)
+    text       = db.Column(db.Text,    default='')
+    media_url  = db.Column(db.String(500), default='')
+    media_type = db.Column(db.String(20),  default='')   # image/video/audio
+    views      = db.Column(db.Integer,     default=0)
+    created_at = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
+
+
+class ChannelPostReaction(db.Model):
+    __tablename__ = 'channel_post_reaction'
+    id      = db.Column(db.Integer,    primary_key=True)
+    post_id = db.Column(db.Integer,    db.ForeignKey('channel_post.id'), nullable=False, index=True)
+    user_id = db.Column(db.Integer,    db.ForeignKey('user.id'),         nullable=False)
+    emoji   = db.Column(db.String(10), nullable=False)
+    __table_args__ = (db.UniqueConstraint('post_id', 'user_id', name='uq_ch_reaction'),)
+
+
+class ChannelVerifyRequest(db.Model):
+    """Заявки каналов на верификацию"""
+    __tablename__ = 'channel_verify_request'
+    id         = db.Column(db.Integer, primary_key=True)
+    channel_id = db.Column(db.Integer, db.ForeignKey('channel.id'), nullable=False, index=True)
+    user_id    = db.Column(db.Integer, db.ForeignKey('user.id'),    nullable=False)
+    reason     = db.Column(db.Text,    default='')   # причина от пользователя
+    status     = db.Column(db.String(20), default='pending')  # pending/approved/rejected
+    admin_note = db.Column(db.Text,    default='')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    resolved_at= db.Column(db.DateTime, nullable=True)
 
 
 class MomentView(db.Model):
@@ -1145,19 +1262,52 @@ def vapid_public_key():
     return jsonify({'publicKey': pub or ''})
 
 
+
+_INLINE_SW = """
+const CACHE='wc-v3';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/static/main.js']).catch(()=>{})).then(()=>self.skipWaiting()))});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||e.request.url.includes('/socket.io'))return;
+  if(e.request.url.match(/[.](js|css|png|jpg|webp|gif|woff2)$/)){
+    e.respondWith(caches.match(e.request).then(r=>r||(fetch(e.request).then(resp=>{if(resp.ok)caches.open(CACHE).then(c=>c.put(e.request,resp.clone()));return resp}))));
+  }
+});
+self.addEventListener('push',e=>{if(!e.data)return;try{const d=e.data.json();e.waitUntil(self.registration.showNotification(d.title||'WayChat',{body:d.body||'',icon:d.icon||'/static/icon-192.png',data:d.data||{},vibrate:[200,100,200]}))}catch(err){}});
+self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.openWindow(e.notification.data?.url||'/'))});
+"""
+
 @app.route('/sw.js')
 def service_worker():
     from flask import Response
+    # 10: Сначала пробуем файл, затем встроенный SW
     sw_path = os.path.join(BASE_DIR, 'sw.js')
     try:
         with open(sw_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        resp = Response(content, mimetype='application/javascript')
-        resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        resp.headers['Service-Worker-Allowed'] = '/'
-        return resp
+            sw_content = f.read()
     except FileNotFoundError:
-        return Response('// sw not found', mimetype='application/javascript', status=404)
+        sw_content = _INLINE_SW
+    resp = Response(sw_content, mimetype='application/javascript')
+    resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    resp.headers['Service-Worker-Allowed'] = '/'
+    return resp
+
+
+
+@app.after_request
+def add_cache_headers(response):
+    """Пункты 1,9: кэш-заголовки для CDN (Cloudflare) и браузера"""
+    path = request.path
+    # Статика — кэш 1 год (Cloudflare будет кэшировать)
+    if path.startswith('/static/') and not path.endswith('.html'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        response.headers['Vary'] = 'Accept-Encoding'
+    # Аватары и медиа — кэш 1 час
+    elif path.startswith('/static/uploads/'):
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+    # API — no cache
+    elif path.startswith('/api/') or path in ['/get_messages/', '/get_my_chats']:
+        response.headers['Cache-Control'] = 'no-store'
+    return response
 
 
 @app.route('/manifest.json')
@@ -1260,6 +1410,24 @@ def get_current_user_route():
     except Exception as e:
         app.logger.error(f'get_current_user error: {e}')
         return jsonify({'error': 'Session error'}), 500
+
+
+
+@app.route('/api/me')
+@login_required
+def api_me():
+    """Возвращает данные текущего пользователя — используется для auth check"""
+    u = current_user
+    return jsonify({
+        'id':            u.id,
+        'name':          u.name,
+        'username':      u.username,
+        'avatar':        u.avatar or '',
+        'bio':           u.bio or '',
+        'is_verified':   u.is_verified or False,
+        'verified_type': u.verified_type or '',
+        'phone':         u.phone or '',
+    })
 
 
 @app.route('/get_user_profile/<int:user_id>')
@@ -1397,6 +1565,7 @@ def get_my_chats():
             unread   = _unread_counts.get(c.id, 0)
 
             type_map = {'image': '📷 Фото', 'audio': '🎙 Голос', 'video': '📹 Видео',
+                        'music': '🎵 Музыка',
                         'call_audio': '📞 Аудиозвонок', 'call_video': '📹 Видеозвонок'}
             preview  = '💬 Начните переписку'
             sort_ts  = c.created_at or datetime(2000, 1, 1)
@@ -1544,7 +1713,7 @@ def get_messages(chat_id):
         db.session.rollback()
     except Exception:
         pass
-    limit     = min(request.args.get('limit', 35, type=int), 100)
+    limit     = min(request.args.get('limit', 30, type=int), 60)  # 3: max 30 initial, 60 for pagination
     before_id = request.args.get('before_id', None, type=int)
     uid       = current_user.id
 
@@ -1805,7 +1974,7 @@ def set_group_admin():
 # ══════════════════════════════════════════════════════════
 @app.route('/search_users')
 @login_required
-@rate_limit('search', max_calls=20, window_sec=60)
+@rate_limit('search', max_calls=30, window_sec=60)
 def search_users():
     q     = request.args.get('q', '').strip()
     phone = request.args.get('phone', '').strip()
@@ -1825,26 +1994,73 @@ def search_users():
                 User.phone.like(f'%{clean_phone[-7:]}%') if len(clean_phone) >= 7 else text('0'),
             )
         ).limit(5).all()
-    else:
-        q_lower = q.lower()
-        users = User.query.filter(
-            User.id != uid,
-            User.is_blocked == False,
+        return jsonify([{
+            'id': u.id, 'name': u.name, 'username': u.username,
+            'avatar_url': u.avatar, 'avatar': u.avatar,
+            'online': u.online_status, 'phone': u.phone,
+        } for u in users])
+
+    q_lower = q.lower()
+
+    # Точные совпадения сначала (starts_with), потом contains — макс 5
+    exact = User.query.filter(
+        User.id != uid, User.is_blocked == False,
+        or_(
+            func.lower(User.name).like(f'{q_lower}%'),
+            func.lower(User.username).like(f'{q_lower}%'),
+        )
+    ).limit(5).all()
+    exact_ids = {u.id for u in exact}
+
+    fuzzy = []
+    if len(exact) < 5:
+        fuzzy = User.query.filter(
+            User.id != uid, User.is_blocked == False,
+            User.id.notin_(exact_ids),
             or_(
                 func.lower(User.name).like(f'%{q_lower}%'),
                 func.lower(User.username).like(f'%{q_lower}%'),
             )
-        ).limit(20).all()
+        ).limit(5 - len(exact)).all()
 
-    return jsonify([{
-        'id':         u.id,
-        'name':       u.name,
-        'username':   u.username,
-        'avatar_url': u.avatar,
-        'avatar':     u.avatar,
-        'online':     u.online_status,
-        'phone':      u.phone,
-    } for u in users])
+    users = exact + fuzzy
+
+    # Каналы по запросу (макс 3)
+    ch_exact = Channel.query.filter(
+        or_(
+            func.lower(Channel.name).like(f'{q_lower}%'),
+            func.lower(Channel.username).like(f'{q_lower}%'),
+        )
+    ).limit(3).all()
+    ch_ids = {c.id for c in ch_exact}
+    ch_fuzzy = []
+    if len(ch_exact) < 3:
+        ch_fuzzy = Channel.query.filter(
+            Channel.id.notin_(ch_ids),
+            or_(
+                func.lower(Channel.name).like(f'%{q_lower}%'),
+                func.lower(Channel.username).like(f'%{q_lower}%'),
+            )
+        ).limit(3 - len(ch_exact)).all()
+    channels = ch_exact + ch_fuzzy
+
+    result = []
+    for u in users:
+        result.append({
+            'type': 'user',
+            'id': u.id, 'name': u.name, 'username': u.username,
+            'avatar_url': u.avatar, 'avatar': u.avatar,
+            'online': u.online_status, 'phone': u.phone,
+        })
+    for c in channels:
+        subs = ChannelSubscriber.query.filter_by(channel_id=c.id).count()
+        result.append({
+            'type': 'channel',
+            'id': c.id, 'name': c.name, 'username': c.username,
+            'avatar': c.avatar or '', 'subscribers': subs,
+            'is_verified': c.is_verified or False,
+        })
+    return jsonify(result)
 
 
 @app.route('/update_profile', methods=['POST'])
@@ -2220,41 +2436,49 @@ def block_user(user_id):
 @app.route('/get_moments')
 @login_required
 def get_moments():
+    """
+    Правило: видишь моменты только тех кого сохранил + свои.
+    Если тебя не сохранили — твои моменты они не видят.
+    """
     uid     = current_user.id
     cutoff  = datetime.utcnow() - timedelta(hours=24)
     now_utc = datetime.utcnow()
 
-    # Только заблокированные не показываем
+    # Кого я сохранил — только их моменты вижу
+    my_saved_ids = set(db.session.execute(
+        text('SELECT contact_id FROM saved_contact WHERE user_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
+    # Кого я заблокировал
     i_blocked_ids = set(db.session.execute(
         text('SELECT blocked_id FROM blocked_user WHERE blocker_id = :uid'),
         {'uid': uid}
     ).scalars().all())
 
-    # Все активные моменты за 24ч — БЕЗ ФИЛЬТРОВ по visibility и контактам
+    # Кто скрыл от меня
+    hidden_ids = set(db.session.execute(
+        text('SELECT user_id FROM moment_hidden_from WHERE hidden_from_id = :uid'),
+        {'uid': uid}
+    ).scalars().all())
+
     rows = db.session.execute(text('''
-        SELECT
-            m.id          AS moment_id,
-            m.user_id,
-            m.media_url,
-            m.text,
-            m.geo_name,
-            m.timestamp,
-            u.name        AS user_name,
-            u.avatar      AS user_avatar
+        SELECT m.id AS moment_id, m.user_id, m.media_url, m.text, m.geo_name, m.timestamp,
+               u.name AS user_name, u.avatar AS user_avatar,
+               COALESCE(u.moments_visibility,'all') AS vis
         FROM moment m
         JOIN "user" u ON u.id = m.user_id
         WHERE m.timestamp >= :cutoff
           AND (m.expires_at IS NULL OR m.expires_at > :now)
           AND u.is_blocked = FALSE
-        ORDER BY m.timestamp DESC
-        LIMIT 300
+        ORDER BY m.timestamp DESC LIMIT 300
     '''), {'cutoff': cutoff, 'now': now_utc}).fetchall()
 
     moment_ids = [r.moment_id for r in rows]
     view_counts = {}
     if moment_ids:
         for vc in db.session.execute(
-            text('SELECT moment_id, COUNT(*) as cnt FROM moment_view WHERE moment_id = ANY(:ids) GROUP BY moment_id'),
+            text('SELECT moment_id, COUNT(*) cnt FROM moment_view WHERE moment_id=ANY(:ids) GROUP BY moment_id'),
             {'ids': moment_ids}
         ).fetchall():
             view_counts[vc.moment_id] = vc.cnt
@@ -2263,9 +2487,12 @@ def get_moments():
     for r in rows:
         author_id = r.user_id
         is_mine   = (author_id == uid)
-        # Единственный фильтр — заблокированные
-        if not is_mine and author_id in i_blocked_ids:
-            continue
+        if not is_mine:
+            if author_id in i_blocked_ids: continue
+            if author_id in hidden_ids:    continue
+            if r.vis == 'nobody':          continue
+            # Главное: вижу только тех кого сохранил
+            if author_id not in my_saved_ids: continue
         ts = r.timestamp
         data.append({
             'id':            r.moment_id,
@@ -2280,7 +2507,6 @@ def get_moments():
             'view_count':    view_counts.get(r.moment_id, 0),
             'is_mine':       is_mine,
         })
-
     return jsonify(data)
 
 
@@ -2732,14 +2958,24 @@ def handle_msg(data):
         uname = current_user.name
     except Exception:
         return
+    sender_dict = get_cached_user_dict(uid)  # нужен для аватарки в push
 
     msg_type = data.get('type_msg') or data.get('type', 'text')
     if msg_type == 'send_message':
         msg_type = 'text'
 
+    import json as _json2
+    # Собираем extra_data: forwarded_from, fwd_avatar, music meta
+    _extra = {}
+    for _k in ('forwarded_from','fwd_avatar','music_title','music_artist','music_url'):
+        _v = data.get(_k)
+        if _v: _extra[_k] = str(_v)[:500]
+    _extra_json = _json2.dumps(_extra, ensure_ascii=False) if _extra else ''
+
     msg = Message(
         chat_id=chat_id, sender_id=uid, sender_name=uname,
-        type=msg_type, content=(data.get('content') or '')[:10000], file_url=data.get('file_url'),
+        type=msg_type, content=(data.get('content') or '')[:10000],
+        file_url=data.get('file_url'), extra_data=_extra_json,
     )
     db.session.add(msg)
     db.session.commit()
@@ -2747,6 +2983,9 @@ def handle_msg(data):
     _chat_cache.delete(uid)
     payload = msg.to_dict()
     payload['chat_id'] = chat_id
+    # Прокидываем extra поля в payload для live-сообщений
+    for _k in ('forwarded_from','fwd_avatar','music_title','music_artist','music_url'):
+        if data.get(_k): payload[_k] = data[_k]
     chat = db.session.get(Chat, chat_id)
 
     if chat:
@@ -2771,27 +3010,34 @@ def handle_msg(data):
                 payload['is_group_msg'] = True
                 payload['group_id']     = group.id
                 members = GroupMember.query.filter_by(group_id=group.id).all()
+                # Эмитим в комнату чата — мгновенно для всех участников внутри чата
+                emit('new_message', payload, room=f'chat_{chat_id}')
                 for m in members:
                     _chat_cache.delete(m.user_id)
                     emit('new_message', payload, room=f'user_{m.user_id}')
                     if m.user_id != uid:
                         is_online = _online_cache.get(m.user_id)
                         if not is_online:
+                            _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
                             eventlet.spawn(send_push_to_user, m.user_id,
-                                f'{uname} → {group.name}', push_preview, chat_id)
+                                f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
         else:
             payload['is_group_msg'] = False
+            # Эмитим в комнату чата — все кто сделал enter_chat получат мгновенно
+            emit('new_message', payload, room=f'chat_{chat_id}')
             parts = chat.room_key.replace('chat_', '').split('_')
             for uid_str in parts:
                 if uid_str.isdigit():
                     uid_int = int(uid_str)
                     _chat_cache.delete(uid_int)
+                    # Также эмитим в личную комнату (для обновления списка чатов)
                     emit('new_message', payload, room=f'user_{uid_str}')
                     if uid_int != uid:
                         is_online = _online_cache.get(uid_int)
                         if not is_online:
                             if push_preview and msg_type not in ('call_audio','call_video'):
-                                eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id)
+                                _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
+                                eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
 
 
 @socketio.on('mark_read')
@@ -3138,6 +3384,14 @@ def run_migrations():
         'CREATE INDEX IF NOT EXISTS ix_gmember_user_id  ON group_member(user_id)',
         'CREATE INDEX IF NOT EXISTS ix_user_last_seen   ON "user"(last_seen)',
         'CREATE INDEX IF NOT EXISTS ix_user_is_online   ON "user"(is_online) WHERE is_online = TRUE',
+        # 4: Критичные индексы для производительности
+        'CREATE INDEX IF NOT EXISTS idx_msg_chat_id_desc ON message(chat_id, id DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_msg_sender ON message(sender_id)',
+        'CREATE INDEX IF NOT EXISTS idx_msg_unread ON message(chat_id, is_read) WHERE is_read = FALSE',
+        'CREATE INDEX IF NOT EXISTS idx_user_username ON "user"(username)',
+        'CREATE INDEX IF NOT EXISTS idx_user_phone ON "user"(phone)',
+        'CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_channel_post_ch ON channel_post(channel_id, id DESC)',
         # Privacy settings
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'all' ''',
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'all' ''',
@@ -3516,6 +3770,386 @@ def report_user():
     db.session.add(UserReport(reporter_id=uid, target_id=target_id, reason=reason, comment=comment))
     db.session.commit()
     return jsonify({'success': True})
+
+
+
+# ══════════════════════════════════════════════════════════
+#  КАНАЛЫ
+# ══════════════════════════════════════════════════════════
+
+@app.route('/api/channels/create', methods=['POST'])
+@login_required
+def create_channel():
+    data  = request.get_json() or {}
+    uname = (data.get('username') or '').strip().lstrip('@').lower()
+    name  = (data.get('name') or '').strip()[:120]
+    desc  = (data.get('description') or '').strip()[:500]
+    priv  = bool(data.get('is_private', False))
+    if not uname or not name:
+        return jsonify({'ok': False, 'error': 'Заполните название и @username'}), 400
+    if not uname.replace('_','').replace('.','').isalnum():
+        return jsonify({'ok': False, 'error': 'Username: только буквы, цифры, _ и .'}), 400
+    if Channel.query.filter_by(username=uname).first():
+        return jsonify({'ok': False, 'error': 'Этот @username уже занят'}), 400
+    ch = Channel(username=uname, name=name, description=desc,
+                 owner_id=current_user.id, is_private=priv)
+    db.session.add(ch)
+    db.session.flush()
+    db.session.add(ChannelSubscriber(channel_id=ch.id, user_id=current_user.id))
+    db.session.commit()
+    return jsonify({'ok': True, 'channel_id': ch.id, 'username': ch.username})
+
+
+@app.route('/api/channels/my')
+@login_required
+def my_channels():
+    uid   = current_user.id
+    owned = Channel.query.filter_by(owner_id=uid).all()
+    sub_rows = db.session.execute(
+        text('''SELECT c.id,c.username,c.name,c.avatar,c.description,c.owner_id,c.is_private,c.created_at
+                FROM channel c
+                JOIN channel_subscriber cs ON cs.channel_id=c.id
+                WHERE cs.user_id=:uid AND c.owner_id!=:uid'''), {'uid': uid}
+    ).fetchall()
+
+    def sub_cnt(cid): return ChannelSubscriber.query.filter_by(channel_id=cid).count()
+    def last_p(cid):  return ChannelPost.query.filter_by(channel_id=cid).order_by(ChannelPost.created_at.desc()).first()
+
+    result = []
+    for c in owned:
+        lp = last_p(c.id)
+        result.append({'id':c.id,'username':c.username,'name':c.name,'avatar':c.avatar or '',
+            'description':c.description or '','is_owner':True,'subscribers':sub_cnt(c.id),
+            'last_post_time': to_moscow_str(lp.created_at) if lp else '',
+            'last_post_text': (lp.text or '')[:60] if lp else '',
+            'is_verified':   c.is_verified or False,
+            'verified_type': c.verified_type or '',
+            '_sort_ts':      lp.created_at.timestamp() if lp else 0})
+    for r in sub_rows:
+        lp = last_p(r.id)
+        result.append({'id':r.id,'username':r.username,'name':r.name,'avatar':r.avatar or '',
+            'description':r.description or '','is_owner':False,'subscribers':sub_cnt(r.id),
+            'last_post_time': to_moscow_str(lp.created_at) if lp else '',
+            'last_post_text': (lp.text or '')[:60] if lp else '',
+            'is_verified':   getattr(r, 'is_verified', False) or False,
+            'verified_type': getattr(r, 'verified_type', '') or '',
+            '_sort_ts':      lp.created_at.timestamp() if lp else 0})
+    # Сортируем по времени последнего поста — новейший сверху
+    result.sort(key=lambda x: x.pop('_sort_ts', 0), reverse=True)
+    return jsonify(result)
+
+
+@app.route('/api/channels/search')
+@login_required
+def search_channels():
+    q = (request.args.get('q') or '').strip().lower()
+    if len(q) < 1: return jsonify([])
+    chs = Channel.query.filter(
+        or_(func.lower(Channel.username).like(f'%{q}%'),
+            func.lower(Channel.name).like(f'%{q}%'))
+    ).limit(20).all()
+    uid = current_user.id
+    return jsonify([{
+        'id':c.id,'username':c.username,'name':c.name,'avatar':c.avatar or '',
+        'subscribers': ChannelSubscriber.query.filter_by(channel_id=c.id).count(),
+        'is_subscribed': bool(ChannelSubscriber.query.filter_by(channel_id=c.id,user_id=uid).first()),
+        'is_owner': c.owner_id == uid,
+    } for c in chs])
+
+
+@app.route('/api/channels/<int:ch_id>/subscribe', methods=['POST'])
+@login_required
+def subscribe_channel(ch_id):
+    uid = current_user.id
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'ok':False}), 404
+    ex = ChannelSubscriber.query.filter_by(channel_id=ch_id, user_id=uid).first()
+    if ex:
+        db.session.delete(ex); db.session.commit()
+        return jsonify({'ok':True,'subscribed':False})
+    db.session.add(ChannelSubscriber(channel_id=ch_id, user_id=uid))
+    db.session.commit()
+    return jsonify({'ok':True,'subscribed':True})
+
+
+@app.route('/api/channels/<int:ch_id>')
+@login_required
+def channel_info(ch_id):
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error':'Not found'}), 404
+    uid = current_user.id
+    return jsonify({
+        'id':ch.id,'username':ch.username,'name':ch.name,'avatar':ch.avatar or '',
+        'description':ch.description or '',
+        'subscribers': ChannelSubscriber.query.filter_by(channel_id=ch_id).count(),
+        'is_owner': ch.owner_id == uid,
+        'is_subscribed': bool(ChannelSubscriber.query.filter_by(channel_id=ch_id,user_id=uid).first()),
+        'is_private':    ch.is_private,
+        'is_verified':   ch.is_verified or False,
+        'verified_type': ch.verified_type or '',
+    })
+
+
+@app.route('/api/channels/<int:ch_id>/posts')
+@login_required
+def channel_posts(ch_id):
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error':'Not found'}), 404
+    uid      = current_user.id
+    is_owner = ch.owner_id == uid
+    is_sub   = bool(ChannelSubscriber.query.filter_by(channel_id=ch_id,user_id=uid).first())
+    if not is_owner and not is_sub and ch.is_private:
+        return jsonify({'error':'Private'}), 403
+    posts = ChannelPost.query.filter_by(channel_id=ch_id).order_by(ChannelPost.created_at.desc()).limit(100).all()
+    sub_cnt = ChannelSubscriber.query.filter_by(channel_id=ch_id).count()
+    result  = []
+    for p in posts:
+        if not is_owner: p.views = (p.views or 0) + 1
+        reacts = db.session.execute(
+            text('SELECT emoji,COUNT(*) as cnt FROM channel_post_reaction WHERE post_id=:pid GROUP BY emoji'),
+            {'pid':p.id}).fetchall()
+        my_r = db.session.execute(
+            text('SELECT emoji FROM channel_post_reaction WHERE post_id=:pid AND user_id=:uid'),
+            {'pid':p.id,'uid':uid}).scalar()
+        result.append({'id':p.id,'text':p.text or '','media_url':p.media_url or '',
+            'media_type':p.media_type or '','views':p.views or 0,
+            'created_at':to_moscow_str(p.created_at),
+            'reactions':[{'emoji':r.emoji,'count':r.cnt} for r in reacts],
+            'my_reaction':my_r or ''})
+    db.session.commit()
+    return jsonify({
+        'channel':{'id':ch.id,'username':ch.username,'name':ch.name,'avatar':ch.avatar or '',
+            'description':ch.description or '','subscribers':sub_cnt,
+            'is_owner':is_owner,'is_subscribed':is_sub,'is_verified':ch.is_verified or False,'verified_type':ch.verified_type or ''},
+        'posts':result,
+    })
+
+
+@app.route('/api/channels/<int:ch_id>/post', methods=['POST'])
+@login_required
+def channel_post_create(ch_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id:
+        return jsonify({'ok':False,'error':'Forbidden'}), 403
+    data = request.get_json() or {}
+    txt  = (data.get('text') or '').strip()[:4000]
+    murl = (data.get('media_url') or '').strip()
+    mtype= (data.get('media_type') or '').strip()
+    if not txt and not murl:
+        return jsonify({'ok':False,'error':'Пустой пост'}), 400
+    post = ChannelPost(channel_id=ch_id, text=txt, media_url=murl, media_type=mtype)
+    db.session.add(post); db.session.commit()
+    sub_cnt = ChannelSubscriber.query.filter_by(channel_id=ch_id).count()
+    socketio.emit('channel_new_post', {
+        'channel_id':ch_id,'channel_name':ch.name,'channel_username':ch.username,
+        'post_id':post.id,'text':txt[:100],'sub_count':sub_cnt,
+    })
+    return jsonify({'ok':True,'post_id':post.id})
+
+
+@app.route('/api/channels/<int:ch_id>/post/<int:post_id>', methods=['DELETE'])
+@login_required
+def channel_post_delete(ch_id, post_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id: return jsonify({'ok':False}), 403
+    p = db.session.get(ChannelPost, post_id)
+    if p and p.channel_id == ch_id:
+        db.session.delete(p); db.session.commit()
+    return jsonify({'ok':True})
+
+
+@app.route('/api/channels/<int:ch_id>/react/<int:post_id>', methods=['POST'])
+@login_required
+def channel_react(ch_id, post_id):
+    uid   = current_user.id
+    emoji = (request.get_json() or {}).get('emoji','').strip()
+    if not emoji: return jsonify({'ok':False}), 400
+    ex = ChannelPostReaction.query.filter_by(post_id=post_id, user_id=uid).first()
+    if ex:
+        if ex.emoji == emoji: db.session.delete(ex)
+        else: ex.emoji = emoji
+    else:
+        db.session.add(ChannelPostReaction(post_id=post_id, user_id=uid, emoji=emoji))
+    db.session.commit()
+    return jsonify({'ok':True})
+
+
+
+
+@app.route('/api/channels/<int:ch_id>/edit', methods=['POST'])
+@login_required
+def channel_edit(ch_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id:
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    data = request.get_json() or {}
+    if 'name' in data and data['name'].strip():
+        ch.name = data['name'].strip()[:120]
+    if 'description' in data:
+        ch.description = data['description'].strip()[:500]
+    if 'username' in data and data['username'].strip():
+        new_uname = data['username'].strip().lower()[:64]
+        existing = Channel.query.filter(Channel.username == new_uname, Channel.id != ch_id).first()
+        if existing:
+            return jsonify({'ok': False, 'error': 'Username занят'}), 400
+        ch.username = new_uname
+    if 'is_private' in data:
+        ch.is_private = bool(data['is_private'])
+    db.session.commit()
+    return jsonify({'ok': True, 'channel': {
+        'id': ch.id, 'name': ch.name, 'username': ch.username,
+        'description': ch.description or '', 'is_private': ch.is_private,
+        'avatar': ch.avatar or '', 'is_verified': ch.is_verified,
+    }})
+
+@app.route('/api/channels/<int:ch_id>/upload_avatar', methods=['POST'])
+@login_required
+def channel_upload_avatar(ch_id):
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id: return jsonify({'ok':False}), 403
+    if 'file' not in request.files: return jsonify({'ok':False}), 400
+    url = upload_to_cloudinary(request.files['file'], folder='waychat/channels')
+    if not url: return jsonify({'ok':False,'error':'Upload failed'}), 500
+    ch.avatar = url; db.session.commit()
+    return jsonify({'ok':True,'avatar':url})
+
+
+
+# ══════════════════════════════════════════════════════════
+#  ВЕРИФИКАЦИЯ КАНАЛОВ
+# ══════════════════════════════════════════════════════════
+
+@app.route('/api/channels/<int:ch_id>/request_verify', methods=['POST'])
+@login_required
+def channel_request_verify(ch_id):
+    """Пользователь подаёт заявку на верификацию канала"""
+    ch = db.session.get(Channel, ch_id)
+    if not ch or ch.owner_id != current_user.id:
+        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    if ch.is_verified:
+        return jsonify({'ok': False, 'error': 'Канал уже верифицирован'}), 400
+    # Проверяем нет ли уже pending заявки
+    existing = ChannelVerifyRequest.query.filter_by(
+        channel_id=ch_id, status='pending'
+    ).first()
+    if existing:
+        return jsonify({'ok': False, 'error': 'Заявка уже отправлена, ожидайте'}), 400
+    data   = request.get_json() or {}
+    reason = (data.get('reason') or '').strip()[:1000]
+    req = ChannelVerifyRequest(
+        channel_id=ch_id,
+        user_id=current_user.id,
+        reason=reason,
+        status='pending',
+    )
+    db.session.add(req)
+    db.session.commit()
+    return jsonify({'ok': True, 'message': 'Заявка отправлена! Ожидайте проверки администрацией.'})
+
+
+@app.route('/api/channels/<int:ch_id>/verify_status')
+@login_required
+def channel_verify_status(ch_id):
+    ch  = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error': 'Not found'}), 404
+    req = ChannelVerifyRequest.query.filter_by(channel_id=ch_id).order_by(
+        ChannelVerifyRequest.created_at.desc()
+    ).first()
+    return jsonify({
+        'is_verified':    ch.is_verified,
+        'verified_type':  ch.verified_type or '',
+        'request_status': req.status if req else None,
+        'request_id':     req.id if req else None,
+        'admin_note':     req.admin_note if req else '',
+        'created_at':     req.created_at.isoformat() if req else None,
+    })
+
+
+# ── Admin routes for channel verification ──
+
+@app.route('/admin/api/channel_verify_requests')
+@login_required
+@require_admin
+def admin_channel_verify_requests():
+    status = request.args.get('status', 'pending')
+    reqs   = ChannelVerifyRequest.query.filter_by(status=status).order_by(
+        ChannelVerifyRequest.created_at.desc()
+    ).limit(100).all()
+    result = []
+    for r in reqs:
+        ch  = db.session.get(Channel, r.channel_id)
+        usr = db.session.get(User,    r.user_id)
+        result.append({
+            'id':           r.id,
+            'channel_id':   r.channel_id,
+            'channel_name': ch.name if ch else '?',
+            'channel_username': ch.username if ch else '?',
+            'channel_avatar':   ch.avatar   if ch else '',
+            'subs':         ChannelSubscriber.query.filter_by(channel_id=r.channel_id).count(),
+            'owner_name':   usr.name     if usr else '?',
+            'owner_username': usr.username if usr else '?',
+            'reason':       r.reason or '',
+            'status':       r.status,
+            'admin_note':   r.admin_note or '',
+            'created_at':   r.created_at.isoformat() if r.created_at else '',
+        })
+    return jsonify({'requests': result, 'total': len(result)})
+
+
+@app.route('/admin/api/channel_verify_approve', methods=['POST'])
+@login_required
+@require_admin
+def admin_channel_verify_approve():
+    data    = request.get_json() or {}
+    req_id  = data.get('request_id')
+    note    = (data.get('note') or '').strip()[:500]
+    req     = db.session.get(ChannelVerifyRequest, req_id)
+    if not req: return jsonify({'error': 'Not found'}), 404
+    ch = db.session.get(Channel, req.channel_id)
+    if not ch: return jsonify({'error': 'Channel not found'}), 404
+
+    req.status      = 'approved'
+    req.admin_note  = note
+    req.resolved_at = datetime.utcnow()
+    ch.is_verified  = True
+    ch.verified_type = 'official'
+    db.session.commit()
+    _admin_log('verify_channel', req.channel_id, f'channel=@{ch.username}')
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/api/channel_verify_reject', methods=['POST'])
+@login_required
+@require_admin
+def admin_channel_verify_reject():
+    data   = request.get_json() or {}
+    req_id = data.get('request_id')
+    note   = (data.get('note') or '').strip()[:500]
+    req    = db.session.get(ChannelVerifyRequest, req_id)
+    if not req: return jsonify({'error': 'Not found'}), 404
+    ch = db.session.get(Channel, req.channel_id)
+
+    req.status      = 'rejected'
+    req.admin_note  = note
+    req.resolved_at = datetime.utcnow()
+    db.session.commit()
+    _admin_log('reject_channel_verify', req.channel_id, f'channel=@{ch.username if ch else "?"}')
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/api/channel_unverify', methods=['POST'])
+@login_required
+@require_admin
+def admin_channel_unverify():
+    data = request.get_json() or {}
+    ch_id = data.get('channel_id')
+    ch = db.session.get(Channel, ch_id)
+    if not ch: return jsonify({'error': 'Not found'}), 404
+    ch.is_verified  = False
+    ch.verified_type = ''
+    db.session.commit()
+    _admin_log('unverify_channel', ch_id, f'channel=@{ch.username}')
+    return jsonify({'ok': True})
 
 
 
