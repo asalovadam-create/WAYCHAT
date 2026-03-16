@@ -294,21 +294,13 @@ let contactCustomNames = JSON.parse(localStorage.getItem('waychat_contact_names'
 // Данные пользователя
 // currentUser: читаем из window (установлен в index.html) или из localStorage
 const currentUser = (function() {
-    // 1) window.currentUser от сервера
+    // Берём из window.currentUser (установлен Flask синхронно в index.html)
+    // НЕ читаем localStorage — может быть заблокирован Tracking Prevention
     if (window.currentUser && window.currentUser.id > 0) {
         return Object.assign({}, window.currentUser);
     }
-    // 2) localStorage кэш
-    try {
-        var c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-        if (c) {
-            var p = JSON.parse(c);
-            if (p && p.id > 0) return Object.assign({}, p);
-        }
-    } catch(e) {}
-    // 3) Fallback пустой
-    return { id: 0, name: 'Пользователь', username: 'user',
-             avatar: '/static/default_avatar.png', bio: '', phone: '' };
+    // Пустой объект — init() запросит /api/me если нужно
+    return { id: 0, name: '', username: '', avatar: '', bio: '', phone: '' };
 })();
 
 // WebRTC конфиг
@@ -536,21 +528,31 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    // 1. currentUser — синхронно, без await, без fetch
+    // 1. currentUser — только из window (установлен Flask через Jinja2 в index.html)
+    // localStorage может быть заблокирован браузером (Tracking Prevention)
     if (window.currentUser && window.currentUser.id > 0) {
         Object.assign(currentUser, window.currentUser);
-    } else {
-        try {
-            var _c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-            if (_c) { var _p = JSON.parse(_c); if (_p && _p.id > 0) Object.assign(currentUser, _p); }
-        } catch(e) {}
     }
 
-    // Нет пользователя — редирект (без async fetch — не зависаем)
+    // Если window.currentUser не пришёл от Flask — пробуем /api/me
     if (!currentUser.id || currentUser.id <= 0) {
+        try {
+            var _r = await fetch('/api/me', { credentials: 'include' });
+            if (_r.ok) {
+                var _u = await _r.json();
+                if (_u && _u.id > 0) Object.assign(currentUser, _u);
+            }
+        } catch(e) { console.warn('[WC] /api/me failed:', e.message); }
+    }
+
+    // Всё равно нет — редирект на логин
+    if (!currentUser.id || currentUser.id <= 0) {
+        console.warn('[WC] No user found, redirecting to /login');
         window.location.href = '/login';
         return;
     }
+
+    console.log('[WC] init: user.id =', currentUser.id, 'name =', currentUser.name);
 
     // 2. Рендерим приложение
     applyTheme(activeTheme);
