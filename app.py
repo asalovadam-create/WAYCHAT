@@ -1414,20 +1414,25 @@ def get_current_user_route():
 
 
 @app.route('/api/me')
-@login_required
 def api_me():
     """Возвращает данные текущего пользователя — используется для auth check"""
-    u = current_user
-    return jsonify({
-        'id':            u.id,
-        'name':          u.name,
-        'username':      u.username,
-        'avatar':        u.avatar or '',
-        'bio':           u.bio or '',
-        'is_verified':   u.is_verified or False,
-        'verified_type': u.verified_type or '',
-        'phone':         u.phone or '',
-    })
+    from flask_login import current_user as cu
+    if not cu.is_authenticated or not cu.id:
+        return jsonify({'error': 'unauthorized', 'id': 0}), 401
+    try:
+        u = db.session.get(User, cu.id) or cu
+        return jsonify({
+            'id':            u.id,
+            'name':          u.name,
+            'username':      u.username,
+            'avatar':        u.avatar or '',
+            'bio':           u.bio or '',
+            'is_verified':   getattr(u, 'is_verified', False) or False,
+            'verified_type': getattr(u, 'verified_type', '') or '',
+            'phone':         u.phone or '',
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'id': 0}), 500
 
 
 @app.route('/get_user_profile/<int:user_id>')
