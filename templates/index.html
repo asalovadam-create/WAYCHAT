@@ -81,20 +81,14 @@
 <!-- Socket.IO до main.js -->
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
-<!-- ── ДИАГНОСТИКА: логируем состояние ДО main.js ── -->
+<!-- Диагностика: что видит браузер ДО main.js -->
 <script>
-(function() {
-    var u = window.currentUser;
-    console.log('[WayChat] PRE-INIT state:', {
-        currentUser: u,
-        hasId: u && u.id > 0,
-        cookies: document.cookie ? 'present' : 'empty',
-        ts: Date.now()
-    });
-    if (!u || !u.id || u.id <= 0) {
-        console.warn('[WayChat] WARNING: window.currentUser is null/invalid before main.js loads!');
-        console.warn('[WayChat] This means Flask did not pass user_data — session cookie issue');
-    }
+(function(){
+  var u=window.currentUser;
+  console.log('[WC] PRE-INIT | currentUser=',JSON.stringify(u),
+    '| valid=',!!(u&&u.id>0),'| ts=',Date.now());
+  if(!u||!u.id||u.id<=0)
+    console.warn('[WC] WARNING: window.currentUser is missing — Flask session issue!');
 })();
 </script>
 
