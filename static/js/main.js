@@ -301,6 +301,309 @@ const THEMES = {
 };
 
 // ══════════════════════════════════════════════════════════
+//  iOS SAFARI & VIEWPORT FIX
+//  Решает: чёрный экран, прыжок лейаута при клавиатуре,
+//  safe-area на iPhone X+, dvh на старых Safari.
+// ══════════════════════════════════════════════════════════
+(function patchViewport() {
+    // --dvh: динамическая высота видимой области.
+    // Используем вместо 100dvh — Safari < 15.4 не поддерживает dvh.
+    const setDvh = () => {
+        const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--dvh', (h * 0.01) + 'px');
+    };
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', setDvh, { passive: true });
+        window.visualViewport.addEventListener('scroll', setDvh, { passive: true });
+    } else {
+        window.addEventListener('resize', setDvh, { passive: true });
+        window.addEventListener('orientationchange', setDvh, { passive: true });
+    }
+    setDvh();
+
+    // CSS-патч: заменяем 100dvh / 100vh на calc(var(--dvh)*100) везде где нужно
+    const s = document.createElement('style');
+    s.id = 'wc-ios-patch';
+    s.textContent = `
+        /* Динамическая высота — не прыгает при скрытии/показе адресной строки */
+        #app, .chat-view {
+            height: calc(var(--dvh, 1svh) * 100) !important;
+            max-height: calc(var(--dvh, 1svh) * 100) !important;
+        }
+        /* Input bar — всегда прибит к низу визуального viewport */
+        .input-bar {
+            position: sticky !important;
+            bottom: 0 !important;
+            -webkit-transform: translateZ(0);
+            transform: translateZ(0);
+            will-change: transform;
+        }
+        /* Плавный скролл без блокировки на iOS */
+        #messages, #main-content, #settings-section {
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            scroll-behavior: auto;
+        }
+        /* Нижний паддинг с учётом safe area */
+        #chat-list, #main-content {
+            padding-bottom: max(84px, calc(84px + env(safe-area-inset-bottom, 0px))) !important;
+        }
+        /* Убираем синий flash при тапе на всех интерактивных элементах */
+        *, button, a, [onclick] { -webkit-tap-highlight-color: transparent; }
+        body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    `;
+    document.head.appendChild(s);
+})();
+
+// ── Клавиатура iOS: поднимаем input-bar вместе с VisualViewport ──────────
+(function patchKeyboard() {
+    if (!window.visualViewport) return;
+    let _prevVvH = window.visualViewport.height;
+    window.visualViewport.addEventListener('resize', () => {
+        const vvH  = window.visualViewport.height;
+        const winH = window.innerHeight;
+        const kbH  = Math.max(0, winH - vvH);
+        const bar  = document.querySelector('.input-bar');
+        if (bar) bar.style.transform = kbH > 50 ? `translateY(-${kbH}px)` : '';
+        // Когда клавиатура открылась — скроллим чат вниз
+        if (vvH < _prevVvH - 100) {
+            const msgs = document.getElementById('messages');
+            if (msgs) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
+        }
+        _prevVvH = vvH;
+    }, { passive: true });
+})();
+
+// ── SW update handler: показываем баннер или тихо перезагружаем ──────────
+(function setupSWUpdater() {
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker.addEventListener('message', (e) => {
+        if (e.data?.type !== 'SW_UPDATED') return;
+        const chatOpen = document.getElementById('chat-window')?.classList.contains('active');
+        if (!chatOpen) {
+            setTimeout(() => window.location.reload(), 400);
+        } else {
+            // Показываем зелёную таблетку «Обновление готово»
+            if (document.getElementById('_wc_upd')) return;
+            const b = document.createElement('div');
+            b.id = '_wc_upd';
+            b.style.cssText = 'position:fixed;top:max(env(safe-area-inset-top,10px),10px);left:50%;transform:translateX(-50%);z-index:99999;background:rgba(16,185,129,.97);color:#000;padding:10px 20px;border-radius:22px;font-size:14px;font-weight:800;box-shadow:0 4px 24px rgba(0,0,0,.4);cursor:pointer;white-space:nowrap;animation:wc_slideDown .3s ease';
+            b.textContent = '🆕 Обновление — нажмите для перезагрузки';
+            b.onclick = () => window.location.reload();
+            const st = document.createElement('style');
+            st.textContent = '@keyframes wc_slideDown{from{opacity:0;transform:translateX(-50%) translateY(-14px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}';
+            document.head.appendChild(st);
+            document.body.appendChild(b);
+            setTimeout(() => { b.style.opacity='0'; b.style.transition='opacity .3s'; setTimeout(()=>b.remove(),300); }, 12000);
+        }
+    });
+    // Если SW сменился пока вкладка была скрыта — перезагружаем при возврате
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (document.visibilityState === 'hidden') window._swNeedsReload = true;
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && window._swNeedsReload) {
+            window._swNeedsReload = false;
+            window.location.reload();
+        }
+    });
+})();
+
+// ── Глобальный перехват ошибок — не даём JS-ошибке заморозить UI ─────────
+window.addEventListener('error', (e) => { console.error('[WC]', e.message, e.lineno); });
+window.addEventListener('unhandledrejection', (e) => { console.warn('[WC] Promise:', e.reason); e.preventDefault(); });
+
+// ══════════════════════════════════════════════════════════
+//  IndexedDB КЭШЕР СООБЩЕНИЙ (слой 2 из 3)
+//  Слой 1 — in-memory messagesByChatCache
+//  Слой 2 — IndexedDB MsgDB (до 200 сообщений на чат, TTL 7 дней)
+//  Слой 3 — SW Cache (только статичные ассеты)
+// ══════════════════════════════════════════════════════════
+const MsgDB = (() => {
+    const DB = 'waychat_msgs', VER = 1, STORE = 'messages', TTL = 7*24*3600*1000;
+    let _db = null;
+    function _open() {
+        if (_db) return Promise.resolve(_db);
+        return new Promise((res, rej) => {
+            const r = indexedDB.open(DB, VER);
+            r.onupgradeneeded = e => { const d=e.target.result; if(!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE); };
+            r.onsuccess = e => { _db=e.target.result; res(_db); };
+            r.onerror   = () => rej(r.error);
+        });
+    }
+    async function load(key) {
+        try {
+            const db = await _open();
+            const row = await new Promise(res => { const tx=db.transaction(STORE,'readonly'); const r=tx.objectStore(STORE).get(key); r.onsuccess=()=>res(r.result??null); r.onerror=()=>res(null); });
+            if (!row || Date.now()-row.ts > TTL) return null;
+            return row.msgs;
+        } catch(e) { return null; }
+    }
+    async function save(key, msgs) {
+        try {
+            const db = await _open();
+            const trimmed = msgs.slice(-200); // не больше 200 сообщений на чат
+            return new Promise(res => { const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).put({msgs:trimmed,ts:Date.now()},key); tx.oncomplete=()=>res(true); tx.onerror=()=>res(false); });
+        } catch(e) { return false; }
+    }
+    return { load, save };
+})();
+
+// ══════════════════════════════════════════════════════════
+//  ВИРТУАЛЬНЫЙ СПИСОК СООБЩЕНИЙ
+//  Рендерит только видимые сообщения + буфер OVERSCAN.
+//  DOM-размер постоянный ~30-60 узлов при любом числе сообщений.
+// ══════════════════════════════════════════════════════════
+const VirtualList = (() => {
+    const OVERSCAN = 15, EST_H = 72, BATCH = 45;
+    let _el=null, _msgs=[], _start=0, _end=0;
+    let _topPh=null, _botPh=null, _topSent=null, _botSent=null;
+    let _heights=new Map(), _raf=null;
+
+    function _h(i){ return _heights.get(i)||EST_H; }
+    function _sum(a,b){ let s=0; for(let i=a;i<b;i++) s+=_h(i); return s; }
+
+    function _measure() {
+        _el && _el.querySelectorAll('[data-vi]').forEach(e => {
+            const h=e.offsetHeight; if(h>0) _heights.set(+e.dataset.vi,h);
+        });
+    }
+    function _placeholders() {
+        if(_topPh) _topPh.style.height=_sum(0,_start)+'px';
+        if(_botPh) _botPh.style.height=_sum(_end,_msgs.length)+'px';
+    }
+    function _lastDateBefore(idx) {
+        for(let i=idx-1;i>=0;i--){ const d=getMessageDate(_msgs[i]); if(d)return d; }
+        return null;
+    }
+    function _renderWindow(ns, ne, keepScroll) {
+        if(!_el||!_msgs.length) return;
+        ns=Math.max(0,ns); ne=Math.min(_msgs.length,ne);
+        if(ns===_start&&ne===_end) return;
+
+        let anchorEl=null, anchorOff=0;
+        if(keepScroll){ anchorEl=_el.querySelector('[data-vi]'); if(anchorEl) anchorOff=anchorEl.getBoundingClientRect().top; }
+
+        const frag=document.createDocumentFragment();
+        let lastDate=_lastDateBefore(ns);
+        for(let i=ns;i<ne;i++){
+            const msg=_msgs[i];
+            const d=getMessageDate(msg);
+            if(d&&d!==lastDate){
+                const div=document.createElement('div');
+                div.className='date-divider';
+                div.dataset.vd=d;
+                div.innerHTML=`<div class="date-divider-inner">${d}</div>`;
+                frag.appendChild(div); lastDate=d;
+            }
+            const row=buildMessageRow(msg,false);
+            row.dataset.vi=i; frag.appendChild(row);
+        }
+        // Удаляем старые строки (оставляем scaffold)
+        _el.querySelectorAll('[data-vi],[data-vd]').forEach(e=>e.remove());
+        _topSent.after(frag);
+        _start=ns; _end=ne;
+        _measure(); _placeholders();
+
+        if(keepScroll&&anchorEl){
+            const newAnchor=_el.querySelector('[data-vi="'+_start+'"]');
+            if(newAnchor) _el.scrollTop+=newAnchor.getBoundingClientRect().top-anchorOff;
+        }
+    }
+    function _calcWindow(){
+        if(!_el||!_msgs.length) return;
+        const st=_el.scrollTop, ch=_el.clientHeight;
+        let cum=0, vs=0, ve=_msgs.length;
+        for(let i=0;i<_msgs.length;i++){
+            const h=_h(i);
+            if(cum+h>st&&vs===0) vs=i;
+            if(cum>st+ch){ ve=i; break; }
+            cum+=h;
+        }
+        _renderWindow(Math.max(0,vs-OVERSCAN), Math.min(_msgs.length,ve+OVERSCAN), true);
+    }
+    function _onScroll(){
+        // Тригер загрузки старых сообщений
+        if(_el.scrollTop<120&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages){
+            if(typeof loadMessages==='function') loadMessages(false);
+        }
+        if(_raf) cancelAnimationFrame(_raf);
+        _raf=requestAnimationFrame(_calcWindow);
+    }
+
+    function mount(el) {
+        if(_el) destroy();
+        _el=el; _msgs=[]; _heights.clear(); _start=0; _end=0;
+        el.style.cssText+='overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;';
+        _topSent=document.createElement('div'); _topSent.style.cssText='height:1px;flex-shrink:0';
+        _topPh  =document.createElement('div'); _topPh.className='virt-ph-top';   _topPh.style.cssText='height:0;flex-shrink:0';
+        _botPh  =document.createElement('div'); _botPh.className='virt-ph-bot';   _botPh.style.cssText='height:0;flex-shrink:0';
+        _botSent=document.createElement('div'); _botSent.style.cssText='height:1px;flex-shrink:0';
+        el.appendChild(_topSent); el.appendChild(_topPh); el.appendChild(_botPh); el.appendChild(_botSent);
+        el.addEventListener('scroll', _onScroll, { passive:true });
+    }
+
+    function setMessages(msgs) {
+        if(!_el) return;
+        _msgs=msgs.slice(); _heights.clear(); _start=0; _end=0;
+        _el.querySelectorAll('[data-vi],[data-vd]').forEach(e=>e.remove());
+        if(!msgs.length){
+            _el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';
+            return;
+        }
+        // Монтируем scaffold заново если нужно
+        if(!_el.contains(_topSent)){ _el.innerHTML=''; mount(_el); }
+        _renderWindow(Math.max(0,msgs.length-BATCH), msgs.length, false);
+        requestAnimationFrame(()=>{ _el.scrollTop=_el.scrollHeight; });
+    }
+
+    function appendMessage(msg) {
+        if(!_el) return;
+        _msgs.push(msg);
+        const idx=_msgs.length-1;
+        const atBottom=_el.scrollHeight-_el.scrollTop-_el.clientHeight<150;
+        if(_end>=idx){
+            const frag=document.createDocumentFragment();
+            const d=getMessageDate(msg), ld=_lastDateBefore(idx);
+            if(d&&d!==ld){
+                const div=document.createElement('div');
+                div.className='date-divider'; div.dataset.vd=d;
+                div.innerHTML=`<div class="date-divider-inner">${d}</div>`;
+                frag.appendChild(div);
+            }
+            const row=buildMessageRow(msg,true); row.dataset.vi=idx;
+            frag.appendChild(row); _botSent.before(frag); _end=_msgs.length;
+            _measure(); _placeholders();
+            if(atBottom) requestAnimationFrame(()=>{ _el.scrollTop=_el.scrollHeight; });
+        }
+    }
+
+    function prependMessages(msgs) {
+        if(!_el||!msgs.length) return;
+        _msgs=[...msgs,..._msgs];
+        const nh=new Map(); _heights.forEach((v,k)=>nh.set(k+msgs.length,v)); _heights=nh;
+        _start+=msgs.length; _end+=msgs.length;
+        const prevH=_el.scrollHeight;
+        _renderWindow(Math.max(0,_start-msgs.length),_end,false);
+        requestAnimationFrame(()=>{ _el.scrollTop+=_el.scrollHeight-prevH; });
+    }
+
+    function scrollToBottom(anim) {
+        if(!_el) return;
+        anim ? _el.scrollTo({top:_el.scrollHeight,behavior:'smooth'}) : (_el.scrollTop=_el.scrollHeight);
+    }
+
+    function destroy() {
+        if(!_el) return;
+        _el.removeEventListener('scroll',_onScroll);
+        if(_raf) cancelAnimationFrame(_raf);
+        _msgs=[]; _heights.clear(); _el=_topSent=_botSent=_topPh=_botPh=null;
+    }
+
+    return { mount, setMessages, appendMessage, prependMessages, scrollToBottom, destroy };
+})();
+
+// ══════════════════════════════════════════════════════════
 //  SOCKET.IO — ИНИЦИАЛИЗАЦИЯ
 // ══════════════════════════════════════════════════════════
 function initSocket() {
@@ -2071,16 +2374,27 @@ async function openChat(id, name, avatar) {
         }
     }
 
-    // Показываем кэшированные сообщения МГНОВЕННО если есть
-    const cached = messagesByChatCache[`p_${id}`];
-    if (cached && cached.messages.length > 0) {
-        msgs.innerHTML = '';
-        renderMessagesFromCache(cached.messages);
-        scrollDown(false);
-        // Показываем индикатор что обновляем
+    // Уничтожаем предыдущий VirtualList при переходе в другой чат
+    VirtualList.destroy();
+    msgs.innerHTML = '';
+
+    // Слой 1: in-memory кэш — мгновенно
+    const cacheKeyImm = `p_${id}`;
+    const memCached = messagesByChatCache[cacheKeyImm];
+    if (memCached && memCached.messages.length > 0) {
+        renderMessagesFromCache(memCached.messages);
         document.getElementById('chat-status').textContent = 'обновление...';
     } else {
-        msgs.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:14px">Загрузка...</div></div>`;
+        // Слой 2: IndexedDB — быстрый персистентный кэш
+        const idbMsgs = await MsgDB.load(cacheKeyImm);
+        if (idbMsgs && idbMsgs.length > 0) {
+            if (!messagesByChatCache[cacheKeyImm])
+                messagesByChatCache[cacheKeyImm] = { messages: idbMsgs, lastFetch: 0 };
+            renderMessagesFromCache(idbMsgs);
+            document.getElementById('chat-status').textContent = 'обновление...';
+        } else {
+            msgs.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:14px">Загрузка...</div></div>`;
+        }
     }
 
     try {
@@ -2124,14 +2438,23 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     const headerBox = document.getElementById('chat-ava-header');
     if (headerBox) headerBox.innerHTML = getAvatarHtml({id: groupId, name: groupName, avatar: groupAvatar}, 'w-10 h-10');
 
-    const cached = messagesByChatCache[`g_${groupId}`];
-    if (cached && cached.messages.length > 0) {
-        msgs.innerHTML = '';
-        renderMessagesFromCache(cached.messages);
-        scrollDown(false);
+    VirtualList.destroy();
+    msgs.innerHTML = '';
+    const cacheKeyGrp = `g_${groupId}`;
+    const memCachedG = messagesByChatCache[cacheKeyGrp];
+    if (memCachedG && memCachedG.messages.length > 0) {
+        renderMessagesFromCache(memCachedG.messages);
         document.getElementById('chat-status').textContent = 'обновление...';
     } else {
-        msgs.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:14px">Загрузка...</div></div>`;
+        const idbMsgsG = await MsgDB.load(cacheKeyGrp);
+        if (idbMsgsG && idbMsgsG.length > 0) {
+            if (!messagesByChatCache[cacheKeyGrp])
+                messagesByChatCache[cacheKeyGrp] = { messages: idbMsgsG, lastFetch: 0 };
+            renderMessagesFromCache(idbMsgsG);
+            document.getElementById('chat-status').textContent = 'обновление...';
+        } else {
+            msgs.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:14px">Загрузка...</div></div>`;
+        }
     }
 
     try {
@@ -2204,19 +2527,16 @@ async function loadMessages(initial = false) {
             }
             renderMessagesFromCache(msgs);
             scrollDown(false);
+            // Сохраняем в IndexedDB для мгновенной загрузки при следующем открытии
+            MsgDB.save(cacheKey, msgs);
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
             // Загрузка более старых — добавляем в начало
             if (!messagesByChatCache[cacheKey]) messagesByChatCache[cacheKey] = { messages: [] };
             messagesByChatCache[cacheKey].messages = [...msgs, ...messagesByChatCache[cacheKey].messages];
 
-            const fragment = document.createDocumentFragment();
-            msgs.forEach(msg => {
-                const row = buildMessageRow(msg, false);
-                fragment.insertBefore(row, fragment.firstChild);
-            });
-            container.insertBefore(fragment, container.firstChild);
-            container.scrollTop = container.scrollHeight - prevHeight;
+            // Используем VirtualList.prependMessages для старых сообщений
+            VirtualList.prependMessages(msgs);
         }
 
         currentPage++;
@@ -2227,18 +2547,9 @@ async function loadMessages(initial = false) {
 function renderMessagesFromCache(msgs) {
     const container = document.getElementById('messages');
     if (!container) return;
-    let lastDate = null;
-    msgs.forEach(msg => {
-        const msgDate = getMessageDate(msg);
-        if (msgDate && msgDate !== lastDate) {
-            const divider = document.createElement('div');
-            divider.className = 'date-divider';
-            divider.innerHTML = `<div class="date-divider-inner">${msgDate}</div>`;
-            container.appendChild(divider);
-            lastDate = msgDate;
-        }
-        container.appendChild(buildMessageRow(msg, false));
-    });
+    // Виртуальный список — только видимые узлы в DOM
+    VirtualList.mount(container);
+    VirtualList.setMessages(msgs);
 }
 
 function getMessageDate(msg) {
@@ -2261,15 +2572,7 @@ function getMessageDate(msg) {
 }
 
 function setupScrollPagination() {
-    const container = document.getElementById('messages');
-    if (!container) return;
-    let loadTrigger = false;
-    container.onscroll = () => {
-        if (container.scrollTop < 100 && hasMoreMessages && !loadingMessages && !loadTrigger) {
-            loadTrigger = true;
-            loadMessages(false).finally(() => { loadTrigger = false; });
-        }
-    };
+    // VirtualList управляет скроллом и пагинацией сам — ничего не нужно
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2487,21 +2790,30 @@ function showFloatingHeart(row) {
 function renderNewMessage(msg, animate = true) {
     const container = document.getElementById('messages');
     if (!container) return;
-    // Добавляем в кэш (только не оптимистичные)
     if (!msg._optimistic) {
         const cacheKey = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
         if (messagesByChatCache[cacheKey]) {
             messagesByChatCache[cacheKey].messages.push(msg);
+            // Персистим в IDB (дебаунс 1.5с — не тормозим UI)
+            clearTimeout(renderNewMessage._t);
+            renderNewMessage._t = setTimeout(() => {
+                MsgDB.save(cacheKey, messagesByChatCache[cacheKey].messages);
+            }, 1500);
         }
     }
-    const row = buildMessageRow(msg, animate);
-    if (msg._optimistic) {
-        row.setAttribute('data-optimistic', '1');
-        row.setAttribute('data-content', msg.content || '');
-        row.style.opacity = '0.7';
+    // Используем VirtualList.appendMessage — вставляет один узел без полного ре-рендера
+    VirtualList.appendMessage(msg);
+    // Если VirtualList не монтирован (fallback) — добавляем напрямую
+    if (!document.getElementById('messages')?.querySelector('[data-vi]')) {
+        const row = buildMessageRow(msg, animate);
+        if (msg._optimistic) {
+            row.setAttribute('data-optimistic', '1');
+            row.setAttribute('data-content', msg.content || '');
+            row.style.opacity = '0.7';
+        }
+        container.appendChild(row);
+        if (animate) scrollDown(true);
     }
-    container.appendChild(row);
-    if (animate) scrollDown(true);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -7419,10 +7731,11 @@ async function syncProfileData() {
 //  ВСПОМОГАТЕЛЬНЫЕ
 // ══════════════════════════════════════════════════════════
 function scrollDown(smooth = true) {
+    VirtualList.scrollToBottom(smooth);
+    // fallback: если VirtualList ещё не монтирован
     const m = document.getElementById('messages');
-    if (m) {
-        if (smooth) m.scrollTo({ top: m.scrollHeight, behavior: 'smooth' });
-        else m.scrollTop = m.scrollHeight;
+    if (m && !m.querySelector('[data-vi]')) {
+        smooth ? m.scrollTo({top:m.scrollHeight,behavior:'smooth'}) : (m.scrollTop=m.scrollHeight);
     }
 }
 
