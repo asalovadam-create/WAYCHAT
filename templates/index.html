@@ -19,10 +19,10 @@
     <link rel="preload" href="/static/logo.png" as="image" type="image/png">
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-        html,body{width:100%;height:100%;background:#111113;overflow:hidden;overscroll-behavior:none}
-        body{color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased;touch-action:manipulation}
-        /* НЕТ animation на #root — зависает на iOS */
-        #root{width:100%;height:100%;background:#111113}
+        html{width:100%;background:#111113}
+        body{width:100%;min-height:100vh;background:#111113;overflow:hidden;overscroll-behavior:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased;touch-action:manipulation}
+        /* #root без height — renderApp сам задаёт размеры через #app */
+        #root{width:100%;min-height:100vh;background:#111113}
         #splash{position:fixed;inset:0;z-index:999999;background:#111113;display:flex;flex-direction:column;align-items:center;justify-content:center}
         #splash-logo-wrap{position:relative;width:110px;height:110px}
         #splash-logo{width:110px;height:110px;border-radius:26px;display:block;box-shadow:0 0 0 1px rgba(16,185,129,.25),0 12px 48px rgba(16,185,129,.2);animation:splashPop .5s cubic-bezier(.34,1.56,.64,1) both}
