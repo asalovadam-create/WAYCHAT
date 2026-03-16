@@ -7112,7 +7112,7 @@ async function showGroupInfo() {
             // Кнопки управления (появляются при нажатии)
             const actionBtns = !isMe && iAmAdmin ? `
                 <div style="display:flex;gap:8px;margin-top:0;align-items:center">
-                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')" 
+                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')"
                         style="padding:6px 12px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:10px;color:#f87171;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
                         Исключить
                     </button>` : ''}
