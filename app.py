@@ -1242,11 +1242,19 @@ def register_step2_page():
             reg_ip        = ip_addr,
             last_ip       = ip_addr,
         )
+        u.is_online = True
+        u.last_seen = datetime.utcnow()
         db.session.add(u)
         db.session.commit()
         _pending_registrations.pop(phone, None)
         session.permanent = True
         login_user(u, remember=True)
+        # Второй коммит после login_user чтобы сессия Flask-Login синхронизировалась
+        db.session.commit()
+        try:
+            u.invalidate_cache()
+        except Exception:
+            pass
         return jsonify({'success': True, 'redirect': url_for('index')})
 
     except Exception as e:
@@ -1450,17 +1458,24 @@ def get_current_user_route():
 @login_required
 def api_me():
     """Возвращает данные текущего пользователя — используется для auth check"""
-    u = current_user
-    return jsonify({
-        'id':            u.id,
-        'name':          u.name,
-        'username':      u.username,
-        'avatar':        u.avatar or '',
-        'bio':           u.bio or '',
-        'is_verified':   u.is_verified or False,
-        'verified_type': u.verified_type or '',
-        'phone':         u.phone or '',
-    })
+    try:
+        # Читаем свежий объект из БД — защита от DetachedInstanceError
+        u = db.session.get(User, current_user.id)
+        if not u:
+            return jsonify({'error': 'Not found'}), 401
+        return jsonify({
+            'id':            u.id,
+            'name':          u.name or '',
+            'username':      u.username or '',
+            'avatar':        u.avatar or '',
+            'bio':           u.bio or '',
+            'is_verified':   bool(u.is_verified) if hasattr(u, 'is_verified') else False,
+            'verified_type': u.verified_type or '' if hasattr(u, 'verified_type') else '',
+            'phone':         u.phone or '',
+        })
+    except Exception as e:
+        app.logger.error(f'api_me error: {e}')
+        return jsonify({'error': 'Session error'}), 500
 
 
 @app.route('/get_user_profile/<int:user_id>')
