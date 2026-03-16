@@ -16,13 +16,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
-    <link rel="preload" href="/static/logo.png" as="image" type="image/png">
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-        html{width:100%;background:#111113}
-        body{width:100%;min-height:100vh;background:#111113;overflow:hidden;overscroll-behavior:none;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased;touch-action:manipulation}
-        /* #root без height — renderApp сам задаёт размеры через #app */
-        #root{width:100%;min-height:100vh;background:#111113}
+        html,body{width:100%;height:100%;background:#111113;overflow:hidden;overscroll-behavior:none}
+        body{color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased}
+        #root{width:100%;height:100%;background:#111113}
         #splash{position:fixed;inset:0;z-index:999999;background:#111113;display:flex;flex-direction:column;align-items:center;justify-content:center}
         #splash-logo-wrap{position:relative;width:110px;height:110px}
         #splash-logo{width:110px;height:110px;border-radius:26px;display:block;box-shadow:0 0 0 1px rgba(16,185,129,.25),0 12px 48px rgba(16,185,129,.2);animation:splashPop .5s cubic-bezier(.34,1.56,.64,1) both}
@@ -46,68 +44,36 @@
 
 <div id="root"></div>
 
-<!-- Данные пользователя от Flask через JSON script tag (без data-атрибутов!) -->
-<script id="user-data-bridge" type="application/json">
-{% if current_user and current_user.is_authenticated %}{{ {"id": current_user.id, "name": current_user.name or "", "username": current_user.username or "", "avatar": current_user.avatar or "", "phone": current_user.phone or "", "bio": current_user.bio or "", "is_verified": current_user.is_verified or false, "verified_type": current_user.verified_type or ""} | tojson | safe }}{% else %}{"id": 0, "name": "", "username": "", "avatar": "", "phone": "", "bio": "", "is_verified": false, "verified_type": ""}{% endif %}
-</script>
-
-<!-- window.currentUser СИНХРОННО — до загрузки main.js -->
+<!-- Пользователь от Flask — НАПРЯМУЮ в window без localStorage -->
 <script>
-(function() {
-    var u = null;
-    try {
-        var el = document.getElementById('user-data-bridge');
-        if (el) u = JSON.parse(el.textContent || el.innerText || '{}');
-    } catch(e) {}
-    if (!u || !u.id) {
-        try {
-            var c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-            if (c) u = JSON.parse(c);
-        } catch(e) {}
-    }
-    if (u && u.id > 0) {
-        window.currentUser = u;
-        // Пробуем сохранить в кэш (может быть заблокировано браузером — не критично)
-        try { localStorage.setItem('waychat_user_cache', JSON.stringify(u)); } catch(e) {}
-    } else {
-        // Пробуем кэш как запасной вариант
-        try {
-            var cached = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-            if (cached) {
-                var cu = JSON.parse(cached);
-                window.currentUser = (cu && cu.id > 0) ? cu : null;
-            } else {
-                window.currentUser = null;
-            }
-        } catch(e) {
-            window.currentUser = null;
-        }
-    }
-})();
+window.currentUser = {{ {
+    "id": current_user.id,
+    "name": current_user.name,
+    "username": current_user.username,
+    "avatar": current_user.avatar or "",
+    "phone": current_user.phone or "",
+    "bio": current_user.bio or "",
+    "is_verified": current_user.is_verified or false,
+    "verified_type": current_user.verified_type or ""
+} | tojson | safe }};
 </script>
 
-<!-- Socket.IO синхронно — нужен до main.js -->
+<!-- Socket.IO до main.js -->
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <!-- Основной JS -->
 <script src="/static/js/main.js"></script>
 
-<!-- Некритичные скрипты — после main.js -->
+<!-- Некритичные скрипты после main.js -->
 <script>
 (function() {
-    // Tailwind асинхронно
+    // Tailwind async
     var t = document.createElement('script');
     t.src = 'https://cdn.tailwindcss.com';
     t.async = true;
     document.head.appendChild(t);
 
-    // Lucide icons асинхронно
-    var l = document.createElement('script');
-    l.src = 'https://unpkg.com/lucide@latest';
-    l.async = true;
-    document.head.appendChild(l);
-
-    // Скрываем splash как только #root получил содержимое
+    // Скрываем splash когда root получил содержимое
     var done = false;
     function hideSplash() {
         if (done) return;
@@ -135,7 +101,7 @@ if ('serviceWorker' in navigator) {
     });
 }
 
-// iOS install hint
+// iOS hint
 (function() {
     var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
     if (!isIOS || window.navigator.standalone || localStorage.getItem('wc_ios_hint_v4')) return;
@@ -157,46 +123,6 @@ if ('serviceWorker' in navigator) {
         document.body.appendChild(d);
         setTimeout(function() { if (d.parentNode) d.remove(); }, 14000);
     }, 4500);
-})();
-
-// Android PWA install
-(function() {
-    var prompt = null;
-    window.addEventListener('beforeinstallprompt', function(e) {
-        e.preventDefault(); prompt = e;
-        if (!window.matchMedia('(display-mode: standalone)').matches && !localStorage.getItem('wc_pwa_installed'))
-            setTimeout(function() { showPWA(prompt); }, 3500);
-    });
-    window.addEventListener('appinstalled', function() {
-        localStorage.setItem('wc_pwa_installed', '1');
-        var b = document.getElementById('wc-pwa-b'); if (b) b.remove();
-    });
-    function showPWA(p) {
-        if (document.getElementById('wc-pwa-b')) return;
-        var d = document.createElement('div');
-        d.id = 'wc-pwa-b';
-        d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(18,18,20,.97);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
-        var title = document.createElement('div');
-        title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:6px';
-        title.textContent = 'Установить WayChat';
-        var sub = document.createElement('div');
-        sub.style.cssText = 'font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px';
-        sub.textContent = 'Добавь приложение на главный экран';
-        var row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:10px';
-        var ok = document.createElement('button');
-        ok.style.cssText = 'flex:1;padding:12px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer';
-        ok.textContent = 'Установить';
-        ok.onclick = function() { if (p) { p.prompt(); p.userChoice.then(function() { localStorage.setItem('wc_pwa_installed','1'); d.remove(); }); } };
-        var no = document.createElement('button');
-        no.style.cssText = 'padding:12px 18px;background:rgba(255,255,255,.1);border:none;border-radius:14px;color:white;font-size:15px;cursor:pointer';
-        no.textContent = 'Не сейчас';
-        no.onclick = function() { d.remove(); };
-        row.appendChild(ok); row.appendChild(no);
-        d.appendChild(title); d.appendChild(sub); d.appendChild(row);
-        document.body.appendChild(d);
-        setTimeout(function() { if (d.parentNode) d.remove(); }, 15000);
-    }
 })();
 </script>
 
