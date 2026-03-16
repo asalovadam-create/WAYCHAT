@@ -152,7 +152,7 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
              placeholder="999 999-9999" autocomplete="tel"
              oninput="onPhoneInput(this)" onkeydown="handlePhoneKey(event)">
     </div>
-    <div style="font-size:12px;color:var(--text2);margin-top:-8px;margin-bottom:14px;padding:0 4px" id="phone-hint">
+    <div style="font-size:12px;color:var(--text2);margin-top:-8px;margin-bottom:14px;padding:0 4px">
       Только цифры — код страны уже выбран слева
     </div>
     <button class="btn-main" id="btn-phone" onclick="doCheckPhone()">Продолжить</button>
@@ -261,68 +261,41 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
 'use strict';
 
 const COUNTRIES = [
-  {name:'Россия',flag:'🇷🇺',code:'+7'},
-  {name:'Беларусь',flag:'🇧🇾',code:'+375'},
-  {name:'Украина',flag:'🇺🇦',code:'+380'},
-  {name:'Казахстан',flag:'🇰🇿',code:'+7'},
-  {name:'Узбекистан',flag:'🇺🇿',code:'+998'},
-  {name:'Армения',flag:'🇦🇲',code:'+374'},
-  {name:'Азербайджан',flag:'🇦🇿',code:'+994'},
-  {name:'Грузия',flag:'🇬🇪',code:'+995'},
-  {name:'Молдова',flag:'🇲🇩',code:'+373'},
-  {name:'Кыргызстан',flag:'🇰🇬',code:'+996'},
-  {name:'Таджикистан',flag:'🇹🇯',code:'+992'},
-  {name:'Туркменистан',flag:'🇹🇲',code:'+993'},
-  {name:'Латвия',flag:'🇱🇻',code:'+371'},
-  {name:'Литва',flag:'🇱🇹',code:'+370'},
-  {name:'Эстония',flag:'🇪🇪',code:'+372'},
-  {name:'Польша',flag:'🇵🇱',code:'+48'},
-  {name:'Германия',flag:'🇩🇪',code:'+49'},
-  {name:'Франция',flag:'🇫🇷',code:'+33'},
-  {name:'Италия',flag:'🇮🇹',code:'+39'},
-  {name:'Испания',flag:'🇪🇸',code:'+34'},
-  {name:'Великобритания',flag:'🇬🇧',code:'+44'},
-  {name:'Нидерланды',flag:'🇳🇱',code:'+31'},
-  {name:'Бельгия',flag:'🇧🇪',code:'+32'},
-  {name:'Швейцария',flag:'🇨🇭',code:'+41'},
-  {name:'Австрия',flag:'🇦🇹',code:'+43'},
-  {name:'Швеция',flag:'🇸🇪',code:'+46'},
-  {name:'Норвегия',flag:'🇳🇴',code:'+47'},
-  {name:'Дания',flag:'🇩🇰',code:'+45'},
-  {name:'Финляндия',flag:'🇫🇮',code:'+358'},
-  {name:'США',flag:'🇺🇸',code:'+1'},
-  {name:'Канада',flag:'🇨🇦',code:'+1'},
-  {name:'Австралия',flag:'🇦🇺',code:'+61'},
-  {name:'Турция',flag:'🇹🇷',code:'+90'},
-  {name:'Израиль',flag:'🇮🇱',code:'+972'},
-  {name:'ОАЭ',flag:'🇦🇪',code:'+971'},
-  {name:'Китай',flag:'🇨🇳',code:'+86'},
-  {name:'Япония',flag:'🇯🇵',code:'+81'},
-  {name:'Южная Корея',flag:'🇰🇷',code:'+82'},
+  {name:'Россия',flag:'🇷🇺',code:'+7'},{name:'Беларусь',flag:'🇧🇾',code:'+375'},
+  {name:'Украина',flag:'🇺🇦',code:'+380'},{name:'Казахстан',flag:'🇰🇿',code:'+7'},
+  {name:'Узбекистан',flag:'🇺🇿',code:'+998'},{name:'Армения',flag:'🇦🇲',code:'+374'},
+  {name:'Азербайджан',flag:'🇦🇿',code:'+994'},{name:'Грузия',flag:'🇬🇪',code:'+995'},
+  {name:'Молдова',flag:'🇲🇩',code:'+373'},{name:'Кыргызстан',flag:'🇰🇬',code:'+996'},
+  {name:'Таджикистан',flag:'🇹🇯',code:'+992'},{name:'Туркменистан',flag:'🇹🇲',code:'+993'},
+  {name:'Латвия',flag:'🇱🇻',code:'+371'},{name:'Литва',flag:'🇱🇹',code:'+370'},
+  {name:'Эстония',flag:'🇪🇪',code:'+372'},{name:'Польша',flag:'🇵🇱',code:'+48'},
+  {name:'Германия',flag:'🇩🇪',code:'+49'},{name:'Франция',flag:'🇫🇷',code:'+33'},
+  {name:'Италия',flag:'🇮🇹',code:'+39'},{name:'Испания',flag:'🇪🇸',code:'+34'},
+  {name:'Великобритания',flag:'🇬🇧',code:'+44'},{name:'Нидерланды',flag:'🇳🇱',code:'+31'},
+  {name:'Бельгия',flag:'🇧🇪',code:'+32'},{name:'Швейцария',flag:'🇨🇭',code:'+41'},
+  {name:'Австрия',flag:'🇦🇹',code:'+43'},{name:'Швеция',flag:'🇸🇪',code:'+46'},
+  {name:'Норвегия',flag:'🇳🇴',code:'+47'},{name:'Дания',flag:'🇩🇰',code:'+45'},
+  {name:'Финляндия',flag:'🇫🇮',code:'+358'},{name:'США',flag:'🇺🇸',code:'+1'},
+  {name:'Канада',flag:'🇨🇦',code:'+1'},{name:'Австралия',flag:'🇦🇺',code:'+61'},
+  {name:'Турция',flag:'🇹🇷',code:'+90'},{name:'Израиль',flag:'🇮🇱',code:'+972'},
+  {name:'ОАЭ',flag:'🇦🇪',code:'+971'},{name:'Китай',flag:'🇨🇳',code:'+86'},
+  {name:'Япония',flag:'🇯🇵',code:'+81'},{name:'Южная Корея',flag:'🇰🇷',code:'+82'},
   {name:'Индия',flag:'🇮🇳',code:'+91'},
 ];
-
-// Определение страны по введённому + коду
-const CODE_MAP = {};
-COUNTRIES.forEach(c => { if (!CODE_MAP[c.code]) CODE_MAP[c.code] = c; });
 
 let selCountry = COUNTRIES[0];
 let _fullPhone = '';
 
 function renderCountries(list) {
-  document.getElementById('country-items').innerHTML = list.map((c,_) =>
+  document.getElementById('country-items').innerHTML = list.map(c =>
     `<div class="country-item" onclick="selectCountry('${c.code}','${c.flag}','${c.name}')">
-      <span class="ci-flag">${c.flag}</span>
-      <span class="ci-name">${c.name}</span>
-      <span class="ci-code">${c.code}</span>
+      <span class="ci-flag">${c.flag}</span><span class="ci-name">${c.name}</span><span class="ci-code">${c.code}</span>
     </div>`).join('');
 }
-
 function filterCountries(q) {
   const lq = q.toLowerCase();
-  renderCountries(q ? COUNTRIES.filter(c => c.name.toLowerCase().includes(lq) || c.code.includes(q)) : COUNTRIES);
+  renderCountries(q ? COUNTRIES.filter(c => c.name.toLowerCase().includes(lq)||c.code.includes(q)) : COUNTRIES);
 }
-
 function openCountrySheet() {
   renderCountries(COUNTRIES);
   document.getElementById('country-search-inp').value = '';
@@ -333,183 +306,116 @@ function closeCountrySheet(e) {
     document.getElementById('country-sheet').classList.remove('open');
 }
 function handlePhoneKey(e) {
-  if (e.key === 'Enter') { doCheckPhone(); return; }
-  // Разрешаем: цифры, backspace, delete, стрелки, tab, ctrl+a/c/v/x
-  const allowed = ['Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Tab','Home','End'];
-  if (allowed.includes(e.key)) return;
-  if (e.ctrlKey || e.metaKey) return;
+  if (e.key==='Enter') { doCheckPhone(); return; }
+  const ok = ['Backspace','Delete','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Tab','Home','End'];
+  if (ok.includes(e.key)||e.ctrlKey||e.metaKey) return;
   if (!/^\d$/.test(e.key)) e.preventDefault();
 }
-
 function selectCountry(code, flag, name) {
-  selCountry = {code, flag, name};
+  selCountry = {code,flag,name};
   document.getElementById('sel-flag').textContent = flag;
   document.getElementById('sel-code').textContent = code;
   document.getElementById('country-sheet').classList.remove('open');
   document.getElementById('phone-num').value = '';
   document.querySelector('.phone-row').style.borderColor = '';
-  // Обновляем плейсхолдер под страну
-  const formats = {'+7':'999 999-99-99','+375':'99 999-99-99','+380':'99 999-99-99',
-                   '+1':'999 999-9999','+44':'9999 999999','+49':'999 9999999'};
-  document.getElementById('phone-num').placeholder = formats[code] || '999 999 999';
+  const fmts = {'+7':'999 999-99-99','+375':'99 999-99-99','+380':'99 999-99-99','+1':'999 999-9999','+44':'9999 999999','+49':'999 9999999'};
+  document.getElementById('phone-num').placeholder = fmts[code]||'999 999 999';
   document.getElementById('phone-num').focus();
 }
-
 function onPhoneInput(inp) {
   let val = inp.value;
-
-  // Если вставили полный номер с + — определяем страну и вырезаем код
   if (val.startsWith('+')) {
-    const sorted = [...COUNTRIES].sort((a,b) => b.code.length - a.code.length);
+    const sorted = [...COUNTRIES].sort((a,b)=>b.code.length-a.code.length);
     for (const c of sorted) {
       if (val.startsWith(c.code)) {
-        selCountry = c;
-        document.getElementById('sel-flag').textContent = c.flag;
-        document.getElementById('sel-code').textContent = c.code;
-        val = val.slice(c.code.length);
-        break;
+        selCountry=c; document.getElementById('sel-flag').textContent=c.flag;
+        document.getElementById('sel-code').textContent=c.code; val=val.slice(c.code.length); break;
       }
     }
   }
-
-  // Оставляем только цифры
-  let digits = val.replace(/\D/g, '');
-
-  // Убираем ведущие цифры кода страны если человек их набрал руками
-  // Например для +7: убираем ведущую 7 или 8
-  const codeDigits = selCountry.code.replace(/\D/g, '');
-  // Убираем если начинается с кода страны (без +)
-  if (digits.startsWith(codeDigits) && digits.length > codeDigits.length) {
-    digits = digits.slice(codeDigits.length);
-  }
-  // Для России/Казахстана убираем ведущую 8 (советская привычка)
-  if ((selCountry.code === '+7') && digits.startsWith('8') && digits.length > 1) {
-    digits = digits.slice(1);
-  }
-  // Убираем ведущий 0 (характерно для некоторых стран)
-  if (digits.startsWith('0') && selCountry.code !== '+44' && selCountry.code !== '+61') {
-    digits = digits.slice(1);
-  }
-
-  // Ограничение длины — максимум 11 цифр для локального номера
-  digits = digits.slice(0, 11);
-
-  // Форматируем красиво
-  inp.value = formatDigits(digits, selCountry.code);
-
-  // Подсвечиваем ошибку если номер слишком короткий
-  validatePhoneVisual(digits);
+  let d = val.replace(/\D/g,'');
+  const cd = selCountry.code.replace(/\D/g,'');
+  if (d.startsWith(cd)&&d.length>cd.length) d=d.slice(cd.length);
+  if (selCountry.code==='+7'&&d.startsWith('8')&&d.length>1) d=d.slice(1);
+  if (d.startsWith('0')&&selCountry.code!=='+44'&&selCountry.code!=='+61') d=d.slice(1);
+  d=d.slice(0,11); inp.value=formatDigits(d,selCountry.code); validatePhoneVisual(d);
 }
-
-function formatDigits(digits, code) {
-  if (!digits) return '';
-  // Форматы для разных стран
-  const formats = {
-    '+7':   [3,3,2,2],   // 999 999-99-99
-    '+375': [2,3,2,2],   // 99 999-99-99
-    '+380': [2,3,2,2],
-    '+998': [2,3,2,2],
-    '+374': [2,6],
-    '+994': [2,3,2,2],
-    '+995': [3,2,2,2],
-    '+373': [4,4],
-    '+996': [3,3,3],
-    '+992': [2,3,4],
-    '+993': [2,2,2,2],
-    '+44':  [4,3,4],
-    '+49':  [3,7],
-    '+33':  [1,2,2,2,2],
-    '+39':  [3,4,4],
-    '+34':  [3,3,3],
-    '+48':  [3,3,3],
-    '+90':  [3,3,2,2],
-    '+1':   [3,3,4],
-    '+61':  [3,3,3],
-    '+86':  [3,4,4],
-    '+81':  [2,4,4],
-    '+82':  [2,4,4],
-    '+91':  [5,5],
-    '+971': [2,3,4],
-    '+972': [2,3,4],
-  };
-  const parts = formats[code] || [3,3,4];
-  let result = '';
-  let pos = 0;
-  for (let i = 0; i < parts.length; i++) {
-    const chunk = digits.slice(pos, pos + parts[i]);
-    if (!chunk) break;
-    if (i > 0) result += ' ';
-    result += chunk;
-    pos += parts[i];
-  }
-  // Остаток если цифр больше чем в формате
-  if (pos < digits.length) result += ' ' + digits.slice(pos);
-  return result;
+function formatDigits(d,code) {
+  if(!d) return '';
+  const fmts={'+7':[3,3,2,2],'+375':[2,3,2,2],'+380':[2,3,2,2],'+998':[2,3,2,2],'+374':[2,6],
+    '+994':[2,3,2,2],'+995':[3,2,2,2],'+373':[4,4],'+996':[3,3,3],'+992':[2,3,4],'+993':[2,2,2,2],
+    '+44':[4,3,4],'+49':[3,7],'+33':[1,2,2,2,2],'+39':[3,4,4],'+34':[3,3,3],'+48':[3,3,3],
+    '+90':[3,3,2,2],'+1':[3,3,4],'+61':[3,3,3],'+86':[3,4,4],'+81':[2,4,4],'+82':[2,4,4],
+    '+91':[5,5],'+971':[2,3,4],'+972':[2,3,4]};
+  const parts=fmts[code]||[3,3,4]; let r='',p=0;
+  for(let i=0;i<parts.length;i++){const c=d.slice(p,p+parts[i]);if(!c)break;if(i>0)r+=' ';r+=c;p+=parts[i];}
+  if(p<d.length) r+=' '+d.slice(p); return r;
 }
-
-function validatePhoneVisual(digits) {
-  const phoneRow = document.querySelector('.phone-row');
-  const minLen = getMinLength(selCountry.code);
-  if (digits.length > 0 && digits.length < minLen) {
-    phoneRow.style.borderColor = 'rgba(248,113,113,0.5)';
-  } else if (digits.length >= minLen) {
-    phoneRow.style.borderColor = 'rgba(16,185,129,0.5)';
-  } else {
-    phoneRow.style.borderColor = '';
-  }
+function validatePhoneVisual(d) {
+  const row=document.querySelector('.phone-row'),min=getMinLength(selCountry.code);
+  row.style.borderColor=d.length>0&&d.length<min?'rgba(248,113,113,0.5)':d.length>=min?'rgba(16,185,129,0.5)':'';
 }
-
 function getMinLength(code) {
-  const mins = {'+7':10,'+375':9,'+380':9,'+998':9,'+374':8,'+994':9,'+995':9,
-                '+1':10,'+44':10,'+49':10,'+33':9,'+86':11,'+91':10};
-  return mins[code] || 7;
+  const m={'+7':10,'+375':9,'+380':9,'+998':9,'+374':8,'+994':9,'+995':9,'+1':10,'+44':10,'+49':10,'+33':9,'+86':11,'+91':10};
+  return m[code]||7;
 }
-
 function getFullPhone() {
-  const digits = document.getElementById('phone-num').value.replace(/\D/g,'');
-  return selCountry.code + digits;
+  return selCountry.code+document.getElementById('phone-num').value.replace(/\D/g,'');
 }
-
-// ── ЭКРАНЫ ──
 function showScreen(id) {
-  document.querySelectorAll('.screen').forEach(s => {
-    s.classList.toggle('active', s.id === id);
-    if (s.id !== id) s.classList.remove('exit');
-  });
+  document.querySelectorAll('.screen').forEach(s=>{s.classList.toggle('active',s.id===id);if(s.id!==id)s.classList.remove('exit');});
 }
-function goBack(to, from) {
-  const cur = document.getElementById(from);
-  cur.classList.add('exit');
-  setTimeout(() => { cur.classList.remove('exit'); showScreen(to); }, 220);
+function goBack(to,from) {
+  const cur=document.getElementById(from); cur.classList.add('exit');
+  setTimeout(()=>{cur.classList.remove('exit');showScreen(to);},220);
 }
-
-function showErr(id, msg) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.className = 'alert err';
-  el.textContent = msg || '';
-  el.style.display = msg ? 'block' : 'none';
+function showErr(id,msg) {
+  const el=document.getElementById(id); if(!el) return;
+  el.className='alert err'; el.textContent=msg||''; el.style.display=msg?'block':'none';
 }
-function showDev(id, msg) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  el.className = 'alert dev';
-  el.textContent = msg || '';
-  el.style.display = msg ? 'block' : 'none';
+function showDev(id,msg) {
+  const el=document.getElementById(id); if(!el) return;
+  el.className='alert dev'; el.textContent=msg||''; el.style.display=msg?'block':'none';
 }
-function busy(id, on, txt) {
-  const b = document.getElementById(id);
-  if (!b) return;
-  b.disabled = on;
-  if (txt) b.textContent = txt;
+function busy(id,on,txt) {
+  const b=document.getElementById(id); if(!b) return; b.disabled=on; if(txt) b.textContent=txt;
 }
 function checkUsername(inp) {
-  const v = inp.value.trim(), h = document.getElementById('un-hint');
-  if (!v) { h.className='hint'; h.textContent='Лат. буквы, цифры и _ , минимум 4 символа'; return; }
-  if (v.length<4)                      { h.className='hint bad'; h.textContent='✗ Минимум 4 символа'; }
-  else if (!/^[a-zA-Z]/.test(v))       { h.className='hint bad'; h.textContent='✗ Должен начинаться с буквы'; }
-  else if (!/^[a-zA-Z0-9_]+$/.test(v)) { h.className='hint bad'; h.textContent='✗ Только буквы, цифры и _'; }
-  else                                 { h.className='hint ok';  h.textContent='✓ Отлично!'; }
+  const v=inp.value.trim(),h=document.getElementById('un-hint');
+  if(!v){h.className='hint';h.textContent='Лат. буквы, цифры и _ , минимум 4 символа';return;}
+  if(v.length<4) {h.className='hint bad';h.textContent='✗ Минимум 4 символа';}
+  else if(!/^[a-zA-Z]/.test(v)) {h.className='hint bad';h.textContent='✗ Должен начинаться с буквы';}
+  else if(!/^[a-zA-Z0-9_]+$/.test(v)) {h.className='hint bad';h.textContent='✗ Только буквы, цифры и _';}
+  else {h.className='hint ok';h.textContent='✓ Отлично!';}
+}
+
+// ══════════════════════════════════════════════════════════
+// ГЛАВНЫЙ ФИX: safeRedirect — ждём подтверждения сессии
+// Проблема: браузер делает GET / ДО того как Flask (eventlet
+// на Render free tier) успевает записать session cookie.
+// Решение: после success=true опрашиваем /api/me пока сессия
+// не подтвердится, только тогда делаем редирект.
+// ══════════════════════════════════════════════════════════
+async function safeRedirect(url) {
+  console.log('[WC] safeRedirect: verifying session before redirect...');
+  await new Promise(r => setTimeout(r, 250));
+  for (var i = 0; i < 5; i++) {
+    try {
+      var resp = await fetch('/api/me', { credentials: 'include', cache: 'no-store' });
+      console.log('[WC] safeRedirect /api/me attempt', i+1, 'status=', resp.status);
+      if (resp.ok) {
+        var u = await resp.json();
+        if (u && u.id > 0) {
+          console.log('[WC] session OK id=', u.id, '— redirecting to', url);
+          window.location.href = url || '/';
+          return;
+        }
+      }
+    } catch(e) { console.warn('[WC] safeRedirect /api/me error:', e); }
+    await new Promise(r => setTimeout(r, 300 * (i + 1)));
+  }
+  console.warn('[WC] session not confirmed after 5 attempts — redirecting anyway');
+  window.location.href = url || '/';
 }
 
 // ── 1: ПРОВЕРКА НОМЕРА ──
@@ -517,43 +423,28 @@ async function doCheckPhone() {
   showErr('err-phone','');
   const digits = document.getElementById('phone-num').value.replace(/\D/g,'');
   const minLen = getMinLength(selCountry.code);
-  if (!digits || digits.length < minLen) {
-    showErr('err-phone', `Введите корректный номер (минимум ${minLen} цифр после кода страны)`);
-    return;
-  }
+  if (!digits||digits.length<minLen) { showErr('err-phone',`Введите корректный номер (минимум ${minLen} цифр)`); return; }
   _fullPhone = getFullPhone();
-  busy('btn-phone', true, 'Проверяю…');
+  busy('btn-phone',true,'Проверяю…');
   try {
-    const r = await fetch('/check_phone', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({phone: _fullPhone}), credentials:'same-origin',
-    });
+    const r = await fetch('/check_phone',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:_fullPhone}),credentials:'same-origin'});
     const d = await r.json();
-    if (!d.success) { showErr('err-phone', d.error||'Ошибка'); busy('btn-phone',false,'Продолжить'); return; }
-    if (d.exists) {
-      await requestLoginCode();
-    } else {
-      showScreen('sc-reg-info');
-    }
+    if (!d.success) { showErr('err-phone',d.error||'Ошибка'); busy('btn-phone',false,'Продолжить'); return; }
+    if (d.exists) { await requestLoginCode(); } else { showScreen('sc-reg-info'); }
   } catch(e) { showErr('err-phone','Ошибка соединения'); }
-  busy('btn-phone', false, 'Продолжить');
+  busy('btn-phone',false,'Продолжить');
 }
 
 async function requestLoginCode() {
   try {
-    const r = await fetch('/login_step1', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({phone: _fullPhone}), credentials:'same-origin',
-    });
+    const r = await fetch('/login_step1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:_fullPhone}),credentials:'same-origin'});
     const d = await r.json();
     if (d.success) {
-      document.getElementById('code-login-title').textContent = _fullPhone;
-      showDev('dev-code-login', d.dev_code ? '🔑 Dev-код: ' + d.dev_code : '');
-      showErr('err-code-login','');
-      document.getElementById('login-code').value = '';
-      showScreen('sc-code-login');
-      setTimeout(() => document.getElementById('login-code').focus(), 200);
-    } else { showErr('err-phone', d.error||'Ошибка'); }
+      document.getElementById('code-login-title').textContent=_fullPhone;
+      showDev('dev-code-login',d.dev_code?'🔑 Dev-код: '+d.dev_code:'');
+      showErr('err-code-login',''); document.getElementById('login-code').value='';
+      showScreen('sc-code-login'); setTimeout(()=>document.getElementById('login-code').focus(),200);
+    } else { showErr('err-phone',d.error||'Ошибка'); }
   } catch(e) { showErr('err-phone','Ошибка соединения'); }
 }
 
@@ -561,79 +452,56 @@ async function requestLoginCode() {
 async function doLogin() {
   showErr('err-code-login','');
   const code = document.getElementById('login-code').value.trim();
-  if (!code || code.length < 4) { showErr('err-code-login','Введите код'); return; }
-  busy('btn-login', true, 'Вхожу…');
+  if (!code||code.length<4) { showErr('err-code-login','Введите код'); return; }
+  busy('btn-login',true,'Вхожу…');
   try {
-    const r = await fetch('/login_step2', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({phone: _fullPhone, code}), credentials:'same-origin',
-    });
+    const r = await fetch('/login_step2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:_fullPhone,code}),credentials:'same-origin'});
     const d = await r.json();
     if (d.success) {
-      busy('btn-login', true, '✓');
-      location.href = d.redirect || '/';
-    } else {
-      showErr('err-code-login', d.error || 'Неверный код');
-      busy('btn-login', false, 'Войти');
-    }
-  } catch(e) {
-    showErr('err-code-login','Ошибка соединения');
-    busy('btn-login', false, 'Войти');
-  }
+      busy('btn-login',true,'✓ Входим...');
+      await safeRedirect(d.redirect||'/');  // ← ФИКС: ждём сессию
+    } else { showErr('err-code-login',d.error||'Неверный код'); busy('btn-login',false,'Войти'); }
+  } catch(e) { showErr('err-code-login','Ошибка соединения'); busy('btn-login',false,'Войти'); }
 }
 
-// ── 3: РЕГИСТРАЦИЯ - данные ──
+// ── 3: РЕГИСТРАЦИЯ шаг 1 ──
 async function doRegStep1() {
   showErr('err-reg-info','');
-  const name  = document.getElementById('r-name').value.trim();
-  const uname = document.getElementById('r-un').value.trim();
-  if (!name)           { showErr('err-reg-info','Введите имя'); return; }
-  if (uname.length<4)  { showErr('err-reg-info','Юзернейм минимум 4 символа'); return; }
+  const name=document.getElementById('r-name').value.trim();
+  const uname=document.getElementById('r-un').value.trim();
+  if (!name) { showErr('err-reg-info','Введите имя'); return; }
+  if (uname.length<4) { showErr('err-reg-info','Юзернейм минимум 4 символа'); return; }
   if (!/^[a-zA-Z][a-zA-Z0-9_]+$/.test(uname)) { showErr('err-reg-info','Некорректный юзернейм'); return; }
-  busy('btn-reg-info', true, 'Отправляю…');
+  busy('btn-reg-info',true,'Отправляю…');
   try {
-    const r = await fetch('/register_step1', {
-      method:'POST',
-      body: new URLSearchParams({phone: _fullPhone, name, username: uname}),
-      credentials:'same-origin',
-    });
+    // ФИКС: JSON вместо URLSearchParams — сервер ожидает JSON
+    const r = await fetch('/register_step1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:_fullPhone,name,username:uname}),credentials:'same-origin'});
     const d = await r.json();
     if (d.success) {
-      document.getElementById('code-reg-title').textContent = _fullPhone;
-      showDev('dev-code-reg', d.dev_code ? '🔑 Dev-код: ' + d.dev_code : '');
-      showErr('err-code-reg','');
-      document.getElementById('reg-code').value = '';
-      showScreen('sc-code-reg');
-      setTimeout(() => document.getElementById('reg-code').focus(), 200);
-    } else { showErr('err-reg-info', d.error||'Ошибка'); }
+      document.getElementById('code-reg-title').textContent=_fullPhone;
+      showDev('dev-code-reg',d.dev_code?'🔑 Dev-код: '+d.dev_code:'');
+      showErr('err-code-reg',''); document.getElementById('reg-code').value='';
+      showScreen('sc-code-reg'); setTimeout(()=>document.getElementById('reg-code').focus(),200);
+    } else { showErr('err-reg-info',d.error||'Ошибка'); }
   } catch(e) { showErr('err-reg-info','Ошибка соединения'); }
-  busy('btn-reg-info', false, 'Получить код →');
+  busy('btn-reg-info',false,'Получить код →');
 }
 
-// ── 4: РЕГИСТРАЦИЯ - код ──
+// ── 4: РЕГИСТРАЦИЯ шаг 2 ──
 async function doRegStep2() {
   showErr('err-code-reg','');
   const code = document.getElementById('reg-code').value.trim();
   if (!code) { showErr('err-code-reg','Введите код'); return; }
-  busy('btn-reg-code', true, 'Создаю аккаунт…');
+  busy('btn-reg-code',true,'Создаю аккаунт…');
   try {
-    const r = await fetch('/register_step2', {
-      method:'POST',
-      body: new URLSearchParams({phone: _fullPhone, code}),
-      credentials:'same-origin',
-    });
+    // ФИКС: JSON вместо URLSearchParams
+    const r = await fetch('/register_step2',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:_fullPhone,code}),credentials:'same-origin'});
     const d = await r.json();
     if (d.success) {
-      busy('btn-reg-code', true, '✓ Готово!');
-      location.href = d.redirect || '/';
-    } else {
-      showErr('err-code-reg', d.error||'Неверный код');
-      busy('btn-reg-code', false, 'Создать аккаунт');
-    }
-  } catch(e) {
-    showErr('err-code-reg','Ошибка соединения');
-    busy('btn-reg-code', false, 'Создать аккаунт');
-  }
+      busy('btn-reg-code',true,'✓ Аккаунт создан...');
+      await safeRedirect(d.redirect||'/');  // ← ФИКС: ждём сессию
+    } else { showErr('err-code-reg',d.error||'Неверный код'); busy('btn-reg-code',false,'Создать аккаунт'); }
+  } catch(e) { showErr('err-code-reg','Ошибка соединения'); busy('btn-reg-code',false,'Создать аккаунт'); }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
