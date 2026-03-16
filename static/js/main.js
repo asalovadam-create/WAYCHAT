@@ -534,22 +534,36 @@ async function init() {
     // Нет пользователя — пробуем API перед редиректом
     if (!currentUser || !currentUser.id || currentUser.id <= 0) {
         console.warn('WayChat: no valid user, checking /api/me');
-        try {
-            var resp = await fetch('/api/me', {credentials:'include'});
-            if (resp.ok) {
-                var apiUser = await resp.json();
-                if (apiUser && apiUser.id > 0) {
-                    Object.assign(currentUser, apiUser);
-                    try { localStorage.setItem('waychat_user_cache', JSON.stringify(apiUser)); } catch(e) {}
-                } else {
-                    window.location.href = '/login'; return;
+        // ФИКС: небольшая задержка для Safari/iOS — cookie может не успеть
+        // установиться сразу после регистрации (race condition)
+        await new Promise(function(res){ setTimeout(res, 120); });
+        var _apiMeOk = false;
+        for (var _retry = 0; _retry < 3; _retry++) {
+            try {
+                var resp = await fetch('/api/me', {credentials:'include', cache:'no-store'});
+                if (resp.ok) {
+                    var apiUser = await resp.json();
+                    if (apiUser && apiUser.id > 0) {
+                        Object.assign(currentUser, apiUser);
+                        try { localStorage.setItem('waychat_user_cache', JSON.stringify(apiUser)); } catch(e) {}
+                        _apiMeOk = true;
+                        break;
+                    }
+                } else if (resp.status === 401 || resp.status === 403) {
+                    // Точно не авторизован — не ретраим
+                    break;
                 }
-            } else {
-                window.location.href = '/login'; return;
+                // 5xx или сеть — ретраим с задержкой
+                await new Promise(function(res){ setTimeout(res, 400 * (_retry + 1)); });
+            } catch(e) {
+                // Нет сети — ретраим
+                await new Promise(function(res){ setTimeout(res, 400 * (_retry + 1)); });
             }
-        } catch(e) {
-            // Нет сети — рендерим из кэша если есть хоть что-то
-            if (!currentUser || !currentUser.id) {
+        }
+        if (!_apiMeOk) {
+            // Последний шанс — кэш localStorage (оффлайн-режим)
+            if (!currentUser || !currentUser.id || currentUser.id <= 0) {
+                console.warn('WayChat: not authenticated, redirect to /login');
                 window.location.href = '/login'; return;
             }
         }
@@ -1698,8 +1712,18 @@ body {
 `;
     } catch(e) {
         console.error("WayChat: renderApp error", e);
-        var r=document.getElementById("root"); if(r) r.innerHTML='<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-direction:column;gap:12px"><div>🔄</div><div style="opacity:.5">Загрузка...</div></div>';
-        setTimeout(function(){location.reload();},3000);
+        // Принудительно скрываем splash — иначе останется чёрный экран
+        var sp = document.getElementById('splash');
+        if (sp) { sp.style.opacity='0'; sp.style.pointerEvents='none'; setTimeout(function(){if(sp&&sp.parentNode)sp.parentNode.removeChild(sp);},300); }
+        var r = document.getElementById("root");
+        if (r) r.innerHTML = '<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;flex-direction:column;gap:16px;padding:24px;text-align:center">'
+            + '<div style="font-size:40px">😵</div>'
+            + '<div style="font-size:17px;font-weight:700">Ошибка загрузки</div>'
+            + '<div style="font-size:13px;opacity:.5;max-width:280px">Нажмите кнопку ниже чтобы обновить страницу</div>'
+            + '<button onclick="location.reload()" style="margin-top:8px;padding:13px 32px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Обновить</button>'
+            + '</div>';
+        // Авто-перезагрузка через 5 сек
+        setTimeout(function(){ location.reload(); }, 5000);
     }
 }
 
