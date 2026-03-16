@@ -276,7 +276,6 @@ const currentUser = Object.assign({
     id: 0, name: 'Пользователь', username: 'user',
     avatar: '/static/default_avatar.png', bio: '', phone: ''
 }, window.currentUser || {});
-
 // WebRTC конфиг
 const rtcConfig = {
     iceServers: window.ICE_SERVERS || [
@@ -502,50 +501,55 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    // Берём currentUser из window (Flask установил синхронно в index.html)
-    // localStorage может быть заблокирован — это не критично
+    // 1. Профиль из кэша
     try {
-        var _c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-        if (_c) { var _p = JSON.parse(_c); if (_p && _p.id > 0) Object.assign(currentUser, _p); }
-    } catch(e) {}
+        const cache = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
+        if (cache) Object.assign(currentUser, JSON.parse(cache));
+    } catch(e){}
 
     applyTheme(activeTheme);
     renderApp();
+    applyTheme(activeTheme);
     updateAllAvatarUI();
     setupGlobalGestures();
     setupChatListDelegation();
+    requestAnimationFrame(() => setupMsgDelegation());
 
-    // Чаты из кэша — мгновенно
+    // 2. Чаты из localStorage мгновенно
     try {
-        var _ch = localStorage.getItem('waychat_chats_cache');
-        if (_ch) {
-            var _parsed = JSON.parse(_ch);
-            if (Array.isArray(_parsed) && _parsed.length > 0) {
-                recentChats = _parsed;
-                renderChatList(_parsed);
+        const cachedChats = localStorage.getItem('waychat_chats_cache');
+        if (cachedChats) {
+            const parsed = JSON.parse(cachedChats);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                recentChats = parsed;
+                renderChatList(parsed);
             }
         }
     } catch(e) {}
 
-    // Socket + данные
+    // 3. Socket + данные
     initSocket();
-    setTimeout(function() { if (!wsConnected && Date.now() - _lastChatsLoad > 2000) loadChats(true); }, 2500);
-    setTimeout(syncProfileData, 1000);
-    setTimeout(_updatePermsSummary, 2000);
-    setTimeout(initPushNotifications, 1500);
+    setTimeout(() => {
+        if (!wsConnected && Date.now() - _lastChatsLoad > 2000) loadChats(true);
+    }, 2500);
+    setTimeout(syncProfileData, 500);
+    setTimeout(_updatePermsSummary, 1000);
+    setTimeout(initPushNotifications, 800);
 
-    var _isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    const _isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     if (_isPWA && 'Notification' in window && Notification.permission === 'default') {
-        setTimeout(function() { Notification.requestPermission().then(function(p) { if (p === 'granted') initPushNotifications(); }); }, 1500);
+        setTimeout(() => {
+            Notification.requestPermission().then(p => {
+                if (p === 'granted') initPushNotifications();
+            });
+        }, 1500);
     }
 
-    document.addEventListener('visibilitychange', function() {
+    document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
-            requestAnimationFrame(function() {
-                var now = Date.now();
-                if (now - _lastChatsLoad > 30000) loadChats();
-                if (currentTab === 'moments' && now - momentsLastLoad > 60000) loadMoments();
-            });
+            const now = Date.now();
+            if (now - _lastChatsLoad > 30000) loadChats();
+            if (currentTab === 'moments' && now - momentsLastLoad > 60000) loadMoments();
         }
     });
 }
@@ -7112,7 +7116,7 @@ async function showGroupInfo() {
             // Кнопки управления (появляются при нажатии)
             const actionBtns = !isMe && iAmAdmin ? `
                 <div style="display:flex;gap:8px;margin-top:0;align-items:center">
-                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')"
+                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')" 
                         style="padding:6px 12px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:10px;color:#f87171;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
                         Исключить
                     </button>` : ''}
