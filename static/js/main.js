@@ -1,3 +1,24 @@
+// ══ ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК — показывает что сломалось ══
+window.onerror = function(msg, src, line, col, err) {
+    console.error('[WC GLOBAL ERROR]', msg, 'at', src, line+':'+col);
+    // Показываем на чёрном экране
+    var existing = document.getElementById('wc-err-overlay');
+    if (existing) return false;
+    var d = document.createElement('div');
+    d.id = 'wc-err-overlay';
+    d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:9999999;background:rgba(17,0,0,.96);color:white;padding:14px 16px;font-family:monospace;font-size:11px;border-top:2px solid #ef4444;max-height:40vh;overflow:auto';
+    d.innerHTML = '<div style="color:#f87171;font-weight:700;margin-bottom:4px">❌ JS Error: ' + msg + '</div>'
+        + '<div style="color:#fbbf24">File: ' + src.split('/').pop() + ' Line: ' + line + ':' + col + '</div>'
+        + (err && err.stack ? '<pre style="color:#94a3b8;font-size:10px;margin-top:6px;white-space:pre-wrap">' + err.stack + '</pre>' : '')
+        + '<button onclick="this.parentNode.remove()" style="margin-top:8px;padding:6px 12px;background:#ef4444;color:white;border:none;border-radius:6px;font-size:11px;cursor:pointer">Закрыть</button>';
+    document.body.appendChild(d);
+    return false;
+};
+window.onunhandledrejection = function(e) {
+    console.error('[WC UNHANDLED PROMISE]', e.reason);
+    window.onerror('Unhandled Promise: ' + (e.reason?.message || e.reason), 'promise', 0, 0, e.reason);
+};
+
 /**
  * ╔══════════════════════════════════════════════════════════════╗
  * ║          WAYCHAT ULTIMATE ENGINE 2026                        ║
@@ -533,13 +554,29 @@ async function init() {
 
     // 2. Рендерим приложение
     applyTheme(activeTheme);
-    renderApp();
+
+    try {
+        console.log('[WC] calling renderApp...');
+        renderApp();
+        console.log('[WC] renderApp done. #app exists:', !!document.getElementById('app'));
+        console.log('[WC] #root children:', document.getElementById('root')?.children.length);
+    } catch(e) {
+        console.error('[WC] renderApp CRASHED:', e.message, e.stack);
+        document.body.innerHTML = '<div style="position:fixed;inset:0;background:#111;color:white;padding:20px;font-family:monospace;font-size:13px;overflow:auto;z-index:999999">'
+            + '<div style="color:#f87171;font-size:16px;font-weight:700;margin-bottom:12px">❌ WayChat renderApp Error</div>'
+            + '<div style="color:#fbbf24">' + e.message + '</div>'
+            + '<pre style="margin-top:12px;color:#94a3b8;font-size:11px;white-space:pre-wrap">' + (e.stack||'') + '</pre>'
+            + '<button onclick="location.reload()" style="margin-top:16px;padding:10px 20px;background:#10b981;color:#000;border:none;border-radius:8px;font-size:14px;cursor:pointer">Перезагрузить</button>'
+            + '</div>';
+        return;
+    }
+
     updateAllAvatarUI();
     setupGlobalGestures();
 
     // 3. Делегирование — после renderApp (DOM уже создан)
-    setupChatListDelegation();
-    requestAnimationFrame(() => setupMsgDelegation());
+    try { setupChatListDelegation(); } catch(e) { console.warn('[WC] setupChatListDelegation error:', e.message); }
+    requestAnimationFrame(() => { try { setupMsgDelegation(); } catch(e) {} });
     setTimeout(_initStoriesPullToRefresh, 500);
     // Загружаем моменты сразу — нужно для мини-кружков на iOS
     (function() {
@@ -763,10 +800,10 @@ function renderApp() {
         var rootEl = document.getElementById('root');
         if (!rootEl) {
             console.error('WayChat: #root not found!');
-            document.body.innerHTML = '<div style="color:white;padding:40px;background:#111;min-height:100vh">Error: #root missing</div>';
+            document.body.innerHTML = '<div style="color:red;padding:40px;font-size:18px">FATAL: #root missing</div>';
             return;
         }
-        console.log('WayChat: renderApp starting, user:', window.currentUser?.id);
+        console.log('[WC] renderApp start, user.id=' + (window.currentUser && window.currentUser.id));
         rootEl.innerHTML = `
 <style>
 :root {
@@ -1675,9 +1712,15 @@ body {
 <div class="swipe-indicator" id="swipe-indicator"></div>
 `;
     } catch(e) {
-        console.error("WayChat: renderApp error", e);
-        var r=document.getElementById("root"); if(r) r.innerHTML='<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-direction:column;gap:12px"><div>🔄</div><div style="opacity:.5">Загрузка...</div></div>';
-        setTimeout(function(){location.reload();},3000);
+        console.error("[WC] renderApp innerHTML CRASHED:", e.message);
+        console.error(e.stack);
+        var r = document.getElementById("root") || document.body;
+        r.innerHTML = '<div style="position:fixed;inset:0;background:#0a0a0f;color:white;padding:20px;font-family:monospace;font-size:12px;overflow:auto;z-index:999999">'
+            + '<div style="color:#f87171;font-size:15px;font-weight:700;margin-bottom:8px">&#10060; renderApp Error</div>'
+            + '<div style="color:#fbbf24;word-break:break-all;margin-bottom:8px">' + (e.message||'unknown') + '</div>'
+            + '<pre style="color:#94a3b8;font-size:10px;background:#1e293b;padding:10px;border-radius:6px;overflow:auto;white-space:pre-wrap">' + (e.stack||'no stack') + '</pre>'
+            + '<button onclick="location.reload()" style="margin-top:12px;padding:10px 20px;background:#10b981;color:#000;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">Reload</button>'
+            + '</div>';
     }
 }
 
