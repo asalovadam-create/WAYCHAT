@@ -1146,13 +1146,20 @@ def verify_code():
         u.is_online  = True
         u.last_seen  = datetime.utcnow()
         db.session.commit()
-        u.invalidate_cache()
-        broadcast_status(u.id, True)
-
+        try:
+            u.invalidate_cache()
+        except Exception:
+            pass
+        try:
+            broadcast_status(u.id, True)
+        except Exception:
+            pass
+        app.logger.info(f'[VERIFY_CODE] Login OK user_id={u.id} phone={phone}')
         return jsonify({'success': True, 'redirect': url_for('index')})
 
     except Exception as e:
-        app.logger.error(f'verify_code: {e}')
+        app.logger.error(f'[VERIFY_CODE] Exception: {e}', exc_info=True)
+        db.session.rollback()
         return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
 
 
@@ -1242,23 +1249,24 @@ def register_step2_page():
             reg_ip        = ip_addr,
             last_ip       = ip_addr,
         )
-        u.is_online = True
-        u.last_seen = datetime.utcnow()
         db.session.add(u)
         db.session.commit()
         _pending_registrations.pop(phone, None)
+        u.is_online = True
+        u.last_seen = datetime.utcnow()
+        db.session.commit()
         session.permanent = True
         login_user(u, remember=True)
-        # Второй коммит после login_user чтобы сессия Flask-Login синхронизировалась
-        db.session.commit()
         try:
             u.invalidate_cache()
         except Exception:
             pass
+        app.logger.info(f'[REGISTER_STEP2] New user id={u.id} phone={phone}')
         return jsonify({'success': True, 'redirect': url_for('index')})
 
     except Exception as e:
-        app.logger.error(f'register_step2 error: {e}')
+        app.logger.error(f'[REGISTER_STEP2] Exception: {e}', exc_info=True)
+        db.session.rollback()
         return jsonify({'success': False, 'error': f'Ошибка сервера: {str(e)}'}), 500
 
 # ══════════════════════════════════════════════════════════
@@ -1392,15 +1400,27 @@ def logout():
 #  ГЛАВНАЯ
 # ══════════════════════════════════════════════════════════
 @app.route('/')
-@login_required
 def index():
-    # Читаем свежий объект из БД, чтобы избежать DetachedInstanceError
-    # при обращении к атрибутам current_user в Jinja2 шаблоне
+    # ── Ручная проверка авторизации с детальным логом ──
+    # (не используем @login_required чтобы видеть причину редиректа)
+    if not current_user.is_authenticated:
+        app.logger.warning(f'[INDEX] Not authenticated → redirect /login | '
+                           f'IP={request.environ.get("HTTP_X_FORWARDED_FOR", request.remote_addr)} '
+                           f'UA={request.headers.get("User-Agent","?")[:60]}')
+        return redirect(url_for('login'))
+
     try:
         uid = current_user.id
         u = db.session.get(User, uid)
         if not u:
+            app.logger.error(f'[INDEX] User id={uid} not found in DB → redirect /login')
             return redirect(url_for('login'))
+
+        if getattr(u, 'is_blocked', False):
+            app.logger.warning(f'[INDEX] User id={uid} is_blocked=True → redirect /login')
+            logout_user()
+            return redirect(url_for('login'))
+
         user_data = {
             'id':            u.id,
             'name':          u.name or '',
@@ -1409,14 +1429,16 @@ def index():
             'phone':         u.phone or '',
             'bio':           u.bio or '',
             'is_verified':   bool(u.is_verified) if hasattr(u, 'is_verified') else False,
-            'verified_type': u.verified_type or '' if hasattr(u, 'verified_type') else '',
+            'verified_type': (u.verified_type or '') if hasattr(u, 'verified_type') else '',
         }
+        app.logger.info(f'[INDEX] OK user_id={uid} name={u.name!r}')
     except Exception as e:
-        app.logger.error(f'index user load error: {e}')
+        app.logger.error(f'[INDEX] Exception: {e}', exc_info=True)
         # Fallback — пробуем базовые поля напрямую
         try:
+            uid_fb = current_user.id
             user_data = {
-                'id':            current_user.id,
+                'id':            uid_fb,
                 'name':          getattr(current_user, 'name', '') or '',
                 'username':      getattr(current_user, 'username', '') or '',
                 'avatar':        '',
@@ -1425,7 +1447,9 @@ def index():
                 'is_verified':   False,
                 'verified_type': '',
             }
-        except Exception:
+            app.logger.warning(f'[INDEX] Using fallback user_data for id={uid_fb}')
+        except Exception as e2:
+            app.logger.error(f'[INDEX] Fallback failed: {e2}')
             return redirect(url_for('login'))
     return render_template('index.html', user_data=user_data)
 
@@ -1455,14 +1479,16 @@ def get_current_user_route():
 
 
 @app.route('/api/me')
-@login_required
 def api_me():
-    """Возвращает данные текущего пользователя — используется для auth check"""
+    """Возвращает данные текущего пользователя — используется для auth check в JS"""
+    if not current_user.is_authenticated:
+        app.logger.warning(f'[API_ME] 401 not authenticated')
+        return jsonify({'error': 'Not authenticated'}), 401
     try:
-        # Читаем свежий объект из БД — защита от DetachedInstanceError
         u = db.session.get(User, current_user.id)
         if not u:
-            return jsonify({'error': 'Not found'}), 401
+            app.logger.error(f'[API_ME] user_id={current_user.id} not in DB')
+            return jsonify({'error': 'User not found'}), 401
         return jsonify({
             'id':            u.id,
             'name':          u.name or '',
@@ -1470,12 +1496,12 @@ def api_me():
             'avatar':        u.avatar or '',
             'bio':           u.bio or '',
             'is_verified':   bool(u.is_verified) if hasattr(u, 'is_verified') else False,
-            'verified_type': u.verified_type or '' if hasattr(u, 'verified_type') else '',
+            'verified_type': (u.verified_type or '') if hasattr(u, 'verified_type') else '',
             'phone':         u.phone or '',
         })
     except Exception as e:
-        app.logger.error(f'api_me error: {e}')
-        return jsonify({'error': 'Session error'}), 500
+        app.logger.error(f'[API_ME] Exception: {e}', exc_info=True)
+        return jsonify({'error': 'Server error'}), 500
 
 
 @app.route('/get_user_profile/<int:user_id>')
