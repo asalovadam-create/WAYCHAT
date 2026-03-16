@@ -528,56 +528,95 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    // 1. currentUser — только из window (установлен Flask через Jinja2 в index.html)
-    // localStorage может быть заблокирован браузером (Tracking Prevention)
+    // ══ ДИАГНОСТИКА — показываем состояние прямо на экране ══
+    function _dbg(msg, color) {
+        color = color || '#10b981';
+        var d = document.getElementById('wc-dbg');
+        if (!d) {
+            d = document.createElement('div');
+            d.id = 'wc-dbg';
+            d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999999;background:rgba(0,0,0,.92);color:white;font-family:monospace;font-size:12px;padding:8px 12px;max-height:50vh;overflow:auto';
+            document.body.appendChild(d);
+        }
+        var line = document.createElement('div');
+        line.style.color = color;
+        line.textContent = '[' + new Date().toISOString().slice(11,23) + '] ' + msg;
+        d.appendChild(line);
+        console.log('[WC]', msg);
+    }
+
+    _dbg('init() started', '#60a5fa');
+    _dbg('window.currentUser = ' + JSON.stringify(window.currentUser), '#fbbf24');
+    _dbg('document.readyState = ' + document.readyState, '#a78bfa');
+    _dbg('root exists = ' + !!document.getElementById('root'), '#34d399');
+
+    // 1. currentUser из window (Flask Jinja2)
     if (window.currentUser && window.currentUser.id > 0) {
         Object.assign(currentUser, window.currentUser);
+        _dbg('currentUser from window: id=' + currentUser.id + ' name=' + currentUser.name, '#10b981');
+    } else {
+        _dbg('window.currentUser is null/empty — trying /api/me', '#f87171');
     }
 
-    // Если window.currentUser не пришёл от Flask — пробуем /api/me
+    // Если нет — пробуем /api/me
     if (!currentUser.id || currentUser.id <= 0) {
         try {
+            _dbg('fetching /api/me...', '#fbbf24');
             var _r = await fetch('/api/me', { credentials: 'include' });
+            _dbg('/api/me status = ' + _r.status, _r.ok ? '#10b981' : '#f87171');
             if (_r.ok) {
                 var _u = await _r.json();
+                _dbg('/api/me response = ' + JSON.stringify(_u).slice(0,80), '#60a5fa');
                 if (_u && _u.id > 0) Object.assign(currentUser, _u);
             }
-        } catch(e) { console.warn('[WC] /api/me failed:', e.message); }
+        } catch(e) {
+            _dbg('/api/me ERROR: ' + e.message, '#f87171');
+        }
     }
 
-    // Всё равно нет — редирект на логин
+    // Нет пользователя — редирект
     if (!currentUser.id || currentUser.id <= 0) {
-        console.warn('[WC] No user found, redirecting to /login');
-        window.location.href = '/login';
+        _dbg('NO USER — redirecting to /login', '#f87171');
+        setTimeout(function() { window.location.href = '/login'; }, 3000);
         return;
     }
 
-    console.log('[WC] init: user.id =', currentUser.id, 'name =', currentUser.name);
+    _dbg('User OK: id=' + currentUser.id + ' name=' + currentUser.name, '#10b981');
 
     // 2. Рендерим приложение
     applyTheme(activeTheme);
+    _dbg('applyTheme done, calling renderApp...', '#60a5fa');
 
     try {
-        console.log('[WC] calling renderApp...');
         renderApp();
-        var appEl = document.getElementById('app');
-        var rootEl2 = document.getElementById('root');
-        console.log('[WC] renderApp done.');
-        console.log('[WC] #app exists:', !!appEl);
-        console.log('[WC] #root children:', rootEl2 ? rootEl2.children.length : 'no root');
-        if (appEl) {
-            var rect = appEl.getBoundingClientRect();
-            console.log('[WC] #app rect:', JSON.stringify({w:Math.round(rect.width), h:Math.round(rect.height), top:Math.round(rect.top)}));
-            var style = window.getComputedStyle(appEl);
-            console.log('[WC] #app computed: display='+style.display+' visibility='+style.visibility+' opacity='+style.opacity+' height='+style.height);
+        _dbg('renderApp() completed!', '#10b981');
+
+        var _appEl = document.getElementById('app');
+        var _rootEl = document.getElementById('root');
+        _dbg('root.children=' + (_rootEl ? _rootEl.children.length : 'NULL') + ' #app=' + !!_appEl, '#a78bfa');
+
+        if (_appEl) {
+            var _st = window.getComputedStyle(_appEl);
+            _dbg('#app: display='+_st.display+' height='+_st.height+' visibility='+_st.visibility, '#fbbf24');
+            // Скрываем диагностику через 4 сек если всё ок
+            setTimeout(function() {
+                var d = document.getElementById('wc-dbg');
+                if (d) d.style.opacity = '0';
+                setTimeout(function() { var d2 = document.getElementById('wc-dbg'); if(d2) d2.remove(); }, 500);
+            }, 4000);
+        } else {
+            _dbg('ERROR: #app not found after renderApp!', '#f87171');
         }
     } catch(e) {
-        console.error('[WC] renderApp CRASHED:', e.message, e.stack);
-        document.body.innerHTML = '<div style="position:fixed;inset:0;background:#111;color:white;padding:20px;font-family:monospace;font-size:13px;overflow:auto;z-index:999999">'
-            + '<div style="color:#f87171;font-size:16px;font-weight:700;margin-bottom:12px">❌ WayChat renderApp Error</div>'
-            + '<div style="color:#fbbf24">' + e.message + '</div>'
-            + '<pre style="margin-top:12px;color:#94a3b8;font-size:11px;white-space:pre-wrap">' + (e.stack||'') + '</pre>'
-            + '<button onclick="location.reload()" style="margin-top:16px;padding:10px 20px;background:#10b981;color:#000;border:none;border-radius:8px;font-size:14px;cursor:pointer">Перезагрузить</button>'
+        _dbg('renderApp CRASHED: ' + e.message, '#f87171');
+        _dbg(e.stack || 'no stack trace', '#ef4444');
+        // Показываем ошибку крупно
+        var _r = document.getElementById('root') || document.body;
+        _r.innerHTML = '<div style="position:fixed;inset:0;background:#0a0a0f;color:white;padding:20px;font-family:monospace;font-size:12px;overflow:auto;z-index:999999">'
+            + '<div style="color:#f87171;font-size:15px;font-weight:700;margin-bottom:8px">renderApp CRASH</div>'
+            + '<div style="color:#fbbf24;word-break:break-all;margin-bottom:8px">' + (e.message||'?') + '</div>'
+            + '<pre style="color:#94a3b8;font-size:10px;background:#1e293b;padding:10px;border-radius:6px;overflow:auto;white-space:pre-wrap">' + (e.stack||'') + '</pre>'
+            + '<button onclick="location.reload()" style="margin-top:12px;padding:10px 20px;background:#10b981;color:#000;border:none;border-radius:8px;cursor:pointer">Reload</button>'
             + '</div>';
         return;
     }
