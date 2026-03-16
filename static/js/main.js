@@ -724,28 +724,28 @@ function getVerifyBadge(user, size=14) {
     return `<span title="${b.label}" style="font-size:${size}px;vertical-align:middle;margin-left:3px;cursor:default">${b.emoji}</span>`;
 }
 
-function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
-    if (!user) return `<div class="${sizeClass} bg-zinc-800 rounded-full"></div>`;
-    // null как строка "null" или объект null — оба заменяем пустой строкой
-    const avatar = (!user.avatar || user.avatar === 'null' || user.avatar === 'undefined') ? '' : user.avatar;
-    const name   = user.name || user.username || '?';
-    const cacheKey = `${user.id || name}_${avatar}_${sizeClass}`;
-    if (!forceRefresh && avatarHtmlCache[cacheKey]) return avatarHtmlCache[cacheKey];
+function getAvatarHtml(user, sizeClass, forceRefresh) {
+    sizeClass = sizeClass || 'w-12 h-12';
+    if (!user) return '<div class="' + sizeClass + '" style="background:#27272a;border-radius:50%;display:block"></div>';
+    var avatar = (!user.avatar || user.avatar === 'null' || user.avatar === 'undefined') ? '' : String(user.avatar);
+    var name   = String(user.name || user.username || '?');
+    var uid    = String(user.id || '');
+    var cacheKey = uid + '_' + sizeClass;
+    if (!forceRefresh && avatarHtmlCache && avatarHtmlCache[cacheKey]) return avatarHtmlCache[cacheKey];
 
-    let html;
-    if (avatar.startsWith('emoji:')) {
-        const emoji = avatar.split(':')[1];
-        const fontSize = sizeClass.includes('w-28') ? 'text-4xl' : sizeClass.includes('w-16') ? 'text-3xl' : sizeClass.includes('w-14') ? 'text-2xl' : sizeClass.includes('w-10') ? 'text-xl' : 'text-lg';
-        html = `<div class="${sizeClass} bg-zinc-900/80 rounded-full flex items-center justify-center ${fontSize} shadow-inner border border-white/5" data-uid="${user.id||''}">${emoji}</div>`;
-    } else if (avatar && !avatar.includes('default_avatar')) {
-        const src = forceRefresh ? avatar + '?t=' + Date.now() : avatar;
-        html = `<img src="${src}" class="${sizeClass} rounded-full object-cover shadow-md border border-white/10" loading="lazy" data-uid="${user.id||''}" onerror="this.outerHTML=getInitialAvatar('${name.replace(/'/g,"\\'")}','${sizeClass}','${user.id||''}')">`;
+    var html;
+    if (avatar && avatar.indexOf('emoji:') === 0) {
+        html = '<div class="' + sizeClass + '" style="background:#18181b;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.1em" data-uid="' + uid + '">' + avatar.slice(6) + '</div>';
+    } else if (avatar && avatar.length > 4 && avatar.indexOf('default_avatar') < 0) {
+        var src = forceRefresh ? avatar + '?t=' + Date.now() : avatar;
+        html = '<img src="' + src + '" class="' + sizeClass + '" style="border-radius:50%;object-fit:cover;display:block;width:100%;height:100%" loading="lazy" data-uid="' + uid + '" onerror="this.style.display=&quot;none&quot;">';
     } else {
-        html = getInitialAvatar(name, sizeClass, user.id);
+        html = getInitialAvatar(name, sizeClass, uid);
     }
-    avatarHtmlCache[cacheKey] = html;
+    try { if (avatarHtmlCache) avatarHtmlCache[cacheKey] = html; } catch(e) {}
     return html;
 }
+
 
 function getInitialAvatar(name, sizeClass, uid = '') {
     const colors = ['#ef4444','#3b82f6','#10b981','#f97316','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
@@ -853,6 +853,9 @@ function renderApp() {
             document.body.innerHTML = '<div style="color:red;padding:40px;font-size:18px">FATAL: #root missing</div>';
             return;
         }
+        // Делаем currentUser безопасным для шаблона
+        if (currentUser.name) currentUser.name = String(currentUser.name).replace(/[<>"'`]/g, '');
+        if (currentUser.username) currentUser.username = String(currentUser.username).replace(/[<>"'`]/g, '');
         console.log('[WC] renderApp start, user.id=' + (window.currentUser && window.currentUser.id));
         rootEl.innerHTML = `
 <style>
