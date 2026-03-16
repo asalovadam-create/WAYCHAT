@@ -1141,24 +1141,20 @@ def verify_code():
             db.session.add(u)
             db.session.commit()
 
+        u.is_online = True
+        u.last_seen = datetime.utcnow()
+        db.session.commit()
         session.permanent = True
         login_user(u, remember=True)
-        u.is_online  = True
-        u.last_seen  = datetime.utcnow()
-        db.session.commit()
-        try:
-            u.invalidate_cache()
-        except Exception:
-            pass
-        try:
-            broadcast_status(u.id, True)
-        except Exception:
-            pass
-        app.logger.info(f'[VERIFY_CODE] Login OK user_id={u.id} phone={phone}')
+        try: u.invalidate_cache()
+        except Exception: pass
+        try: broadcast_status(u.id, True)
+        except Exception: pass
+        app.logger.info(f'[VERIFY_CODE] OK id={u.id} phone={phone}')
         return jsonify({'success': True, 'redirect': url_for('index')})
 
     except Exception as e:
-        app.logger.error(f'[VERIFY_CODE] Exception: {e}', exc_info=True)
+        app.logger.error(f'[VERIFY_CODE] exception: {e}', exc_info=True)
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
 
@@ -1179,7 +1175,11 @@ def register_step1():
     if request.method != 'POST':
         return render_template('login.html')
     try:
-        data     = request.get_json() if request.is_json else request.form
+        # login.html отправляет URLSearchParams (form-data), принимаем оба формата
+        if request.is_json:
+            data = request.get_json() or {}
+        else:
+            data = request.form
         phone    = (data.get('phone', '') or '').strip()
         name     = (data.get('name',  '') or '').strip()
         username = (data.get('username', '') or '').strip().lower().lstrip('@')
@@ -1257,15 +1257,13 @@ def register_step2_page():
         db.session.commit()
         session.permanent = True
         login_user(u, remember=True)
-        try:
-            u.invalidate_cache()
-        except Exception:
-            pass
-        app.logger.info(f'[REGISTER_STEP2] New user id={u.id} phone={phone}')
+        try: u.invalidate_cache()
+        except Exception: pass
+        app.logger.info(f'[REGISTER_STEP2] OK id={u.id} phone={phone}')
         return jsonify({'success': True, 'redirect': url_for('index')})
 
     except Exception as e:
-        app.logger.error(f'[REGISTER_STEP2] Exception: {e}', exc_info=True)
+        app.logger.error(f'[REGISTER_STEP2] exception: {e}', exc_info=True)
         db.session.rollback()
         return jsonify({'success': False, 'error': f'Ошибка сервера: {str(e)}'}), 500
 
@@ -1401,26 +1399,17 @@ def logout():
 # ══════════════════════════════════════════════════════════
 @app.route('/')
 def index():
-    # ── Ручная проверка авторизации с детальным логом ──
-    # (не используем @login_required чтобы видеть причину редиректа)
     if not current_user.is_authenticated:
-        app.logger.warning(f'[INDEX] Not authenticated → redirect /login | '
-                           f'IP={request.environ.get("HTTP_X_FORWARDED_FOR", request.remote_addr)} '
-                           f'UA={request.headers.get("User-Agent","?")[:60]}')
+        app.logger.warning(f'[INDEX] 401 not auth | UA={request.headers.get("User-Agent","?")[:80]}')
         return redirect(url_for('login'))
-
     try:
-        uid = current_user.id
-        u = db.session.get(User, uid)
+        u = db.session.get(User, current_user.id)
         if not u:
-            app.logger.error(f'[INDEX] User id={uid} not found in DB → redirect /login')
+            app.logger.error(f'[INDEX] user id={current_user.id} not in DB')
             return redirect(url_for('login'))
-
         if getattr(u, 'is_blocked', False):
-            app.logger.warning(f'[INDEX] User id={uid} is_blocked=True → redirect /login')
             logout_user()
             return redirect(url_for('login'))
-
         user_data = {
             'id':            u.id,
             'name':          u.name or '',
@@ -1428,28 +1417,21 @@ def index():
             'avatar':        u.avatar or '',
             'phone':         u.phone or '',
             'bio':           u.bio or '',
-            'is_verified':   bool(u.is_verified) if hasattr(u, 'is_verified') else False,
-            'verified_type': (u.verified_type or '') if hasattr(u, 'verified_type') else '',
+            'is_verified':   bool(getattr(u, 'is_verified', False)),
+            'verified_type': getattr(u, 'verified_type', '') or '',
         }
-        app.logger.info(f'[INDEX] OK user_id={uid} name={u.name!r}')
+        app.logger.info(f'[INDEX] OK id={u.id} name={u.name!r}')
     except Exception as e:
-        app.logger.error(f'[INDEX] Exception: {e}', exc_info=True)
-        # Fallback — пробуем базовые поля напрямую
+        app.logger.error(f'[INDEX] exception: {e}', exc_info=True)
         try:
-            uid_fb = current_user.id
             user_data = {
-                'id':            uid_fb,
-                'name':          getattr(current_user, 'name', '') or '',
-                'username':      getattr(current_user, 'username', '') or '',
-                'avatar':        '',
-                'phone':         '',
-                'bio':           '',
-                'is_verified':   False,
-                'verified_type': '',
+                'id': current_user.id,
+                'name': getattr(current_user,'name','') or '',
+                'username': getattr(current_user,'username','') or '',
+                'avatar': '', 'phone': '', 'bio': '',
+                'is_verified': False, 'verified_type': '',
             }
-            app.logger.warning(f'[INDEX] Using fallback user_data for id={uid_fb}')
-        except Exception as e2:
-            app.logger.error(f'[INDEX] Fallback failed: {e2}')
+        except Exception:
             return redirect(url_for('login'))
     return render_template('index.html', user_data=user_data)
 
@@ -1480,28 +1462,27 @@ def get_current_user_route():
 
 @app.route('/api/me')
 def api_me():
-    """Возвращает данные текущего пользователя — используется для auth check в JS"""
+    """Auth check для JS — без @login_required чтобы видеть причину 401"""
     if not current_user.is_authenticated:
-        app.logger.warning(f'[API_ME] 401 not authenticated')
-        return jsonify({'error': 'Not authenticated'}), 401
+        app.logger.warning(f'[API_ME] 401 not auth')
+        return jsonify({'error': 'not authenticated'}), 401
     try:
         u = db.session.get(User, current_user.id)
         if not u:
-            app.logger.error(f'[API_ME] user_id={current_user.id} not in DB')
-            return jsonify({'error': 'User not found'}), 401
+            return jsonify({'error': 'user not found'}), 401
         return jsonify({
             'id':            u.id,
             'name':          u.name or '',
             'username':      u.username or '',
             'avatar':        u.avatar or '',
             'bio':           u.bio or '',
-            'is_verified':   bool(u.is_verified) if hasattr(u, 'is_verified') else False,
-            'verified_type': (u.verified_type or '') if hasattr(u, 'verified_type') else '',
+            'is_verified':   bool(getattr(u,'is_verified',False)),
+            'verified_type': getattr(u,'verified_type','') or '',
             'phone':         u.phone or '',
         })
     except Exception as e:
-        app.logger.error(f'[API_ME] Exception: {e}', exc_info=True)
-        return jsonify({'error': 'Server error'}), 500
+        app.logger.error(f'[API_ME] exception: {e}', exc_info=True)
+        return jsonify({'error': 'server error'}), 500
 
 
 @app.route('/get_user_profile/<int:user_id>')
