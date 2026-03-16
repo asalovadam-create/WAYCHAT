@@ -1386,7 +1386,40 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    return render_template('index.html', currentUser=current_user)
+    # Читаем свежий объект из БД, чтобы избежать DetachedInstanceError
+    # при обращении к атрибутам current_user в Jinja2 шаблоне
+    try:
+        uid = current_user.id
+        u = db.session.get(User, uid)
+        if not u:
+            return redirect(url_for('login'))
+        user_data = {
+            'id':            u.id,
+            'name':          u.name or '',
+            'username':      u.username or '',
+            'avatar':        u.avatar or '',
+            'phone':         u.phone or '',
+            'bio':           u.bio or '',
+            'is_verified':   bool(u.is_verified) if hasattr(u, 'is_verified') else False,
+            'verified_type': u.verified_type or '' if hasattr(u, 'verified_type') else '',
+        }
+    except Exception as e:
+        app.logger.error(f'index user load error: {e}')
+        # Fallback — пробуем базовые поля напрямую
+        try:
+            user_data = {
+                'id':            current_user.id,
+                'name':          getattr(current_user, 'name', '') or '',
+                'username':      getattr(current_user, 'username', '') or '',
+                'avatar':        '',
+                'phone':         '',
+                'bio':           '',
+                'is_verified':   False,
+                'verified_type': '',
+            }
+        except Exception:
+            return redirect(url_for('login'))
+    return render_template('index.html', user_data=user_data)
 
 
 @app.route('/get_current_user')
