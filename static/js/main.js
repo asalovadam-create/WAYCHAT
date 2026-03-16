@@ -183,7 +183,6 @@ let isVideoOff        = false;
 let callStartTime     = null;
 let callTimerInterval = null;
 let recentChats       = [];
-let _lastChatsLoad    = 0;
 
 // ══ КЭШИ АВАТАРОВ ══
 let avatarHtmlCache   = {};
@@ -516,30 +515,44 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    console.log('[WC] init | window.currentUser=', JSON.stringify(window.currentUser));
+    // ── 1. currentUser уже установлен в index.html СИНХРОННО до загрузки main.js ──
     if (window.currentUser && window.currentUser.id > 0) {
         Object.assign(currentUser, window.currentUser);
     } else {
+        // Fallback: читаем кэш напрямую
         try {
-            const c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-            if (c) { const p=JSON.parse(c); if(p&&p.id>0) Object.assign(currentUser,p); }
+            const c = localStorage.getItem('waychat_user_cache')
+                   || localStorage.getItem('varto_user_cache');
+            if (c) {
+                const p = JSON.parse(c);
+                if (p && p.id > 0) Object.assign(currentUser, p);
+            }
         } catch(e) {}
     }
-    if (!currentUser || !(currentUser.id > 0)) {
-        await new Promise(r=>setTimeout(r,200));
-        var _ok=false;
-        for(var _i=0;_i<4;_i++){
-            try {
-                var _r=await fetch('/api/me',{credentials:'include',cache:'no-store'});
-                console.log('[WC] /api/me attempt',_i+1,'status=',_r.status);
-                if(_r.ok){var _u=await _r.json();if(_u&&_u.id>0){Object.assign(currentUser,_u);try{localStorage.setItem('waychat_user_cache',JSON.stringify(_u));}catch(e){}  _ok=true;break;}}
-                else if(_r.status===401||_r.status===403) break;
-            } catch(e){console.warn('[WC] /api/me err:',e);}
-            await new Promise(r=>setTimeout(r,400*(_i+1)));
+
+    // Нет пользователя — пробуем API перед редиректом
+    if (!currentUser || !currentUser.id || currentUser.id <= 0) {
+        console.warn('WayChat: no valid user, checking /api/me');
+        try {
+            var resp = await fetch('/api/me', {credentials:'include'});
+            if (resp.ok) {
+                var apiUser = await resp.json();
+                if (apiUser && apiUser.id > 0) {
+                    Object.assign(currentUser, apiUser);
+                    try { localStorage.setItem('waychat_user_cache', JSON.stringify(apiUser)); } catch(e) {}
+                } else {
+                    window.location.href = '/login'; return;
+                }
+            } else {
+                window.location.href = '/login'; return;
+            }
+        } catch(e) {
+            // Нет сети — рендерим из кэша если есть хоть что-то
+            if (!currentUser || !currentUser.id) {
+                window.location.href = '/login'; return;
+            }
         }
-        if(!_ok&&!(currentUser&&currentUser.id>0)){window.location.href='/login';return;}
     }
-    console.log('[WC] user ok id=',currentUser.id,'name=',currentUser.name);
 
     applyTheme(activeTheme);
     renderApp();
@@ -774,11 +787,7 @@ function renderApp() {
             document.body.innerHTML = '<div style="color:white;padding:40px;background:#111;min-height:100vh">Error: #root missing</div>';
             return;
         }
-        console.log('[WC] renderApp start | user:', currentUser.id, currentUser.name, '| avatar:', currentUser.avatar);
-        // Защита от null/undefined полей которые могут сломать шаблон
-        if (!currentUser.name) currentUser.name = 'Пользователь';
-        if (!currentUser.username) currentUser.username = 'user';
-        if (currentUser.bio === undefined || currentUser.bio === null) currentUser.bio = '';
+        console.log('WayChat: renderApp starting, user:', window.currentUser?.id);
         rootEl.innerHTML = `
 <style>
 :root {
@@ -1687,18 +1696,9 @@ body {
 <div class="swipe-indicator" id="swipe-indicator"></div>
 `;
     } catch(e) {
-        console.error("[WC] renderApp CRASH:", e.name, e.message, e.stack);
-        var sp = document.getElementById('splash');
-        if (sp) { sp.style.opacity='0'; sp.style.pointerEvents='none'; setTimeout(function(){if(sp&&sp.parentNode)sp.parentNode.removeChild(sp);},300); }
-        var r = document.getElementById('root');
-        var errMsg = e && e.message ? e.message : String(e);
-        if (r) r.innerHTML = '<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:24px;text-align:center;color:white">'
-            + '<div style="font-size:36px">😵</div>'
-            + '<div style="font-size:17px;font-weight:700">Ошибка загрузки</div>'
-            + '<div style="font-size:12px;color:rgba(255,255,255,.4);max-width:320px;word-break:break-all;font-family:monospace;background:rgba(255,255,255,.06);padding:10px;border-radius:10px;margin:4px 0">' + errMsg + '</div>'
-            + '<button onclick="location.reload()" style="padding:13px 32px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Обновить</button>'
-            + '</div>';
-        setTimeout(function(){ location.reload(); }, 8000);
+        console.error("WayChat: renderApp error", e);
+        var r=document.getElementById("root"); if(r) r.innerHTML='<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;font-size:16px;flex-direction:column;gap:12px"><div>🔄</div><div style="opacity:.5">Загрузка...</div></div>';
+        setTimeout(function(){location.reload();},3000);
     }
 }
 
@@ -2211,6 +2211,7 @@ function updateSettingsUI() {
 // ══════════════════════════════════════════════════════════
 //  СПИСОК ЧАТОВ
 // ══════════════════════════════════════════════════════════
+let _lastChatsLoad = 0;
 let _chatsLoading = false;
 
 async function loadChats(force = false) {
@@ -7203,7 +7204,7 @@ async function showGroupInfo() {
             // Кнопки управления (появляются при нажатии)
             const actionBtns = !isMe && iAmAdmin ? `
                 <div style="display:flex;gap:8px;margin-top:0;align-items:center">
-                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')"
+                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')" 
                         style="padding:6px 12px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:10px;color:#f87171;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
                         Исключить
                     </button>` : ''}
