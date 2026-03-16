@@ -560,8 +560,17 @@ async function init() {
     try {
         console.log('[WC] calling renderApp...');
         renderApp();
-        console.log('[WC] renderApp done. #app exists:', !!document.getElementById('app'));
-        console.log('[WC] #root children:', document.getElementById('root')?.children.length);
+        var appEl = document.getElementById('app');
+        var rootEl2 = document.getElementById('root');
+        console.log('[WC] renderApp done.');
+        console.log('[WC] #app exists:', !!appEl);
+        console.log('[WC] #root children:', rootEl2 ? rootEl2.children.length : 'no root');
+        if (appEl) {
+            var rect = appEl.getBoundingClientRect();
+            console.log('[WC] #app rect:', JSON.stringify({w:Math.round(rect.width), h:Math.round(rect.height), top:Math.round(rect.top)}));
+            var style = window.getComputedStyle(appEl);
+            console.log('[WC] #app computed: display='+style.display+' visibility='+style.visibility+' opacity='+style.opacity+' height='+style.height);
+        }
     } catch(e) {
         console.error('[WC] renderApp CRASHED:', e.message, e.stack);
         document.body.innerHTML = '<div style="position:fixed;inset:0;background:#111;color:white;padding:20px;font-family:monospace;font-size:13px;overflow:auto;z-index:999999">'
@@ -824,24 +833,22 @@ function renderApp() {
     --divider: rgba(255,255,255,0.09);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body {
+html {
     margin: 0; padding: 0;
     width: 100%;
-    height: 100%;
     background: #111113;
-    overflow: hidden;
-    /* Запрещаем overscroll на уровне html/body */
-    overscroll-behavior: none;
-    -webkit-overflow-scrolling: auto;
 }
 body {
+    margin: 0; padding: 0;
+    width: 100%;
+    min-height: 100vh;
+    background: #111113;
+    overflow: hidden;
+    overscroll-behavior: none;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     color: var(--text);
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
     -webkit-text-size-adjust: 100%;
-    text-rendering: optimizeSpeed;
-    touch-action: pan-x pan-y; /* запрещает pinch-zoom на уровне body */
 }
 .glass { background:rgba(8,8,12,0.85);backdrop-filter:blur(40px) saturate(180%);-webkit-backdrop-filter:blur(40px) saturate(180%); }
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
@@ -931,7 +938,7 @@ body {
     will-change: transform, opacity;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
-    height: 100dvh;
+    height: 100vh;
 }
 .chat-view.active { transform: translate3d(0,0,0); opacity: 1; }
 /* Swipe back — нет transition пока тянем */
@@ -1208,7 +1215,7 @@ body {
 .animate-up  { animation:slideUp 0.22s ease; }
 </style>
 
-<div id="app" style="width:100%;height:100dvh;display:flex;flex-direction:column;overflow:hidden;background:#111113;overscroll-behavior:none;touch-action:pan-x pan-y">
+<div id="app" style="width:100%;height:100vh;min-height:-webkit-fill-available;display:flex;flex-direction:column;overflow:hidden;background:#111113;overscroll-behavior:none;touch-action:pan-x pan-y">
     <div id="conn-status" class="conn-status" style="opacity:0;flex-shrink:0"></div>
     <div id="main-content" style="flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px);transform:translateZ(0)">
 
