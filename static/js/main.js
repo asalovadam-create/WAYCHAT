@@ -564,20 +564,33 @@ async function init() {
             _dbg('fetching /api/me...', '#fbbf24');
             var _r = await fetch('/api/me', { credentials: 'include' });
             _dbg('/api/me status = ' + _r.status, _r.ok ? '#10b981' : '#f87171');
+            // 401 или редирект — значит сессия слетела, идём на логин немедленно
+            if (_r.status === 401 || _r.status === 302 || _r.redirected) {
+                _dbg('NOT AUTHENTICATED — redirecting to /login NOW', '#f87171');
+                window.location.replace('/login');
+                return;
+            }
             if (_r.ok) {
-                var _u = await _r.json();
-                _dbg('/api/me response = ' + JSON.stringify(_u).slice(0,80), '#60a5fa');
-                if (_u && _u.id > 0) Object.assign(currentUser, _u);
+                var _responseText = await _r.text();
+                try {
+                    var _u = JSON.parse(_responseText);
+                    _dbg('/api/me response = ' + _responseText.slice(0,80), '#60a5fa');
+                    if (_u && _u.id > 0) Object.assign(currentUser, _u);
+                } catch(jsonErr) {
+                    _dbg('/api/me JSON parse failed — likely HTML redirect page, going to /login', '#f87171');
+                    window.location.replace('/login');
+                    return;
+                }
             }
         } catch(e) {
             _dbg('/api/me ERROR: ' + e.message, '#f87171');
         }
     }
 
-    // Нет пользователя — редирект
+    // Нет пользователя — редирект немедленно
     if (!currentUser.id || currentUser.id <= 0) {
         _dbg('NO USER — redirecting to /login', '#f87171');
-        setTimeout(function() { window.location.href = '/login'; }, 3000);
+        window.location.replace('/login');
         return;
     }
 
@@ -591,14 +604,7 @@ async function init() {
         renderApp();
         _dbg('renderApp() completed!', '#10b981');
 
-        // Проверяем что #app создался
         var _appEl = document.getElementById('app');
-        if (!_appEl) {
-            // Попробуем найти его внутри нового div
-            var _appDiv2 = rootEl.querySelector('[id="app"]');
-            _dbg('app in rootEl: ' + !!_appDiv2, _appDiv2 ? '#10b981' : '#f87171');
-        }
-        _appEl = document.getElementById('app');
         var _rootEl = document.getElementById('root');
         _dbg('root.children=' + (_rootEl ? _rootEl.children.length : 'NULL') + ' #app=' + !!_appEl, '#a78bfa');
 
@@ -864,9 +870,9 @@ function renderApp() {
         if (currentUser.name) currentUser.name = String(currentUser.name).replace(/[<>"'`]/g, '');
         if (currentUser.username) currentUser.username = String(currentUser.username).replace(/[<>"'`]/g, '');
         console.log('[WC] renderApp start, user.id=' + (window.currentUser && window.currentUser.id));
-        // Разбиваем на 2 части чтобы не падать в Edge с большим innerHTML
-        var _styleEl = document.createElement('style');
-        _styleEl.textContent = `:root {
+        rootEl.innerHTML = `
+<style>
+:root {
     --accent: #10b981;
     --glow: 0 0 20px rgba(16,185,129,0.4);
     --accent-10: rgba(16,185,129,0.1);
@@ -1261,11 +1267,10 @@ body {
 @keyframes toastIn { from{opacity:0;transform:translateY(-6px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastOut { to{opacity:0;transform:translateY(-6px) scale(0.97);} }
 .animate-msg { animation:msgIn 0.2s cubic-bezier(0.22,1,0.36,1); contain:layout; }
-.animate-up  { animation:slideUp 0.22s ease; }`;
-        rootEl.appendChild(_styleEl);
-        
-        var _appDiv = document.createElement('div');
-        _appDiv.innerHTML = `<div id="app" style="width:100%;height:100vh;min-height:-webkit-fill-available;display:flex;flex-direction:column;overflow:hidden;background:#111113;overscroll-behavior:none;touch-action:pan-x pan-y">
+.animate-up  { animation:slideUp 0.22s ease; }
+</style>
+
+<div id="app" style="width:100%;height:100vh;min-height:-webkit-fill-available;display:flex;flex-direction:column;overflow:hidden;background:#111113;overscroll-behavior:none;touch-action:pan-x pan-y">
     <div id="conn-status" class="conn-status" style="opacity:0;flex-shrink:0"></div>
     <div id="main-content" style="flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;padding-bottom:max(calc(env(safe-area-inset-bottom)+70px),80px);transform:translateZ(0)">
 
@@ -1768,8 +1773,8 @@ body {
         `<button class="reaction-emoji-btn" onclick="sendReaction('${e}')">${e}</button>`
     ).join('')}
 </div>
-<div class="swipe-indicator" id="swipe-indicator"></div>`;
-        rootEl.appendChild(_appDiv);
+<div class="swipe-indicator" id="swipe-indicator"></div>
+`;
     } catch(e) {
         console.error("[WC] renderApp innerHTML CRASHED:", e.message);
         console.error(e.stack);
@@ -7285,7 +7290,7 @@ async function showGroupInfo() {
             // Кнопки управления (появляются при нажатии)
             const actionBtns = !isMe && iAmAdmin ? `
                 <div style="display:flex;gap:8px;margin-top:0;align-items:center">
-                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')" 
+                    ${canKick ? `<button onclick="kickMember(${groupId},${m.id},'${m.name.replace(/'/g,'')}')"
                         style="padding:6px 12px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:10px;color:#f87171;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap">
                         Исключить
                     </button>` : ''}
