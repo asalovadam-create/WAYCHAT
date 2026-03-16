@@ -16,52 +16,45 @@
     <meta name="theme-color" content="#111113">
     <meta name="format-detection" content="telephone=no">
 
+    <!-- Красивый шрифт для splash — как у Instagram -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" rel="stylesheet">
+
     <link rel="preload" href="/static/logo.png" as="image" type="image/png">
-    <!-- Pacifico только для splash — async чтобы не блокировать -->
-    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="/static/js/main.js" as="script">
 
     <style>
-        /* ══ CRITICAL CSS — применяется ДО загрузки JS ══ */
+        /* ══ CRITICAL CSS — рендерится до любого JS ══ */
         *, *::before, *::after {
             box-sizing: border-box;
             margin: 0; padding: 0;
             -webkit-tap-highlight-color: transparent;
         }
-
-        html {
-            background: #111113;
-            /* iOS Safari: используем dvh только если поддерживается */
+        html, body {
+            width: 100%;
             height: 100%;
-        }
-
-        body {
             background: #111113;
+            overflow: hidden;
+            overscroll-behavior: none;
+            -webkit-overflow-scrolling: auto;
+        }
+        body {
             color: #ffffff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
                          "Helvetica Neue", Arial, sans-serif;
-            /* НЕ используем 100dvh на body — ломает iOS */
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            /* Запрещаем bounce-эффект */
-            overscroll-behavior: none;
-            -webkit-overflow-scrolling: auto;
-            /* Предотвращаем случайный зум при двойном тапе */
-            touch-action: manipulation;
             -webkit-text-size-adjust: 100%;
             -webkit-font-smoothing: antialiased;
+            touch-action: manipulation;
         }
-
-        /* Корневой контейнер */
         #root {
             width: 100%;
             height: 100%;
-            /* opacity:1 сразу — без анимации которая может застрять */
-            opacity: 1;
             background: #111113;
+            /* НЕТ opacity анимации — это главная причина серого экрана на iOS */
         }
 
-        /* Splash поверх всего */
+        /* ══ SPLASH ══ */
         #splash {
             position: fixed;
             inset: 0;
@@ -72,63 +65,102 @@
             align-items: center;
             justify-content: center;
         }
-        #splash-icon {
-            width: 100px;
-            height: 100px;
-            border-radius: 24px;
-            overflow: hidden;
-            box-shadow: 0 0 0 1px rgba(16,185,129,0.2),
-                        0 8px 32px rgba(16,185,129,0.15);
+
+        #splash-logo-wrap {
+            position: relative;
+            width: 110px;
+            height: 110px;
         }
+
+        #splash-logo {
+            width: 110px;
+            height: 110px;
+            border-radius: 26px;
+            display: block;
+            box-shadow:
+                0 0 0 1px rgba(16,185,129,0.25),
+                0 12px 48px rgba(16,185,129,0.2);
+            animation: splashPop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+        }
+
+        /* Пульсирующее кольцо вокруг иконки */
+        #splash-ring {
+            position: absolute;
+            inset: -8px;
+            border-radius: 34px;
+            border: 1.5px solid rgba(16,185,129,0.35);
+            animation: ringPulse 1.8s ease-in-out infinite;
+        }
+
+        /* Текст "WayChat" внизу экрана */
         #splash-name {
             position: absolute;
-            bottom: max(env(safe-area-inset-bottom, 0px), 44px);
-            left: 0; right: 0;
+            bottom: max(env(safe-area-inset-bottom, 0px), 52px);
+            left: 0;
+            right: 0;
             text-align: center;
             font-family: "Pacifico", cursive;
-            font-size: 32px;
+            font-size: 34px;
+            font-weight: 400;
+            letter-spacing: 0.5px;
             background: linear-gradient(135deg, #ffffff 0%, #10b981 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
+            animation: splashTextIn 0.6s 0.15s ease both;
+        }
+
+        @keyframes splashPop {
+            from { opacity: 0; transform: scale(0.7); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes splashTextIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes ringPulse {
+            0%, 100% { opacity: 0.4; transform: scale(1); }
+            50%       { opacity: 0.8; transform: scale(1.06); }
+        }
+
+        /* PWA install banner animation */
+        @keyframes slideUpBanner {
+            from { opacity: 0; transform: translateY(24px); }
+            to   { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
 <body>
 
-    <!-- SPLASH -->
+    <!-- ══ SPLASH SCREEN ══ -->
     <div id="splash">
-        <div id="splash-icon">
-            <img src="/static/logo.png"
-                 width="100" height="100"
-                 style="display:block;width:100%;height:100%;object-fit:cover"
+        <div id="splash-logo-wrap">
+            <img id="splash-logo"
+                 src="/static/logo.png"
                  alt="WayChat"
                  onerror="this.style.display='none'">
+            <div id="splash-ring"></div>
         </div>
         <div id="splash-name">WayChat</div>
     </div>
 
-    <!-- User data из Flask (server-side) -->
-    <div id="user-data-bridge"
-         data-user='{{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar, "phone": current_user.phone or "", "bio": current_user.bio or "", "is_verified": current_user.is_verified, "verified_type": current_user.verified_type or "", "birthday": current_user.birthday.isoformat() if current_user.birthday else None} | tojson | safe }}'
-         style="display:none"></div>
-
-    <!-- Root для React-like рендера -->
+    <!-- Root для приложения -->
     <div id="root"></div>
 
-    <!-- ═══ ИНИЦИАЛИЗАЦИЯ ПОЛЬЗОВАТЕЛЯ (синхронная!) ═══ -->
+    <!-- ══ Данные пользователя от Flask (JSON, не data-атрибут!) ══ -->
+    <script id="user-data-bridge" type="application/json">
+    {{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar or "", "phone": current_user.phone or "", "bio": current_user.bio or "", "is_verified": current_user.is_verified or false, "verified_type": current_user.verified_type or ""} | tojson | safe }}
+    </script>
+
+    <!-- ══ КРИТИЧНО: window.currentUser устанавливается СИНХРОННО до main.js ══ -->
     <script>
-    // Этот скрипт выполняется СИНХРОННО до загрузки main.js
-    // Устанавливает window.currentUser чтобы init() не ждал
     (function() {
         var u = null;
-
-        // 1) Сервер дал данные
+        // 1) Данные от сервера
         try {
             var el = document.getElementById('user-data-bridge');
-            if (el) u = JSON.parse(el.dataset.user);
+            if (el) u = JSON.parse(el.textContent || el.innerText || '{}');
         } catch(e) {}
-
         // 2) localStorage кэш
         if (!u || !u.id) {
             try {
@@ -137,65 +169,54 @@
                 if (c) u = JSON.parse(c);
             } catch(e) {}
         }
-
         if (u && u.id > 0) {
             window.currentUser = u;
-            // Обновляем кэш
             try { localStorage.setItem('waychat_user_cache', JSON.stringify(u)); } catch(e) {}
         } else {
-            // Нет данных — редирект на логин (тихий, без задержки)
             window.currentUser = null;
         }
     })();
     </script>
 
-    <!-- Tailwind (async — не блокирует парсинг) -->
+    <!-- Socket.IO — нужен ДО main.js -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+    <!-- Основной код приложения -->
+    <script src="/static/js/main.js"></script>
+
+    <!-- ══ Некритичные скрипты — после main.js ══ -->
     <script>
-    // Загружаем Tailwind асинхронно чтобы не блокировать рендер
-    (function(){
+    // Tailwind CSS — асинхронно, не блокирует рендер
+    (function() {
         var s = document.createElement('script');
         s.src = 'https://cdn.tailwindcss.com';
         s.async = true;
         document.head.appendChild(s);
     })();
-    </script>
 
-    <!-- Socket.IO (нужен до main.js) -->
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-
-    <!-- Lucide icons (async) -->
-    <script>
-    (function(){
+    // Lucide icons — асинхронно
+    (function() {
         var s = document.createElement('script');
         s.src = 'https://unpkg.com/lucide@latest';
         s.async = true;
         document.head.appendChild(s);
     })();
-    </script>
 
-    <!-- Основной код приложения -->
-    <script src="/static/js/main.js"></script>
-
-    <!-- ═══ SPLASH HIDE + SERVICE WORKER ═══ -->
-    <script>
+    // ══ Скрываем splash когда #root получил содержимое ══
     (function() {
-        var splashHidden = false;
-
+        var done = false;
         function hideSplash() {
-            if (splashHidden) return;
-            splashHidden = true;
+            if (done) return;
+            done = true;
             var s = document.getElementById('splash');
             if (!s) return;
-            // Плавное исчезновение
             s.style.transition = 'opacity 0.25s ease';
             s.style.opacity = '0';
             s.style.pointerEvents = 'none';
             setTimeout(function() {
                 if (s && s.parentNode) s.parentNode.removeChild(s);
-            }, 280);
+            }, 270);
         }
-
-        // Скрываем как только root получил содержимое
         var attempts = 0;
         var t = setInterval(function() {
             attempts++;
@@ -204,46 +225,93 @@
                 clearInterval(t);
                 hideSplash();
             }
-            // Fallback: максимум 2 секунды
-            if (attempts > 66) {
+            if (attempts > 60) { // макс 1.8 сек
                 clearInterval(t);
                 hideSplash();
             }
         }, 30);
-
-        // Service Worker
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', function() {
-                navigator.serviceWorker.register('/sw.js', { scope: '/' })
-                    .catch(function(e) { console.warn('SW:', e); });
-            });
-        }
     })();
 
-    // iOS PWA install hint
-    (function() {
-        var _isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-        var _isStandalone = window.navigator.standalone === true;
-        if (_isIOS && !_isStandalone && !localStorage.getItem('wc_ios_hint_v4')) {
-            setTimeout(function() {
-                localStorage.setItem('wc_ios_hint_v4', '1');
-                var hint = document.createElement('div');
-                hint.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;'
-                    + 'background:rgba(18,18,20,0.97);backdrop-filter:blur(28px);'
-                    + '-webkit-backdrop-filter:blur(28px);'
-                    + 'padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));'
-                    + 'border-top:0.5px solid rgba(255,255,255,0.1);'
-                    + 'color:white;font-family:-apple-system,sans-serif;'
-                    + 'animation:slideUpBanner 0.4s ease forwards;';
-                hint.innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Добавить WayChat на экран</div>'
-                    + '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">'
-                    + 'Нажми <b style="color:white">Поделиться</b> → <b style="color:white">На экран «Домой»</b></div>'
-                    + '<button onclick="this.parentNode.remove()" style="width:100%;padding:12px;background:var(--accent,#10b981);'
-                    + 'border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Понял</button>';
-                document.body.appendChild(hint);
-                setTimeout(function() { if (hint.parentNode) hint.parentNode.removeChild(hint); }, 12000);
-            }, 4000);
+    // ══ Service Worker ══
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+            navigator.serviceWorker.register('/sw.js', { scope: '/' })
+                .catch(function(e) { console.warn('SW:', e); });
+        });
+    }
+
+    // ══ Android PWA install prompt ══
+    var _pwaPrompt = null;
+    window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        _pwaPrompt = e;
+        if (!window.matchMedia('(display-mode: standalone)').matches
+            && !localStorage.getItem('wc_pwa_installed')) {
+            setTimeout(_showAndroidInstallSheet, 3500);
         }
+    });
+    window.addEventListener('appinstalled', function() {
+        localStorage.setItem('wc_pwa_installed', '1');
+        var sheet = document.getElementById('wc-android-sheet');
+        if (sheet) sheet.remove();
+    });
+    function _showAndroidInstallSheet() {
+        if (document.getElementById('wc-android-sheet')) return;
+        var d = document.createElement('div');
+        d.id = 'wc-android-sheet';
+        d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;'
+            + 'background:rgba(18,18,20,0.97);backdrop-filter:blur(28px);'
+            + '-webkit-backdrop-filter:blur(28px);'
+            + 'padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));'
+            + 'border-top:0.5px solid rgba(255,255,255,0.1);color:white;'
+            + 'font-family:-apple-system,sans-serif;'
+            + 'animation:slideUpBanner 0.4s ease forwards;';
+        d.innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:6px">'
+            + 'Установить WayChat</div>'
+            + '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">'
+            + 'Добавь приложение на главный экран для быстрого доступа</div>'
+            + '<div style="display:flex;gap:10px">'
+            + '<button onclick="if(window._pwaPrompt){_pwaPrompt.prompt();_pwaPrompt.userChoice.then(function(){document.getElementById('\'\'wc-android-sheet'\'\')?.remove();localStorage.setItem('\'\'wc_pwa_installed'\'\','\'\'1'\'\')})}"'
+            + ' style="flex:1;padding:12px;background:var(--accent,#10b981);border:none;border-radius:14px;'
+            + 'color:#000;font-size:15px;font-weight:700;cursor:pointer">Установить</button>'
+            + '<button onclick="this.parentNode.parentNode.remove()"'
+            + ' style="padding:12px 18px;background:rgba(255,255,255,.1);border:none;border-radius:14px;'
+            + 'color:white;font-size:15px;cursor:pointer">Не сейчас</button>'
+            + '</div>';
+        document.body.appendChild(d);
+        setTimeout(function() { if (d.parentNode) d.remove(); }, 15000);
+    }
+
+    // ══ iOS "Добавить на экран" подсказка ══
+    (function() {
+        var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+        var isStandalone = window.navigator.standalone === true;
+        if (!isIOS || isStandalone) return;
+        if (localStorage.getItem('wc_ios_hint_v4')) return;
+        setTimeout(function() {
+            localStorage.setItem('wc_ios_hint_v4', '1');
+            var hint = document.createElement('div');
+            hint.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;'
+                + 'background:rgba(18,18,20,0.97);backdrop-filter:blur(28px);'
+                + '-webkit-backdrop-filter:blur(28px);'
+                + 'padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));'
+                + 'border-top:0.5px solid rgba(255,255,255,0.1);'
+                + 'color:white;font-family:-apple-system,sans-serif;'
+                + 'animation:slideUpBanner 0.4s ease forwards;';
+            hint.innerHTML = '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Добавить WayChat на экран</div>'
+                + '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">'
+                + 'Нажми <b style="color:white">Поделиться</b> '
+                + '<svg style="vertical-align:-3px" width="14" height="14" viewBox="0 0 24 24" fill="none">'
+                + '<path d="M12 2v13M8 6l4-4 4 4" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
+                + '<path d="M4 13v7a1 1 0 001 1h14a1 1 0 001-1v-7" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>'
+                + ' → <b style="color:white">На экран «Домой»</b></div>'
+                + '<button onclick="this.parentNode.remove()"'
+                + ' style="width:100%;padding:12px;background:var(--accent,#10b981);'
+                + 'border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">'
+                + 'Понял, спасибо!</button>';
+            document.body.appendChild(hint);
+            setTimeout(function() { if (hint.parentNode) hint.remove(); }, 14000);
+        }, 4500);
     })();
     </script>
 
