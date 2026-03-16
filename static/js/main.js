@@ -516,52 +516,30 @@ async function _preWarmMic() {
 }
 
 async function init() {
-    console.log('[WC] init start | window.currentUser=', JSON.stringify(window.currentUser));
-
-    // ── 1. currentUser установлен в index.html до main.js ──
+    console.log('[WC] init | window.currentUser=', JSON.stringify(window.currentUser));
     if (window.currentUser && window.currentUser.id > 0) {
         Object.assign(currentUser, window.currentUser);
-        console.log('[WC] user from server id=', currentUser.id);
     } else {
-        console.warn('[WC] window.currentUser invalid:', window.currentUser, '— trying localStorage');
         try {
             const c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
-            if (c) {
-                const p = JSON.parse(c);
-                if (p && p.id > 0) { Object.assign(currentUser, p); console.log('[WC] user from cache id=', p.id); }
-            }
-        } catch(e) { console.warn('[WC] localStorage error:', e); }
+            if (c) { const p=JSON.parse(c); if(p&&p.id>0) Object.assign(currentUser,p); }
+        } catch(e) {}
     }
-
-    // ── 2. Нет юзера — пробуем /api/me с паузой (race condition с cookie на Render) ──
     if (!currentUser || !(currentUser.id > 0)) {
-        console.warn('[WC] no user — polling /api/me ...');
-        await new Promise(r => setTimeout(r, 200));
-        var _ok = false;
-        for (var _i = 0; _i < 4; _i++) {
+        await new Promise(r=>setTimeout(r,200));
+        var _ok=false;
+        for(var _i=0;_i<4;_i++){
             try {
-                var _r = await fetch('/api/me', { credentials: 'include', cache: 'no-store' });
-                console.log('[WC] /api/me attempt', _i+1, 'status=', _r.status);
-                if (_r.ok) {
-                    var _u = await _r.json();
-                    if (_u && _u.id > 0) {
-                        Object.assign(currentUser, _u);
-                        try { localStorage.setItem('waychat_user_cache', JSON.stringify(_u)); } catch(e) {}
-                        console.log('[WC] /api/me OK id=', _u.id); _ok = true; break;
-                    }
-                } else if (_r.status === 401 || _r.status === 403) {
-                    console.warn('[WC] /api/me 401 — not logged in'); break;
-                }
-            } catch(e) { console.warn('[WC] /api/me net error:', e); }
-            await new Promise(r => setTimeout(r, 400 * (_i + 1)));
+                var _r=await fetch('/api/me',{credentials:'include',cache:'no-store'});
+                console.log('[WC] /api/me attempt',_i+1,'status=',_r.status);
+                if(_r.ok){var _u=await _r.json();if(_u&&_u.id>0){Object.assign(currentUser,_u);try{localStorage.setItem('waychat_user_cache',JSON.stringify(_u));}catch(e){}  _ok=true;break;}}
+                else if(_r.status===401||_r.status===403) break;
+            } catch(e){console.warn('[WC] /api/me err:',e);}
+            await new Promise(r=>setTimeout(r,400*(_i+1)));
         }
-        if (!_ok && !(currentUser && currentUser.id > 0)) {
-            console.warn('[WC] auth failed — redirect /login');
-            window.location.href = '/login'; return;
-        }
+        if(!_ok&&!(currentUser&&currentUser.id>0)){window.location.href='/login';return;}
     }
-
-    console.log('[WC] rendering for user id=', currentUser.id, 'name=', currentUser.name);
+    console.log('[WC] user ok id=',currentUser.id,'name=',currentUser.name);
 
     applyTheme(activeTheme);
     renderApp();
@@ -796,7 +774,11 @@ function renderApp() {
             document.body.innerHTML = '<div style="color:white;padding:40px;background:#111;min-height:100vh">Error: #root missing</div>';
             return;
         }
-        console.log('WayChat: renderApp starting, user:', window.currentUser?.id);
+        console.log('[WC] renderApp start | user:', currentUser.id, currentUser.name, '| avatar:', currentUser.avatar);
+        // Защита от null/undefined полей которые могут сломать шаблон
+        if (!currentUser.name) currentUser.name = 'Пользователь';
+        if (!currentUser.username) currentUser.username = 'user';
+        if (currentUser.bio === undefined || currentUser.bio === null) currentUser.bio = '';
         rootEl.innerHTML = `
 <style>
 :root {
@@ -1705,17 +1687,18 @@ body {
 <div class="swipe-indicator" id="swipe-indicator"></div>
 `;
     } catch(e) {
-        console.error("[WC] renderApp CRASH:", e);
+        console.error("[WC] renderApp CRASH:", e.name, e.message, e.stack);
         var sp = document.getElementById('splash');
         if (sp) { sp.style.opacity='0'; sp.style.pointerEvents='none'; setTimeout(function(){if(sp&&sp.parentNode)sp.parentNode.removeChild(sp);},300); }
         var r = document.getElementById('root');
-        if (r) r.innerHTML = '<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:16px;padding:24px;text-align:center;color:white">'
-            + '<div style="font-size:40px">😵</div>'
+        var errMsg = e && e.message ? e.message : String(e);
+        if (r) r.innerHTML = '<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;padding:24px;text-align:center;color:white">'
+            + '<div style="font-size:36px">😵</div>'
             + '<div style="font-size:17px;font-weight:700">Ошибка загрузки</div>'
-            + '<div style="font-size:13px;opacity:.5;max-width:280px">Попробуйте обновить страницу</div>'
-            + '<button onclick="location.reload()" style="margin-top:8px;padding:13px 32px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Обновить</button>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,.4);max-width:320px;word-break:break-all;font-family:monospace;background:rgba(255,255,255,.06);padding:10px;border-radius:10px;margin:4px 0">' + errMsg + '</div>'
+            + '<button onclick="location.reload()" style="padding:13px 32px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Обновить</button>'
             + '</div>';
-        setTimeout(function(){ location.reload(); }, 6000);
+        setTimeout(function(){ location.reload(); }, 8000);
     }
 }
 
