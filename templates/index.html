@@ -48,7 +48,7 @@
 
 <!-- Данные пользователя от Flask через JSON script tag (без data-атрибутов!) -->
 <script id="user-data-bridge" type="application/json">
-{{ {"id": current_user.id, "name": current_user.name, "username": current_user.username, "avatar": current_user.avatar or "", "phone": current_user.phone or "", "bio": current_user.bio or "", "is_verified": current_user.is_verified or false, "verified_type": current_user.verified_type or ""} | tojson | safe }}
+{% if current_user and current_user.is_authenticated %}{{ {"id": current_user.id, "name": current_user.name or "", "username": current_user.username or "", "avatar": current_user.avatar or "", "phone": current_user.phone or "", "bio": current_user.bio or "", "is_verified": current_user.is_verified or false, "verified_type": current_user.verified_type or ""} | tojson | safe }}{% else %}{"id": 0, "name": "", "username": "", "avatar": "", "phone": "", "bio": "", "is_verified": false, "verified_type": ""}{% endif %}
 </script>
 
 <!-- window.currentUser СИНХРОННО — до загрузки main.js -->
