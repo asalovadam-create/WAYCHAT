@@ -67,9 +67,21 @@
     }
     if (u && u.id > 0) {
         window.currentUser = u;
+        // Пробуем сохранить в кэш (может быть заблокировано браузером — не критично)
         try { localStorage.setItem('waychat_user_cache', JSON.stringify(u)); } catch(e) {}
     } else {
-        window.currentUser = null;
+        // Пробуем кэш как запасной вариант
+        try {
+            var cached = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
+            if (cached) {
+                var cu = JSON.parse(cached);
+                window.currentUser = (cu && cu.id > 0) ? cu : null;
+            } else {
+                window.currentUser = null;
+            }
+        } catch(e) {
+            window.currentUser = null;
+        }
     }
 })();
 </script>
