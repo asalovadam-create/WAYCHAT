@@ -271,10 +271,24 @@ let savedContacts      = JSON.parse(localStorage.getItem('waychat_contacts') || 
 let contactCustomNames = JSON.parse(localStorage.getItem('waychat_contact_names') || '{}');
 
 // Данные пользователя
-const currentUser = Object.assign({
-    id: 0, name: 'Пользователь', username: 'user',
-    avatar: '/static/default_avatar.png', bio: '', phone: ''
-}, window.currentUser || {});
+// currentUser: читаем из window (установлен в index.html) или из localStorage
+const currentUser = (function() {
+    // 1) window.currentUser от сервера
+    if (window.currentUser && window.currentUser.id > 0) {
+        return Object.assign({}, window.currentUser);
+    }
+    // 2) localStorage кэш
+    try {
+        var c = localStorage.getItem('waychat_user_cache') || localStorage.getItem('varto_user_cache');
+        if (c) {
+            var p = JSON.parse(c);
+            if (p && p.id > 0) return Object.assign({}, p);
+        }
+    } catch(e) {}
+    // 3) Fallback пустой
+    return { id: 0, name: 'Пользователь', username: 'user',
+             avatar: '/static/default_avatar.png', bio: '', phone: '' };
+})();
 
 // WebRTC конфиг
 const rtcConfig = {
@@ -516,10 +530,28 @@ async function init() {
         } catch(e) {}
     }
 
-    // Нет пользователя — редирект
-    if (!currentUser.id || currentUser.id <= 0) {
-        window.location.href = '/login';
-        return;
+    // Нет пользователя — пробуем API перед редиректом
+    if (!currentUser || !currentUser.id || currentUser.id <= 0) {
+        console.warn('WayChat: no valid user, checking /api/me');
+        try {
+            var resp = await fetch('/api/me', {credentials:'include'});
+            if (resp.ok) {
+                var apiUser = await resp.json();
+                if (apiUser && apiUser.id > 0) {
+                    Object.assign(currentUser, apiUser);
+                    try { localStorage.setItem('waychat_user_cache', JSON.stringify(apiUser)); } catch(e) {}
+                } else {
+                    window.location.href = '/login'; return;
+                }
+            } else {
+                window.location.href = '/login'; return;
+            }
+        } catch(e) {
+            // Нет сети — рендерим из кэша если есть хоть что-то
+            if (!currentUser || !currentUser.id) {
+                window.location.href = '/login'; return;
+            }
+        }
     }
 
     applyTheme(activeTheme);
@@ -750,7 +782,12 @@ function getMoscowTime(dateStr) {
 function renderApp() {
     try {
         var rootEl = document.getElementById('root');
-        if (!rootEl) { console.error('WayChat: #root not found!'); return; }
+        if (!rootEl) {
+            console.error('WayChat: #root not found!');
+            document.body.innerHTML = '<div style="color:white;padding:40px;background:#111;min-height:100vh">Error: #root missing</div>';
+            return;
+        }
+        console.log('WayChat: renderApp starting, user:', window.currentUser?.id);
         rootEl.innerHTML = `
 <style>
 :root {
