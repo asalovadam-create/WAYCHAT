@@ -516,58 +516,74 @@ async function _preWarmMic() {
 }
 
 async function init() {
+    console.log('[WayChat] init() start, window.currentUser=', window.currentUser);
+
     // ── 1. currentUser уже установлен в index.html СИНХРОННО до загрузки main.js ──
     if (window.currentUser && window.currentUser.id > 0) {
         Object.assign(currentUser, window.currentUser);
+        console.log('[WayChat] user from window.currentUser id=', currentUser.id);
     } else {
+        console.warn('[WayChat] window.currentUser missing/invalid, trying localStorage cache...');
         // Fallback: читаем кэш напрямую
         try {
             const c = localStorage.getItem('waychat_user_cache')
                    || localStorage.getItem('varto_user_cache');
             if (c) {
                 const p = JSON.parse(c);
-                if (p && p.id > 0) Object.assign(currentUser, p);
+                if (p && p.id > 0) {
+                    Object.assign(currentUser, p);
+                    console.log('[WayChat] user from localStorage id=', currentUser.id);
+                }
             }
-        } catch(e) {}
+        } catch(e) { console.warn('[WayChat] localStorage read error:', e); }
     }
 
     // Нет пользователя — пробуем API перед редиректом
     if (!currentUser || !currentUser.id || currentUser.id <= 0) {
-        console.warn('WayChat: no valid user, checking /api/me');
-        // ФИКС: небольшая задержка для Safari/iOS — cookie может не успеть
-        // установиться сразу после регистрации (race condition)
-        await new Promise(function(res){ setTimeout(res, 120); });
+        console.warn('[WayChat] no valid user yet, calling /api/me ...');
+        // ФИКС: небольшая задержка — cookie может не успеть установиться
+        // сразу после регистрации на iOS/Safari (race condition с Render eventlet)
+        await new Promise(function(res){ setTimeout(res, 150); });
         var _apiMeOk = false;
         for (var _retry = 0; _retry < 3; _retry++) {
             try {
-                var resp = await fetch('/api/me', {credentials:'include', cache:'no-store'});
+                console.log('[WayChat] /api/me attempt', _retry + 1);
+                var resp = await fetch('/api/me', { credentials: 'include', cache: 'no-store' });
+                console.log('[WayChat] /api/me status=', resp.status);
                 if (resp.ok) {
                     var apiUser = await resp.json();
                     if (apiUser && apiUser.id > 0) {
                         Object.assign(currentUser, apiUser);
                         try { localStorage.setItem('waychat_user_cache', JSON.stringify(apiUser)); } catch(e) {}
+                        console.log('[WayChat] /api/me OK id=', apiUser.id);
                         _apiMeOk = true;
                         break;
+                    } else {
+                        console.warn('[WayChat] /api/me returned invalid user:', apiUser);
                     }
                 } else if (resp.status === 401 || resp.status === 403) {
-                    // Точно не авторизован — не ретраим
-                    break;
+                    console.warn('[WayChat] /api/me 401/403 — not authenticated');
+                    break; // Точно не авторизован — не ретраим
+                } else {
+                    console.warn('[WayChat] /api/me status=' + resp.status + ', retry...');
                 }
-                // 5xx или сеть — ретраим с задержкой
-                await new Promise(function(res){ setTimeout(res, 400 * (_retry + 1)); });
+                await new Promise(function(res){ setTimeout(res, 500 * (_retry + 1)); });
             } catch(e) {
-                // Нет сети — ретраим
-                await new Promise(function(res){ setTimeout(res, 400 * (_retry + 1)); });
+                console.warn('[WayChat] /api/me network error:', e, '— retry...');
+                await new Promise(function(res){ setTimeout(res, 500 * (_retry + 1)); });
             }
         }
         if (!_apiMeOk) {
-            // Последний шанс — кэш localStorage (оффлайн-режим)
             if (!currentUser || !currentUser.id || currentUser.id <= 0) {
-                console.warn('WayChat: not authenticated, redirect to /login');
+                console.warn('[WayChat] giving up, redirect to /login');
                 window.location.href = '/login'; return;
+            } else {
+                console.warn('[WayChat] /api/me failed but localStorage cache has user id=', currentUser.id, '— proceeding offline');
             }
         }
     }
+
+    console.log('[WayChat] Proceeding with user id=', currentUser.id, 'name=', currentUser.name);
 
     applyTheme(activeTheme);
     renderApp();
@@ -1711,18 +1727,16 @@ body {
 <div class="swipe-indicator" id="swipe-indicator"></div>
 `;
     } catch(e) {
-        console.error("WayChat: renderApp error", e);
-        // Принудительно скрываем splash — иначе останется чёрный экран
+        console.error("[WayChat] renderApp CRASH:", e);
         var sp = document.getElementById('splash');
         if (sp) { sp.style.opacity='0'; sp.style.pointerEvents='none'; setTimeout(function(){if(sp&&sp.parentNode)sp.parentNode.removeChild(sp);},300); }
         var r = document.getElementById("root");
-        if (r) r.innerHTML = '<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;flex-direction:column;gap:16px;padding:24px;text-align:center">'
-            + '<div style="font-size:40px">😵</div>'
-            + '<div style="font-size:17px;font-weight:700">Ошибка загрузки</div>'
-            + '<div style="font-size:13px;opacity:.5;max-width:280px">Нажмите кнопку ниже чтобы обновить страницу</div>'
-            + '<button onclick="location.reload()" style="margin-top:8px;padding:13px 32px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Обновить</button>'
-            + '</div>';
-        // Авто-перезагрузка через 5 сек
+        if (r) r.innerHTML = '<div style="position:fixed;inset:0;background:#111113;display:flex;align-items:center;justify-content:center;color:white;flex-direction:column;gap:16px;padding:24px;text-align:center">' +
+            '<div style="font-size:40px">😵</div>' +
+            '<div style="font-size:17px;font-weight:700">Ошибка загрузки</div>' +
+            '<div style="font-size:13px;opacity:.5;max-width:280px">Нажмите кнопку ниже чтобы обновить страницу</div>' +
+            '<button onclick="location.reload()" style="margin-top:8px;padding:13px 32px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer">Обновить</button>' +
+            '</div>';
         setTimeout(function(){ location.reload(); }, 5000);
     }
 }
