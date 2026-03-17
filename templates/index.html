@@ -25,17 +25,15 @@
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
         /*
-            КЛЮЧЕВОЙ ТРЮК против чёрных/белых полос Safari:
-            html background = точный цвет фона приложения.
-            iOS рисует safe-area зоны (статус-бар, home indicator) цветом html.
-            При любом сценарии (перезагрузка, переход, PWA, браузер) — фон совпадает.
+            Против чёрных/белых полос Safari:
+            html/body background = точный цвет фона.
+            iOS рисует safe-area (статус-бар, home indicator) цветом html.
         */
         html {
             background: #1d1d1e;
             height: 100%;
             overscroll-behavior: none;
             touch-action: manipulation;
-            /* Запрещаем scroll за пределы — убирает белый/чёрный flash при bounce */
             -webkit-overflow-scrolling: auto;
         }
 
@@ -46,7 +44,6 @@
             background: #1d1d1e;
             overflow: hidden;
             overscroll-behavior: none;
-            /* НЕТ padding-top/bottom — иначе появится полоса home indicator */
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
@@ -55,30 +52,18 @@
             touch-action: manipulation;
         }
 
-        #root { width: 100%; height: 100%; background: #1d1d1e; }
-
-        /* Псевдоэлемент перекрывает зону статус-бара своим цветом.
-           Работает даже если браузер рисует полосу при перезагрузке */
-        #root::before {
-            content: '';
-            position: fixed;
-            top: 0; left: 0; right: 0;
-            height: env(safe-area-inset-top, 0px);
+        #root {
+            width: 100%;
+            height: 100%;
             background: #1d1d1e;
-            z-index: 99999;
-            pointer-events: none;
+            /* НЕТ псевдоэлементов ::before/::after — они перекрывали input-bar и chat-header */
         }
 
-        /* То же для низа (home indicator) */
-        #root::after {
-            content: '';
-            position: fixed;
-            bottom: 0; left: 0; right: 0;
-            height: env(safe-area-inset-bottom, 0px);
-            background: #1d1d1e;
-            z-index: 99999;
-            pointer-events: none;
-        }
+        /*
+            Вместо псевдоэлементов — закрашиваем safe-area через
+            background на самом #app (задаётся из main.js).
+            Это работает без перекрытия контента.
+        */
 
         #splash {
             position: fixed; inset: 0; z-index: 999999;
