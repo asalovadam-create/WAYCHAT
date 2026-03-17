@@ -75,9 +75,10 @@ const WCCache = (() => {
     const st=document.createElement('style');st.id='wc-ios8';
     st.textContent=`
         #app,.chat-view{height:calc(var(--dvh,1svh)*100)!important;max-height:calc(var(--dvh,1svh)*100)!important}
-        .input-bar{position:sticky!important;bottom:0!important;transform:translateZ(0);will-change:transform;transition:transform .15s ease!important}
+        .input-bar{flex-shrink:0!important;transform:none!important}
         #messages,#main-content{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:auto}
-        .chat-view,#messages{transform:translateZ(0);will-change:transform}
+        .chat-view{transform:translateZ(0);will-change:transform;display:flex!important;flex-direction:column!important}
+        #messages{flex:1!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch}
         *,button,a,[onclick],[data-msg-id]{-webkit-tap-highlight-color:transparent}
         body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
         /* КРИТИЧНО: iOS зумирует если font-size < 16px на любом input/textarea/select */
@@ -93,18 +94,26 @@ const WCCache = (() => {
         let ph=vv.height;
         vv.addEventListener('resize',()=>{
             const kbHeight=Math.max(0,window.innerHeight-vv.height);
-            const b=document.querySelector('.input-bar');
             const chatWin=document.getElementById('chat-window');
-            // Смещаем input-bar только если чат открыт
-            if(b && chatWin?.classList.contains('active')){
-                b.style.transform=kbHeight>60?`translateY(-${kbHeight}px)`:'';
-            } else if(b){
-                b.style.transform='';
+            const isChat=chatWin?.classList.contains('active');
+
+            if(isChat){
+                // Двигаем весь chat-view вверх на высоту клавиатуры
+                // Это правильно — input-bar прилипает к низу chat-view
+                if(kbHeight>60){
+                    chatWin.style.bottom=kbHeight+'px';
+                    chatWin.style.height='calc(100% - '+kbHeight+'px)';
+                    // Скроллим сообщения вниз
+                    const m=document.getElementById('messages');
+                    if(m)requestAnimationFrame(()=>{m.scrollTop=m.scrollHeight;});
+                } else {
+                    chatWin.style.bottom='';
+                    chatWin.style.height='';
+                }
             }
-            if(vv.height<ph-80){
-                const m=document.getElementById('messages');
-                if(m)requestAnimationFrame(()=>{m.scrollTop=m.scrollHeight;});
-            }
+            // Сбрасываем transform на input-bar — больше не трогаем его
+            const b=document.querySelector('.input-bar');
+            if(b)b.style.transform='';
             ph=vv.height;
         },{passive:true});
     }
@@ -700,8 +709,15 @@ function getInitialAvatar(name, sizeClass, uid = '') {
     const colors = ['#ef4444','#3b82f6','#10b981','#f97316','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
     const char   = (name || '?').charAt(0).toUpperCase();
     const color  = colors[char.charCodeAt(0) % colors.length];
-    const fontSize = sizeClass.includes('w-28') ? 'text-4xl' : sizeClass.includes('w-16') ? 'text-2xl' : sizeClass.includes('w-14') ? 'text-xl' : 'text-base';
-    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white font-bold ${fontSize}" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35)" data-uid="${uid}">${char}</div>`;
+    // Увеличенные размеры шрифта для всех размеров аватара
+    const fontSize = sizeClass.includes('w-28') ? 'text-5xl'
+        : sizeClass.includes('w-16') ? 'text-3xl'
+        : sizeClass.includes('w-14') ? 'text-2xl'
+        : sizeClass.includes('w-12') ? 'text-xl'
+        : sizeClass.includes('w-10') ? 'text-lg'
+        : sizeClass.includes('w-9')  ? 'text-base'
+        : 'text-base';
+    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white font-bold ${fontSize}" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35);font-size:inherit" data-uid="${uid}">${char}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -792,19 +808,19 @@ function renderApp() {
     --glow: 0 0 20px rgba(16,185,129,0.4);
     --accent-10: rgba(16,185,129,0.1);
     --accent-30: rgba(16,185,129,0.3);
-    --bg: #111113;
-    --bg2: #0e0e10;
-    --surface: #1c1c1e;
-    --surface2: #18181a;
+    --bg: #2c2d2c;
+    --bg2: #252625;
+    --surface: #333434;
+    --surface2: #2e2f2e;
     --border: rgba(255,255,255,0.06);
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
-    --msg-in: #1c1c1e;
+    --msg-in: #333434;
     --msg-out: var(--accent);
     --divider: rgba(255,255,255,0.05);
-    --chat-bg: #111113;
-    --hdr: rgba(17,17,19,0.97);
-    --sep: rgba(255,255,255,0.06);
+    --chat-bg: #2c2d2c;
+    --hdr: rgba(44,45,44,0.97);
+    --sep: rgba(255,255,255,0.07);
     --item-hover: rgba(255,255,255,0.05);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -820,11 +836,10 @@ body {
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
-/* FAB — меньше, ниже, свечение */
-.fab-btn{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+10px),14px);right:16px;width:48px;height:48px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 0 rgba(16,185,129,0.5),0 4px 16px rgba(16,185,129,.55),0 2px 8px rgba(0,0,0,.4);z-index:900;transition:transform .2s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;-webkit-tap-highlight-color:transparent;animation:fabGlow 2.4s ease-in-out infinite}
+/* FAB — тихая кнопка без анимации и свечения, максимально внизу */
+.fab-btn{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+8px),12px);right:16px;width:46px;height:46px;border-radius:50%;background:#10b981;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:900;transition:transform .15s ease;-webkit-tap-highlight-color:transparent}
 .fab-btn:active{transform:scale(.88)}
-@keyframes fabGlow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0.45),0 4px 16px rgba(16,185,129,.5),0 2px 8px rgba(0,0,0,.4)}50%{box-shadow:0 0 0 8px rgba(16,185,129,0.0),0 4px 24px rgba(16,185,129,.7),0 2px 8px rgba(0,0,0,.4)}}
-.fab-menu{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+72px),76px);right:12px;z-index:901;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;opacity:0;transform:translateY(10px) scale(.96);transition:opacity .2s ease,transform .2s cubic-bezier(.34,1.56,.64,1)}
+.fab-menu{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+68px),72px);right:12px;z-index:901;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;opacity:0;transform:translateY(8px) scale(.97);transition:opacity .18s ease,transform .18s cubic-bezier(.34,1.56,.64,1)}
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
 .fab-mi{display:flex;align-items:center;gap:12px;background:var(--surface);border:.5px solid rgba(255,255,255,.08);border-radius:16px;padding:11px 16px;cursor:pointer;box-shadow:0 4px 24px rgba(0,0,0,.45);font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s}
 .fab-mi:active{background:rgba(255,255,255,.08)}
@@ -868,19 +883,23 @@ body {
 #moments-bar-scroll::-webkit-scrollbar{display:none}
 #moments-bar-scroll{scrollbar-width:none}
 
-/* АНИМАЦИИ МИКРОВЗАИМОДЕЙСТВИЙ */
-@keyframes chatRiseUp{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-.chat-item-animate{animation:chatRiseUp 0.22s cubic-bezier(0.22,1,0.36,1)}
+/* АНИМАЦИИ МИКРОВЗАИМОДЕЙСТВИЙ — плавные как в TG web */
+@keyframes chatRiseUp{
+    0%   { opacity:0; transform:translateY(12px); }
+    60%  { opacity:1; transform:translateY(-2px); }
+    100% { opacity:1; transform:translateY(0); }
+}
+.chat-item-animate{animation:chatRiseUp 0.32s cubic-bezier(0.25,0.46,0.45,0.94) both}
 @keyframes avaPulse{0%,100%{transform:scale(1)}40%{transform:scale(1.10)}70%{transform:scale(0.97)}}
 .ava-pulse-anim{animation:avaPulse 0.35s cubic-bezier(0.34,1.56,0.64,1)}
 
-/* ЧАТ ОКНО — с эффектом глубины */
-.chat-view { position:fixed;inset:0;z-index:2000;background:#000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.32s cubic-bezier(0.22,1,0.36,1);will-change:transform; }
+/* ЧАТ ОКНО — плавное открытие как в TG */
+.chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform; }
 .chat-view.active { transform:translateX(0); }
-.chat-wallpaper{background:#111113;}
+.chat-wallpaper{background:var(--chat-bg);}
 /* Эффект глубины на фоне при открытии чата */
-#main-content{transition:transform 0.32s cubic-bezier(0.22,1,0.36,1),filter 0.32s ease,opacity 0.32s ease}
-#main-content.chat-depth{transform:scale(0.94);filter:blur(3px);opacity:0.55;pointer-events:none}
+#main-content{transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94),filter 0.28s ease,opacity 0.28s ease}
+#main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
 .msg-container { display:flex;flex-direction:column;gap:2px;padding:8px 8px 12px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:auto;will-change:scroll-position; }
@@ -907,8 +926,8 @@ body {
 .date-divider { text-align:center;padding:12px 0 4px;position:relative; }
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
-/* ИНПУТ */
-.input-bar { padding:10px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+10px),14px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px); }
+/* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
+.input-bar { padding:10px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+10px),14px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
 .input-inner:focus-within { border-color:var(--accent-30); }
@@ -1045,11 +1064,11 @@ body {
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section" style="padding-top:max(env(safe-area-inset-top,0px),0px)">
-            <!-- Шапка — минималистичная, только аватар + badge -->
+            <!-- Шапка — только аватар справа, без badge сверху -->
             <div style="display:flex;align-items:center;padding:12px 16px 4px;position:sticky;top:0;z-index:100;background:var(--bg)">
-                <div style="flex:1;display:flex;align-items:center;gap:8px">
-                    <div id="total-unread-badge" class="hdr-badge" style="display:none">0</div>
-                </div>
+                <div style="flex:1"></div>
+                <!-- badge скрытый — нужен для updateUnreadBadge() но не показывается в шапке -->
+                <div id="total-unread-badge" style="display:none">0</div>
                 <button onclick="openProfileSheet()" style="background:none;border:none;cursor:pointer;padding:0;border-radius:50%;overflow:hidden;flex-shrink:0;-webkit-tap-highlight-color:transparent">
                     <div id="hdr-ava" style="width:34px;height:34px;border-radius:50%;overflow:hidden">${getAvatarHtml(currentUser,'w-9 h-9')}</div>
                 </button>
@@ -7635,15 +7654,18 @@ async function syncProfileData() {
 function scrollDown(smooth=true){VirtualList.scrollToBottom(smooth);}
 
 function closeChat() {
-    document.getElementById('chat-window')?.classList.remove('active');
-    // Убираем эффект глубины
+    const chatWin = document.getElementById('chat-window');
+    if(chatWin){
+        chatWin.classList.remove('active');
+        // Сбрасываем keyboard offset
+        chatWin.style.bottom = '';
+        chatWin.style.height = '';
+    }
     document.getElementById('main-content')?.classList.remove('chat-depth');
-    // Показываем FAB обратно
-    const fabBtn=document.getElementById('fab-btn-el');
-    if(fabBtn)fabBtn.style.display='';
-    // Сбрасываем transform input-bar
-    const ib=document.querySelector('.input-bar');
-    if(ib)ib.style.transform='';
+    const fabBtn = document.getElementById('fab-btn-el');
+    if(fabBtn) fabBtn.style.display = '';
+    const ib = document.querySelector('.input-bar');
+    if(ib) ib.style.transform = '';
     if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
     currentChatId    = null;
     currentPartnerId = null;
