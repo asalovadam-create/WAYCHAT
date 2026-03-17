@@ -75,17 +75,23 @@ const WCCache = (() => {
     const st=document.createElement('style');st.id='wc-ios8';
     st.textContent=`
         #app,.chat-view{height:calc(var(--dvh,1svh)*100)!important;max-height:calc(var(--dvh,1svh)*100)!important}
-        .input-bar{flex-shrink:0!important;transform:none!important}
+        /* input-bar: flex внизу, без transform */
+        .input-bar{flex-shrink:0!important;transform:none!important;position:relative!important}
         #messages,#main-content{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:auto}
-        .chat-view{transform:translateZ(0);will-change:transform;display:flex!important;flex-direction:column!important}
+        .chat-view{transform:translateZ(0);will-change:transform;display:flex!important;flex-direction:column!important;background:var(--chat-bg,#1d1d1e)!important}
         #messages{flex:1!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch}
         *,button,a,[onclick],[data-msg-id]{-webkit-tap-highlight-color:transparent}
         body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
-        /* КРИТИЧНО: iOS зумирует если font-size < 16px на любом input/textarea/select */
         input,textarea,select{font-size:16px!important;-webkit-text-size-adjust:100%;text-size-adjust:100%}
-        /* Блокируем зум через touch-action везде кроме скроллируемых зон */
         #app,#main-content,.chat-view,.prof-sheet-inner{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
         .vl-ph{flex-shrink:0;width:100%;pointer-events:none}
+        /* Серые полосы Safari — chat-header и input-bar закрашиваем фоном */
+        #chat-header{background:var(--hdr,rgba(29,29,30,0.97))!important}
+        .input-bar{background:var(--hdr,rgba(29,29,30,0.97))!important}
+        /* safe-area у app — фон совпадает */
+        #app{background:#1d1d1e!important}
+        /* Sticky search - работает в overflow-y:auto родителе */
+        #chat-search-bar{position:sticky!important;top:0!important;z-index:100!important;background:var(--bg,#1d1d1e)!important}
         #wc-off{position:fixed;top:max(env(safe-area-inset-top,0px),0px);left:0;right:0;z-index:99997;background:rgba(239,68,68,.97);color:#fff;padding:8px 16px;text-align:center;font-size:13px;font-weight:700;transform:translateY(-100%);transition:transform .3s ease}
         #wc-off.v{transform:translateY(0)}
     `;
@@ -707,17 +713,19 @@ function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
 
 function getInitialAvatar(name, sizeClass, uid = '') {
     const colors = ['#ef4444','#3b82f6','#10b981','#f97316','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
-    const char   = (name || '?').charAt(0).toUpperCase();
-    const color  = colors[char.charCodeAt(0) % colors.length];
-    // Увеличенные размеры шрифта для всех размеров аватара
-    const fontSize = sizeClass.includes('w-28') ? 'text-5xl'
-        : sizeClass.includes('w-16') ? 'text-3xl'
-        : sizeClass.includes('w-14') ? 'text-2xl'
-        : sizeClass.includes('w-12') ? 'text-xl'
-        : sizeClass.includes('w-10') ? 'text-lg'
-        : sizeClass.includes('w-9')  ? 'text-base'
-        : 'text-base';
-    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white font-bold ${fontSize}" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35);font-size:inherit" data-uid="${uid}">${char}</div>`;
+    const char  = (name || '?').charAt(0).toUpperCase();
+    const color = colors[char.charCodeAt(0) % colors.length];
+    // Размер шрифта через inline px — не зависит от Tailwind
+    const fs = sizeClass.includes('w-28') ? '38px'
+        : sizeClass.includes('w-16') ? '28px'
+        : sizeClass.includes('w-14') ? '24px'
+        : sizeClass.includes('w-12') ? '20px'
+        : sizeClass.includes('w-10') ? '18px'
+        : sizeClass.includes('w-9')  ? '16px'
+        : sizeClass.includes('w-8')  ? '15px'
+        : sizeClass.includes('full') ? '40%'
+        : '16px';
+    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white font-bold" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35);font-size:${fs};font-weight:800;line-height:1" data-uid="${uid}">${char}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -1089,9 +1097,17 @@ body {
     <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(env(safe-area-inset-bottom,0px),80px)">
 
         <!-- ══ ЧАТЫ ══ -->
-        <div id="chats-section" style="padding-top:max(env(safe-area-inset-top,0px),0px)">
-            <!-- Единая строка: поиск + аватар профиля справа -->
-            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px 8px;position:sticky;top:0;z-index:100;background:var(--bg)">
+        <div id="chats-section">
+            <!-- Единая строка: поиск + аватар — sticky, всегда сверху при скролле -->
+            <div id="chat-search-bar" style="
+                display:flex;align-items:center;gap:10px;
+                padding:10px 12px 8px;
+                padding-top:calc(max(env(safe-area-inset-top,0px), 10px) + 4px);
+                position:sticky;
+                top:0;
+                z-index:100;
+                background:var(--bg);
+            ">
                 <!-- Поиск -->
                 <div class="search-box" id="search-box-wrap" style="flex:1">
                     <span style="flex-shrink:0;opacity:.4">${ICONS.search}</span>
@@ -1449,7 +1465,7 @@ body {
 
 <!-- ══ ЧАТ ОКНО ══ -->
 <div id="chat-window" class="chat-view">
-    <div id="chat-header" class="glass" style="padding:10px 14px;padding-top:max(env(safe-area-inset-top),44px);display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);position:relative;z-index:5">
+    <div id="chat-header" class="glass" style="padding:10px 14px;padding-top:max(env(safe-area-inset-top,0px),10px);display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);position:relative;z-index:5;background:var(--hdr);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:10px">
             <button onclick="closeChat()" class="icon-btn">${ICONS.back}</button>
             <div style="position:relative;cursor:pointer" onclick="showPartnerProfile()">
