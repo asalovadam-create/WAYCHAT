@@ -808,18 +808,18 @@ function renderApp() {
     --glow: 0 0 20px rgba(16,185,129,0.4);
     --accent-10: rgba(16,185,129,0.1);
     --accent-30: rgba(16,185,129,0.3);
-    --bg: #2c2d2c;
-    --bg2: #252625;
-    --surface: #333434;
-    --surface2: #2e2f2e;
+    --bg: #1d1d1e;
+    --bg2: #191919;
+    --surface: #2a2a2b;
+    --surface2: #242424;
     --border: rgba(255,255,255,0.06);
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
-    --msg-in: #333434;
+    --msg-in: #2a2a2b;
     --msg-out: var(--accent);
     --divider: rgba(255,255,255,0.05);
-    --chat-bg: #2c2d2c;
-    --hdr: rgba(44,45,44,0.97);
+    --chat-bg: #1d1d1e;
+    --hdr: rgba(29,29,30,0.97);
     --sep: rgba(255,255,255,0.07);
     --item-hover: rgba(255,255,255,0.05);
 }
@@ -836,10 +836,33 @@ body {
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
-/* FAB — тихая кнопка без анимации и свечения, максимально внизу */
-.fab-btn{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+8px),12px);right:16px;width:46px;height:46px;border-radius:50%;background:#10b981;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.35);z-index:900;transition:transform .15s ease;-webkit-tap-highlight-color:transparent}
+/* FAB — максимально внизу, без анимации, без свечения */
+.fab-btn{
+    position:fixed;
+    /* env(safe-area-inset-bottom) = высота home indicator на iPhone.
+       Добавляем 4px сверху него — кнопка прямо над индикатором */
+    bottom:calc(env(safe-area-inset-bottom, 0px) + 4px);
+    right:16px;
+    width:46px;height:46px;
+    border-radius:50%;
+    background:#10b981;
+    border:none;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 1px 6px rgba(0,0,0,.3);
+    z-index:900;
+    transition:transform .15s ease;
+    -webkit-tap-highlight-color:transparent;
+}
 .fab-btn:active{transform:scale(.88)}
-.fab-menu{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+68px),72px);right:12px;z-index:901;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;opacity:0;transform:translateY(8px) scale(.97);transition:opacity .18s ease,transform .18s cubic-bezier(.34,1.56,.64,1)}
+.fab-menu{
+    position:fixed;
+    bottom:calc(env(safe-area-inset-bottom, 0px) + 60px);
+    right:12px;z-index:901;
+    display:flex;flex-direction:column;gap:8px;align-items:flex-end;
+    pointer-events:none;opacity:0;
+    transform:translateY(8px) scale(.97);
+    transition:opacity .18s ease,transform .18s cubic-bezier(.34,1.56,.64,1)
+}
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
 .fab-mi{display:flex;align-items:center;gap:12px;background:var(--surface);border:.5px solid rgba(255,255,255,.08);border-radius:16px;padding:11px 16px;cursor:pointer;box-shadow:0 4px 24px rgba(0,0,0,.45);font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s}
 .fab-mi:active{background:rgba(255,255,255,.08)}
@@ -849,8 +872,8 @@ body {
 .prof-sheet-wrap{position:fixed;inset:0;z-index:8500;display:none;align-items:flex-end}
 .prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:max(env(safe-area-inset-bottom,20px),20px)}
 
-/* ПОИСК */
-.search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.07);border:none;border-radius:14px;padding:9px 14px;transition:background 0.2s; }
+/* ПОИСК — сильно скруглённый */
+.search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:9px 14px;transition:background 0.2s; }
 .search-box:focus-within { background:rgba(255,255,255,0.10); }
 
 /* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
@@ -883,15 +906,18 @@ body {
 #moments-bar-scroll::-webkit-scrollbar{display:none}
 #moments-bar-scroll{scrollbar-width:none}
 
-/* АНИМАЦИИ МИКРОВЗАИМОДЕЙСТВИЙ — плавные как в TG web */
+/* АНИМАЦИИ МИКРОВЗАИМОДЕЙСТВИЙ — плавные и медленные */
 @keyframes chatRiseUp{
-    0%   { opacity:0; transform:translateY(12px); }
-    60%  { opacity:1; transform:translateY(-2px); }
+    0%   { opacity:0; transform:translateY(8px); }
     100% { opacity:1; transform:translateY(0); }
 }
-.chat-item-animate{animation:chatRiseUp 0.32s cubic-bezier(0.25,0.46,0.45,0.94) both}
-@keyframes avaPulse{0%,100%{transform:scale(1)}40%{transform:scale(1.10)}70%{transform:scale(0.97)}}
-.ava-pulse-anim{animation:avaPulse 0.35s cubic-bezier(0.34,1.56,0.64,1)}
+/* staggered delay по индексу через nth-child */
+.chat-item-animate{
+    animation:chatRiseUp 0.45s cubic-bezier(0.16,1,0.3,1) both;
+    animation-fill-mode: both;
+}
+@keyframes avaPulse{0%,100%{transform:scale(1)}40%{transform:scale(1.08)}70%{transform:scale(0.98)}}
+.ava-pulse-anim{animation:avaPulse 0.4s cubic-bezier(0.34,1.56,0.64,1)}
 
 /* ЧАТ ОКНО — плавное открытие как в TG */
 .chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform; }
@@ -927,7 +953,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:10px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+10px),14px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
+.input-bar { padding:6px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+6px),8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
 .input-inner:focus-within { border-color:var(--accent-30); }
@@ -1064,25 +1090,23 @@ body {
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section" style="padding-top:max(env(safe-area-inset-top,0px),0px)">
-            <!-- Шапка — только аватар справа, без badge сверху -->
-            <div style="display:flex;align-items:center;padding:12px 16px 4px;position:sticky;top:0;z-index:100;background:var(--bg)">
-                <div style="flex:1"></div>
-                <!-- badge скрытый — нужен для updateUnreadBadge() но не показывается в шапке -->
-                <div id="total-unread-badge" style="display:none">0</div>
-                <button onclick="openProfileSheet()" style="background:none;border:none;cursor:pointer;padding:0;border-radius:50%;overflow:hidden;flex-shrink:0;-webkit-tap-highlight-color:transparent">
-                    <div id="hdr-ava" style="width:34px;height:34px;border-radius:50%;overflow:hidden">${getAvatarHtml(currentUser,'w-9 h-9')}</div>
-                </button>
-            </div>
-            <!-- Поиск — нативный iOS стиль, без панели -->
-            <div style="padding:4px 12px 8px;position:sticky;top:max(calc(env(safe-area-inset-top,0px)+44px),44px);z-index:99;background:var(--bg)">
-                <div class="search-box" id="search-box-wrap">
+            <!-- Единая строка: поиск + аватар профиля справа -->
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px 8px;position:sticky;top:0;z-index:100;background:var(--bg)">
+                <!-- Поиск -->
+                <div class="search-box" id="search-box-wrap" style="flex:1">
                     <span style="flex-shrink:0;opacity:.4">${ICONS.search}</span>
                     <input id="search-input" style="background:transparent;outline:none;width:100%;color:var(--text);font-size:16px;font-family:inherit"
                            placeholder="Поиск"
                            oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
                     <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0;font-family:inherit">Отмена</button>
                 </div>
+                <!-- Аватар профиля — справа от поиска -->
+                <button onclick="openProfileSheet()" style="background:none;border:none;cursor:pointer;padding:0;border-radius:50%;overflow:hidden;flex-shrink:0;-webkit-tap-highlight-color:transparent;width:36px;height:36px">
+                    <div id="hdr-ava" style="width:36px;height:36px;border-radius:50%;overflow:hidden">${getAvatarHtml(currentUser,'w-9 h-9')}</div>
+                </button>
             </div>
+            <!-- badge скрытый — нужен для updateUnreadBadge() -->
+            <div id="total-unread-badge" style="display:none">0</div>
             <!-- Moments-панель (появляется свайпом вниз) -->
             <div id="moments-bar" style="display:none;overflow:hidden;max-height:0;transition:max-height 0.3s cubic-bezier(0.22,1,0.36,1),opacity 0.25s ease;opacity:0">
                 <div style="padding:8px 12px 4px">
@@ -1688,22 +1712,33 @@ let _chatsLoading = false;
 
 async function loadChats(force = false) {
     const now = Date.now();
-    // _chatsLoading защита — но сбрасываем если завис > 10 сек
-    if (_chatsLoading && (now - _lastChatsLoad) < 10000) return;
+    // _chatsLoading защита — но сбрасываем если завис > 8 сек
+    if (_chatsLoading && (now - _lastChatsLoad) < 8000) return;
     if (!force && recentChats.length && (now - _lastChatsLoad) < 8000) {
         renderChatList(recentChats);
         return;
     }
     _chatsLoading = true;
     if (!recentChats.length) showChatSkeleton();
+
+    // Таймаут 10с — не висим вечно
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 10000);
+
     try {
         const res = await fetch('/get_my_chats', {
             credentials: 'include',
-            headers: {'Accept-Encoding': 'gzip, deflate'}
+            headers: {'Accept-Encoding': 'gzip, deflate'},
+            signal: controller.signal
         });
-        if (!res || !res.ok) { _chatsLoading = false; return; }
-        let chats = await res.json();  // let — не const, чтобы можно было filter
-        // Не возвращаем удалённые чаты
+        clearTimeout(tid);
+        if (!res || !res.ok) {
+            _chatsLoading = false;
+            // Показываем кнопку повтора если список пустой
+            if (!recentChats.length) _showChatsError();
+            return;
+        }
+        let chats = await res.json();
         chats = chats.filter(ch => !_deletedChatIds.has(ch.chat_id));
         recentChats = chats;
         _lastChatsLoad = Date.now();
@@ -1717,8 +1752,25 @@ async function loadChats(force = false) {
                     .catch(() => {});
             }
         });
-    } catch(e) { console.error('loadChats:', e); }
+    } catch(e) {
+        clearTimeout(tid);
+        console.error('loadChats:', e);
+        if (!recentChats.length) _showChatsError();
+        // Авто-retry через 3с если это не принудительный вызов
+        if (!force) setTimeout(() => { if (Date.now() - _lastChatsLoad > 5000) loadChats(true); }, 3000);
+    }
     finally { _chatsLoading = false; }
+}
+
+function _showChatsError() {
+    const container = document.getElementById('chat-list');
+    if (!container) return;
+    container.innerHTML = `<div style="padding:40px 20px;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">📡</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">Не удалось загрузить чаты</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:18px">Проверьте подключение к интернету</div>
+        <button onclick="loadChats(true)" style="padding:10px 24px;background:var(--accent);border:none;border-radius:14px;color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Повторить</button>
+    </div>`;
 }
 // Debounced loadChats — не вызываем чаще раз в 1.5с при потоке сообщений
 let _loadChatsDebTimer = null;
