@@ -4,34 +4,103 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>WayChat</title>
+
     <link rel="apple-touch-icon" href="/static/logo.png">
     <link rel="icon" type="image/png" href="/static/img/icon-192.png">
     <link rel="manifest" href="/static/manifest.json">
+
+    <!-- iOS PWA: полноэкранный без браузерного chrome -->
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <!-- black-translucent: статус-бар прозрачный, контент уходит под него, белая полоса исчезает -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#212121">
+    <!-- Android: тулбар Chrome совпадает с фоном приложения -->
+    <meta name="theme-color" content="#111113">
     <meta name="format-detection" content="telephone=no">
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preload" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap"></noscript>
+
     <style>
-        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-        html{height:-webkit-fill-available}
-        body{width:100%;height:100%;min-height:100vh;min-height:-webkit-fill-available;min-height:100dvh;background:#212121;overflow:hidden;overscroll-behavior:none}
-        body{color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%;-webkit-font-smoothing:antialiased}
-        #root{width:100%;height:100%;background:#111113}
-        #splash{position:fixed;inset:0;z-index:999999;background:#212121;display:flex;flex-direction:column;align-items:center;justify-content:center;will-change:opacity;transform:translateZ(0)}
-        #splash-logo-wrap{position:relative;width:110px;height:110px}
-        #splash-logo{width:110px;height:110px;border-radius:26px;display:block;box-shadow:0 0 0 1px rgba(16,185,129,.25),0 12px 48px rgba(16,185,129,.2);animation:splashPop .5s cubic-bezier(.34,1.56,.64,1) both}
-        #splash-ring{position:absolute;inset:-8px;border-radius:34px;border:1.5px solid rgba(16,185,129,.35);animation:ringPulse 1.8s ease-in-out infinite}
-        #splash-name{position:absolute;bottom:max(env(safe-area-inset-bottom,0px),52px);left:0;right:0;text-align:center;font-family:"Pacifico",cursive;font-size:34px;font-weight:400;letter-spacing:.5px;background:linear-gradient(135deg,#fff 0%,#10b981 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;animation:splashTextIn .6s .15s ease both}
-        @keyframes splashPop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:scale(1)}}
-        @keyframes splashTextIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-        @keyframes ringPulse{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:.8;transform:scale(1.06)}}
-        @keyframes slideUpBanner{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:translateY(0)}}
+        /* ══ Сброс ══ */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+        /*
+          html фон = фон приложения.
+          iOS Safari смотрит на фон html для заполнения safe-area зон (статус-бар, home indicator).
+          Если он #111113 — полосы сверху и снизу сливаются с интерфейсом и исчезают визуально.
+        */
+        html {
+            background: #111113;
+            height: 100%;
+            overscroll-behavior: none;
+        }
+
+        body {
+            width: 100%;
+            height: 100%;
+            min-height: 100dvh;
+            background: #111113;
+            overflow: hidden;
+            overscroll-behavior: none;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+            -webkit-text-size-adjust: 100%;
+            -webkit-font-smoothing: antialiased;
+            /*
+              НЕ добавляем padding-top / padding-bottom.
+              safe-area-inset управляется внутри #app (в main.js).
+              Лишний padding здесь = видимая полоса под home indicator.
+            */
+        }
+
+        #root {
+            width: 100%;
+            height: 100%;
+            background: #111113;
+        }
+
+        /* ══ Сплэш — фон совпадает, статус-бар не видно ══ */
+        #splash {
+            position: fixed;
+            inset: 0;
+            z-index: 999999;
+            background: #111113;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            will-change: opacity;
+            transform: translateZ(0);
+        }
+        #splash-logo-wrap { position: relative; width: 110px; height: 110px; }
+        #splash-logo {
+            width: 110px; height: 110px; border-radius: 26px; display: block;
+            box-shadow: 0 0 0 1px rgba(16,185,129,.25), 0 12px 48px rgba(16,185,129,.2);
+            animation: splashPop .5s cubic-bezier(.34,1.56,.64,1) both;
+        }
+        #splash-ring {
+            position: absolute; inset: -8px; border-radius: 34px;
+            border: 1.5px solid rgba(16,185,129,.35);
+            animation: ringPulse 1.8s ease-in-out infinite;
+        }
+        #splash-name {
+            position: absolute;
+            bottom: max(env(safe-area-inset-bottom, 0px), 52px);
+            left: 0; right: 0; text-align: center;
+            font-family: "Pacifico", cursive;
+            font-size: 34px; font-weight: 400; letter-spacing: .5px;
+            background: linear-gradient(135deg, #fff 0%, #10b981 100%);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            animation: splashTextIn .6s .15s ease both;
+        }
+        @keyframes splashPop    { from{opacity:0;transform:scale(.7)} to{opacity:1;transform:scale(1)} }
+        @keyframes splashTextIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes ringPulse    { 0%,100%{opacity:.4;transform:scale(1)} 50%{opacity:.8;transform:scale(1.06)} }
+        @keyframes slideUpBanner{ from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
     </style>
 </head>
 <body>
@@ -46,7 +115,7 @@
 
 <div id="root"></div>
 
-<!-- Пользователь от Flask — НАПРЯМУЮ в window без localStorage -->
+<!-- Пользователь от Flask — напрямую в window -->
 <script>
 window.currentUser = {{ {
     "id": current_user.id,
@@ -60,71 +129,69 @@ window.currentUser = {{ {
 } | tojson | safe }};
 </script>
 
-<!-- Socket.IO до main.js -->
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-
-<!-- Основной JS -->
 <script src="/static/js/main.js"></script>
 
-<!-- Некритичные скрипты после main.js -->
 <script>
-(function() {
-    // Tailwind async
-    var t = document.createElement('script');
-    t.src = 'https://cdn.tailwindcss.com';
-    t.async = true;
-    document.head.appendChild(t);
+(function () {
+    /* Tailwind */
+    var tw = document.createElement('script');
+    tw.src = 'https://cdn.tailwindcss.com';
+    tw.async = true;
+    document.head.appendChild(tw);
 
-    // Скрываем splash когда root получил содержимое
+    /* Скрываем сплэш */
     var done = false;
     function hideSplash() {
-        if (done) return;
-        done = true;
+        if (done) return; done = true;
         var s = document.getElementById('splash');
         if (!s) return;
         s.style.transition = 'opacity .22s ease';
         s.style.opacity = '0';
         s.style.pointerEvents = 'none';
-        setTimeout(function() { if (s && s.parentNode) s.parentNode.removeChild(s); }, 240);
+        setTimeout(function () { if (s && s.parentNode) s.parentNode.removeChild(s); }, 240);
     }
-    var n = 0;
-    var timer = setInterval(function() {
-        n++;
+    var n = 0, timer = setInterval(function () {
         var r = document.getElementById('root');
-        if (r && r.children.length > 0) { clearInterval(timer); hideSplash(); return; }
-        if (n > 60) { clearInterval(timer); hideSplash(); }
+        if ((r && r.children.length > 0) || ++n > 60) { clearInterval(timer); hideSplash(); }
     }, 30);
-})();
 
-// Service Worker
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function() {
-        navigator.serviceWorker.register('/sw.js',{scope:'/',updateViaCache:'none'}).then(function(r){r.update().catch(function(){});setInterval(function(){r.update().catch(function(){});},30*60*1000);}).catch(function(e){console.warn('[SW]',e);});
-    });
-}
+    /* Service Worker */
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+            navigator.serviceWorker
+                .register('/sw.js', { scope: '/', updateViaCache: 'none' })
+                .then(function (r) {
+                    r.update().catch(function () {});
+                    setInterval(function () { r.update().catch(function () {}); }, 30 * 60 * 1000);
+                })
+                .catch(function (e) { console.warn('[SW]', e); });
+        });
+    }
 
-// iOS hint
-(function() {
-    var isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
-    if (!isIOS || window.navigator.standalone || localStorage.getItem('wc_ios_hint_v4')) return;
-    setTimeout(function() {
-        localStorage.setItem('wc_ios_hint_v4', '1');
-        var d = document.createElement('div');
-        d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(18,18,20,.97);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
-        var title = document.createElement('div');
-        title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:6px';
-        title.textContent = 'Добавить WayChat на экран';
-        var sub = document.createElement('div');
-        sub.style.cssText = 'font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px';
-        sub.textContent = 'Нажми Поделиться → На экран «Домой»';
-        var btn = document.createElement('button');
-        btn.style.cssText = 'width:100%;padding:12px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer';
-        btn.textContent = 'Понял, спасибо!';
-        btn.onclick = function() { d.remove(); };
-        d.appendChild(title); d.appendChild(sub); d.appendChild(btn);
-        document.body.appendChild(d);
-        setTimeout(function() { if (d.parentNode) d.remove(); }, 14000);
-    }, 4500);
+    /* iOS hint — только 1 раз */
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent)
+        && !window.navigator.standalone
+        && !localStorage.getItem('wc_ios_hint_v4')) {
+        setTimeout(function () {
+            localStorage.setItem('wc_ios_hint_v4', '1');
+            var d = document.createElement('div');
+            d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(18,18,20,.97);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
+            var title = document.createElement('div');
+            title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:6px';
+            title.textContent = 'Добавить WayChat на экран';
+            var sub = document.createElement('div');
+            sub.style.cssText = 'font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px';
+            sub.textContent = 'Нажми Поделиться → На экран «Домой»';
+            var btn = document.createElement('button');
+            btn.style.cssText = 'width:100%;padding:12px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
+            btn.textContent = 'Понял, спасибо!';
+            btn.onclick = function () { d.remove(); };
+            d.appendChild(title); d.appendChild(sub); d.appendChild(btn);
+            document.body.appendChild(d);
+            setTimeout(function () { if (d.parentNode) d.remove(); }, 14000);
+        }, 4500);
+    }
 })();
 </script>
 
