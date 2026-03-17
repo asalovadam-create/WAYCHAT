@@ -80,12 +80,34 @@ const WCCache = (() => {
         .chat-view,#messages{transform:translateZ(0);will-change:transform}
         *,button,a,[onclick],[data-msg-id]{-webkit-tap-highlight-color:transparent}
         body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+        /* КРИТИЧНО: iOS зумирует если font-size < 16px на любом input/textarea/select */
+        input,textarea,select{font-size:16px!important;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+        /* Блокируем зум через touch-action везде кроме скроллируемых зон */
+        #app,#main-content,.chat-view,.prof-sheet-inner{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
         .vl-ph{flex-shrink:0;width:100%;pointer-events:none}
         #wc-off{position:fixed;top:max(env(safe-area-inset-top,0px),0px);left:0;right:0;z-index:99997;background:rgba(239,68,68,.97);color:#fff;padding:8px 16px;text-align:center;font-size:13px;font-weight:700;transform:translateY(-100%);transition:transform .3s ease}
         #wc-off.v{transform:translateY(0)}
     `;
     document.head.appendChild(st);
-    if(vv){let ph=vv.height;vv.addEventListener('resize',()=>{const k=Math.max(0,window.innerHeight-vv.height);const b=document.querySelector('.input-bar');if(b)b.style.transform=k>60?`translateY(-${k}px)`:'';if(vv.height<ph-80){const m=document.getElementById('messages');if(m)requestAnimationFrame(()=>{m.scrollTop=m.scrollHeight;});}ph=vv.height;},{passive:true});}
+    if(vv){
+        let ph=vv.height;
+        vv.addEventListener('resize',()=>{
+            const kbHeight=Math.max(0,window.innerHeight-vv.height);
+            const b=document.querySelector('.input-bar');
+            const chatWin=document.getElementById('chat-window');
+            // Смещаем input-bar только если чат открыт
+            if(b && chatWin?.classList.contains('active')){
+                b.style.transform=kbHeight>60?`translateY(-${kbHeight}px)`:'';
+            } else if(b){
+                b.style.transform='';
+            }
+            if(vv.height<ph-80){
+                const m=document.getElementById('messages');
+                if(m)requestAnimationFrame(()=>{m.scrollTop=m.scrollHeight;});
+            }
+            ph=vv.height;
+        },{passive:true});
+    }
     const ob=()=>{let e=document.getElementById('wc-off');if(!e){e=document.createElement('div');e.id='wc-off';e.textContent='📡 Нет подключения';document.body.appendChild(e);}return e;};
     window.addEventListener('offline',()=>ob().classList.add('v'));
     window.addEventListener('online',()=>ob().classList.remove('v'));
@@ -93,6 +115,20 @@ const WCCache = (() => {
     if('serviceWorker'in navigator){navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type!=='SW_UPDATED')return;if(!document.getElementById('chat-window')?.classList.contains('active')){setTimeout(()=>location.reload(),400);return;}let p=document.getElementById('wc-sw-pill');if(!p){p=document.createElement('div');p.id='wc-sw-pill';p.style.cssText='position:fixed;top:max(env(safe-area-inset-top,10px),10px);left:50%;transform:translateX(-50%) translateY(-60px);z-index:99999;background:rgba(16,185,129,.97);color:#000;padding:10px 22px;border-radius:24px;font-size:14px;font-weight:800;box-shadow:0 4px 24px rgba(0,0,0,.4);cursor:pointer;white-space:nowrap;transition:transform .35s cubic-bezier(.34,1.56,.64,1)';p.textContent='🆕 Обновление — нажмите';p.onclick=()=>location.reload();document.body.appendChild(p);}requestAnimationFrame(()=>{p.style.transform='translateX(-50%) translateY(0)';});setTimeout(()=>{p.style.transform='translateX(-50%) translateY(-60px)';},12000);});navigator.serviceWorker.addEventListener('controllerchange',()=>{if(document.hidden)window._swr=true;});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&window._swr){window._swr=false;location.reload();}});}
     window.addEventListener('error',e=>console.error('[WC]',e.message));
     window.addEventListener('unhandledrejection',e=>{console.warn('[WC]',e.reason);e.preventDefault();});
+    // Блокируем zoom при фокусе на любой input — сбрасываем viewport
+    function _fixViewport(){
+        const m=document.querySelector('meta[name=viewport]');
+        if(m)m.content='width=device-width,initial-scale=1.0,maximum-scale=1.0,viewport-fit=cover,interactive-widget=resizes-content';
+    }
+    document.addEventListener('focusin', _fixViewport, {passive:true});
+    document.addEventListener('blur', ()=>{
+        // После blur сбрасываем transform на input-bar если чат не открыт
+        const chatWin=document.getElementById('chat-window');
+        if(!chatWin?.classList.contains('active')){
+            const ib=document.querySelector('.input-bar');
+            if(ib)ib.style.transform='';
+        }
+    }, {passive:true, capture:true});
 })();
 
 // ══ MsgDB ════════════════════════════════════════════════════
@@ -575,11 +611,14 @@ async function init() {
 
     // ── 3. Socket + реальные данные в фоне ──
     initSocket();
-    // Fallback: если socket не подключится за 2.5с — грузим чаты напрямую
-    // (socket.on('connect') сам вызовет loadChats при успешном подключении)
+    // Fallback 1: если socket не подключится за 2с — грузим чаты напрямую
     setTimeout(() => {
-        if (!wsConnected && Date.now() - _lastChatsLoad > 2000) loadChats(true);
-    }, 2500);
+        if (!wsConnected && Date.now() - _lastChatsLoad > 1500) loadChats(true);
+    }, 2000);
+    // Fallback 2: повторная попытка через 5с на случай медленного соединения
+    setTimeout(() => {
+        if (Date.now() - _lastChatsLoad > 4000) loadChats(true);
+    }, 5000);
     setTimeout(syncProfileData, 500);
     setTimeout(_updatePermsSummary, 1000);
     setTimeout(initPushNotifications, 800);
@@ -781,10 +820,11 @@ body {
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
-/* FAB + profile button */
-.fab-btn{position:fixed;bottom:max(env(safe-area-inset-bottom,0px),20px);right:20px;width:56px;height:56px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 20px rgba(16,185,129,.4),0 2px 8px rgba(0,0,0,.3);z-index:900;transition:transform .2s cubic-bezier(.34,1.56,.64,1);-webkit-tap-highlight-color:transparent}
+/* FAB — меньше, ниже, свечение */
+.fab-btn{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+10px),14px);right:16px;width:48px;height:48px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 0 rgba(16,185,129,0.5),0 4px 16px rgba(16,185,129,.55),0 2px 8px rgba(0,0,0,.4);z-index:900;transition:transform .2s cubic-bezier(.34,1.56,.64,1),box-shadow .2s;-webkit-tap-highlight-color:transparent;animation:fabGlow 2.4s ease-in-out infinite}
 .fab-btn:active{transform:scale(.88)}
-.fab-menu{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+86px),86px);right:16px;z-index:901;display:flex;flex-direction:column;gap:9px;align-items:flex-end;pointer-events:none;opacity:0;transform:translateY(10px) scale(.96);transition:opacity .2s ease,transform .2s cubic-bezier(.34,1.56,.64,1)}
+@keyframes fabGlow{0%,100%{box-shadow:0 0 0 0 rgba(16,185,129,0.45),0 4px 16px rgba(16,185,129,.5),0 2px 8px rgba(0,0,0,.4)}50%{box-shadow:0 0 0 8px rgba(16,185,129,0.0),0 4px 24px rgba(16,185,129,.7),0 2px 8px rgba(0,0,0,.4)}}
+.fab-menu{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+72px),76px);right:12px;z-index:901;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none;opacity:0;transform:translateY(10px) scale(.96);transition:opacity .2s ease,transform .2s cubic-bezier(.34,1.56,.64,1)}
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
 .fab-mi{display:flex;align-items:center;gap:12px;background:var(--surface);border:.5px solid rgba(255,255,255,.08);border-radius:16px;padding:11px 16px;cursor:pointer;box-shadow:0 4px 24px rgba(0,0,0,.45);font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s}
 .fab-mi:active{background:rgba(255,255,255,.08)}
@@ -872,7 +912,7 @@ body {
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
 .input-inner:focus-within { border-color:var(--accent-30); }
-#msg-input { flex:1;background:transparent;outline:none;color:white;font-size:15px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
+#msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
 .send-btn:active { transform:scale(0.88); }
@@ -1018,7 +1058,7 @@ body {
             <div style="padding:4px 12px 8px;position:sticky;top:max(calc(env(safe-area-inset-top,0px)+44px),44px);z-index:99;background:var(--bg)">
                 <div class="search-box" id="search-box-wrap">
                     <span style="flex-shrink:0;opacity:.4">${ICONS.search}</span>
-                    <input id="search-input" style="background:transparent;outline:none;width:100%;color:var(--text);font-size:15px;font-family:inherit"
+                    <input id="search-input" style="background:transparent;outline:none;width:100%;color:var(--text);font-size:16px;font-family:inherit"
                            placeholder="Поиск"
                            oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
                     <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0;font-family:inherit">Отмена</button>
@@ -1191,17 +1231,11 @@ body {
             </div>
             Создать момент
         </div>
-        <div class="fab-mi" onclick="closeFabMenu();showToast('Каналы — скоро! 🚀','info')">
-            <div style="width:34px;height:34px;border-radius:10px;background:rgba(251,191,36,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </div>
-            Канал
-        </div>
     </div>
     <button class="fab-btn" onclick="toggleFabMenu()" id="fab-btn-el" aria-label="Новый чат">
-        <svg id="fab-ico" width="22" height="22" viewBox="0 0 24 24" fill="none" style="transition:transform .25s cubic-bezier(0.34,1.56,0.64,1)">
-            <line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
-            <line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
+        <svg id="fab-ico" width="20" height="20" viewBox="0 0 24 24" fill="none" style="transition:transform .25s cubic-bezier(0.34,1.56,0.64,1)">
+            <line x1="12" y1="5" x2="12" y2="19" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
+            <line x1="5" y1="12" x2="19" y2="12" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
     </button>
 
@@ -1211,10 +1245,13 @@ body {
 <div id="prof-sheet" class="prof-sheet-wrap">
     <div onclick="closeProfileSheet()" style="position:absolute;inset:0;background:rgba(0,0,0,.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)"></div>
     <div class="prof-sheet-inner" id="prof-sheet-inner">
-        <div style="padding:10px 0 2px;display:flex;justify-content:center;position:sticky;top:0;background:#1c1c1c;z-index:2;border-radius:22px 22px 0 0">
-            <div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.2)"></div>
+        <div style="padding:10px 16px 2px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;background:#1c1c1c;z-index:2;border-radius:22px 22px 0 0">
+            <div style="width:36px;height:4px;border-radius:2px;background:rgba(255,255,255,.2);margin:0 auto"></div>
+            <button onclick="closeProfileSheet()" style="position:absolute;right:14px;top:10px;width:30px;height:30px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.6);-webkit-tap-highlight-color:transparent">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
         </div>
-        <div id="settings-section">        <div id="settings-section">
+        <div id="settings-section">
             <!-- iOS 26 hero: размытый фон из аватара -->
             <div style="position:relative;height:300px;overflow:hidden;flex-shrink:0">
                 <div id="settings-bg" style="position:absolute;inset:-40px;background-size:cover;background-position:center;filter:blur(30px) brightness(0.45) saturate(1.7);transition:background-image 0.4s"></div>
@@ -1329,9 +1366,9 @@ body {
                     <span style="color:#ef4444">${ICONS.logout}</span> Выйти из аккаунта
                 </button>
             </div>
-        </div></div>
+        </div>
     </div>
-</div></div>
+</div>
 
 <!-- ══ МИНИ-ПЛЕЕР (глобальный, поверх всего) ══ -->
 <div id="music-mini-player" style="display:none;position:fixed;bottom:max(env(safe-area-inset-bottom,0px),20px);left:12px;right:12px;z-index:6500;border-radius:18px;overflow:hidden;background:rgba(15,15,20,0.96);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:.5px solid rgba(255,255,255,.1);box-shadow:0 8px 40px rgba(0,0,0,.7);transform:translateY(120%);transition:transform .4s cubic-bezier(.32,.72,0,1)">
@@ -1511,6 +1548,9 @@ body {
 let _fo = false;
 function toggleFabMenu(){_fo?closeFabMenu():openFabMenu();}
 function openFabMenu(){
+    // Не открываем меню если чат открыт
+    const chatWin=document.getElementById('chat-window');
+    if(chatWin?.classList.contains('active'))return;
     _fo=true;
     document.getElementById('fab-menu')?.classList.add('open');
     document.getElementById('fab-bd')?.classList.add('open');
@@ -1532,15 +1572,58 @@ function openProfileSheet(){
     updateSettingsUI();
     setTimeout(_injectMusicButton,80);
     sh.style.display='flex';
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{inn.style.transform='translateY(0)';}));
+    inn.style.transition='none';
+    inn.style.transform='translateY(100%)';
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        inn.style.transition='transform .35s cubic-bezier(.32,.72,0,1)';
+        inn.style.transform='translateY(0)';
+    }));
     vibrate(8);
+    // Свайп вниз для закрытия
+    _setupProfileSwipeClose(inn);
+}
+
+function _setupProfileSwipeClose(inn){
+    // Не вешаем повторно
+    if(inn._swipeSetup)return;
+    inn._swipeSetup=true;
+    let sy=0,dragging=false,startScrollTop=0;
+    inn.addEventListener('touchstart',e=>{
+        sy=e.touches[0].clientY;
+        startScrollTop=inn.scrollTop;
+        dragging=true;
+    },{passive:true});
+    inn.addEventListener('touchmove',e=>{
+        if(!dragging)return;
+        const dy=e.touches[0].clientY-sy;
+        // Закрываем только если скролл в самом верху и тянем вниз
+        if(dy>0&&inn.scrollTop<=0){
+            inn.style.transition='none';
+            inn.style.transform=`translateY(${Math.min(dy*0.55,220)}px)`;
+        }
+    },{passive:true});
+    inn.addEventListener('touchend',e=>{
+        if(!dragging)return;
+        dragging=false;
+        const dy=e.changedTouches[0].clientY-sy;
+        if(dy>90&&inn.scrollTop<=0){
+            closeProfileSheet();
+        } else {
+            inn.style.transition='transform .25s cubic-bezier(.32,.72,0,1)';
+            inn.style.transform='translateY(0)';
+        }
+    },{passive:true});
 }
 function closeProfileSheet(){
     const inn=document.getElementById('prof-sheet-inner');
     const sh=document.getElementById('prof-sheet');
     if(!inn||!sh)return;
+    inn.style.transition='transform .32s cubic-bezier(.32,.72,0,1)';
     inn.style.transform='translateY(100%)';
-    setTimeout(()=>{sh.style.display='none';},380);
+    setTimeout(()=>{
+        sh.style.display='none';
+        inn.style.transition='';
+    },340);
 }
 // Обновляем аватар в шапке при смене
 function _syncHeaderAva(){
@@ -2171,6 +2254,10 @@ async function openChat(id, name, avatar) {
     hasMoreMessages  = true;
 
     win.classList.add('active');
+    // Скрываем FAB и закрываем меню при открытии чата
+    closeFabMenu();
+    const fabBtn=document.getElementById('fab-btn-el');
+    if(fabBtn)fabBtn.style.display='none';
     // Эффект глубины — фон слегка уменьшается и размывается
     document.getElementById('main-content')?.classList.add('chat-depth');
     const displayName = getContactDisplayName(id, name);
@@ -2249,6 +2336,9 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     hasMoreMessages  = true;
 
     win.classList.add('active');
+    closeFabMenu();
+    const fabBtn2=document.getElementById('fab-btn-el');
+    if(fabBtn2)fabBtn2.style.display='none';
     document.getElementById('main-content')?.classList.add('chat-depth');
     document.getElementById('chat-name').textContent = groupName;
     document.getElementById('chat-status').textContent = 'группа';
@@ -7548,6 +7638,12 @@ function closeChat() {
     document.getElementById('chat-window')?.classList.remove('active');
     // Убираем эффект глубины
     document.getElementById('main-content')?.classList.remove('chat-depth');
+    // Показываем FAB обратно
+    const fabBtn=document.getElementById('fab-btn-el');
+    if(fabBtn)fabBtn.style.display='';
+    // Сбрасываем transform input-bar
+    const ib=document.querySelector('.input-bar');
+    if(ib)ib.style.transform='';
     if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
     currentChatId    = null;
     currentPartnerId = null;
