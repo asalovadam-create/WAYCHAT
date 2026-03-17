@@ -2,7 +2,12 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <!--
+        maximum-scale=1.0 — блокирует автозум iOS при фокусе на input.
+        viewport-fit=cover — контент под вырез камеры и home indicator.
+        interactive-widget=resizes-content — клавиатура не двигает viewport.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>WayChat</title>
 
     <link rel="apple-touch-icon" href="/static/logo.png">
@@ -11,11 +16,11 @@
 
     <!-- iOS PWA: полноэкранный без браузерного chrome -->
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <!-- black-translucent: статус-бар прозрачный, контент уходит под него, белая полоса исчезает -->
+    <!-- black-translucent: статус-бар прозрачный, полосы сверху нет -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="mobile-web-app-capable" content="yes">
-    <!-- Android: тулбар Chrome совпадает с фоном приложения -->
+    <!-- Android: тулбар = фон приложения, визуально исчезает -->
     <meta name="theme-color" content="#111113">
     <meta name="format-detection" content="telephone=no">
 
@@ -25,18 +30,19 @@
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap"></noscript>
 
     <style>
-        /* ══ Сброс ══ */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
         /*
-          html фон = фон приложения.
-          iOS Safari смотрит на фон html для заполнения safe-area зон (статус-бар, home indicator).
-          Если он #111113 — полосы сверху и снизу сливаются с интерфейсом и исчезают визуально.
+          html background = цвет safe-area зон.
+          iOS заполняет статус-бар и home indicator фоном <html>.
+          #111113 сливается с интерфейсом — полосы исчезают.
         */
         html {
             background: #111113;
             height: 100%;
             overscroll-behavior: none;
+            /* Блокируем touch-zoom на уровне html */
+            touch-action: manipulation;
         }
 
         body {
@@ -49,12 +55,9 @@
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
             -webkit-font-smoothing: antialiased;
-            /*
-              НЕ добавляем padding-top / padding-bottom.
-              safe-area-inset управляется внутри #app (в main.js).
-              Лишний padding здесь = видимая полоса под home indicator.
-            */
+            touch-action: manipulation;
         }
 
         #root {
@@ -63,7 +66,7 @@
             background: #111113;
         }
 
-        /* ══ Сплэш — фон совпадает, статус-бар не видно ══ */
+        /* ══ Сплэш ══ */
         #splash {
             position: fixed;
             inset: 0;
@@ -115,7 +118,7 @@
 
 <div id="root"></div>
 
-<!-- Пользователь от Flask — напрямую в window -->
+<!-- Пользователь от Flask -->
 <script>
 window.currentUser = {{ {
     "id": current_user.id,
@@ -169,7 +172,7 @@ window.currentUser = {{ {
         });
     }
 
-    /* iOS hint — только 1 раз */
+    /* iOS hint */
     if (/iphone|ipad|ipod/i.test(navigator.userAgent)
         && !window.navigator.standalone
         && !localStorage.getItem('wc_ios_hint_v4')) {
