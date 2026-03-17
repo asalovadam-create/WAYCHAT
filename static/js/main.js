@@ -786,7 +786,7 @@ body {
 .fab-btn:active{transform:scale(.88)}
 .fab-menu{position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+86px),86px);right:16px;z-index:901;display:flex;flex-direction:column;gap:9px;align-items:flex-end;pointer-events:none;opacity:0;transform:translateY(10px) scale(.96);transition:opacity .2s ease,transform .2s cubic-bezier(.34,1.56,.64,1)}
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
-.fab-mi{display:flex;align-items:center;gap:12px;background:var(--surface);border:.5px solid rgba(255,255,255,.1);border-radius:14px;padding:12px 18px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,.5);font-size:15px;font-weight:600;color:var(--text);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s}
+.fab-mi{display:flex;align-items:center;gap:12px;background:var(--surface);border:.5px solid rgba(255,255,255,.08);border-radius:16px;padding:11px 16px;cursor:pointer;box-shadow:0 4px 24px rgba(0,0,0,.45);font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s}
 .fab-mi:active{background:rgba(255,255,255,.08)}
 .fab-bd{position:fixed;inset:0;z-index:899;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .2s ease}
 .fab-bd.open{opacity:1;pointer-events:all}
@@ -795,8 +795,14 @@ body {
 .prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:max(env(safe-area-inset-bottom,20px),20px)}
 
 /* ПОИСК */
-.search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:9px 14px;transition:background 0.2s; }
-.search-box:focus-within { border-color:var(--accent-30);background:rgba(255,255,255,0.08); }
+.search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.07);border:none;border-radius:14px;padding:9px 14px;transition:background 0.2s; }
+.search-box:focus-within { background:rgba(255,255,255,0.10); }
+
+/* КАТЕГОРИИ ПОИСКА */
+.search-cat-btn { flex-shrink:0;padding:6px 14px;background:rgba(255,255,255,0.07);border:none;border-radius:20px;color:var(--text-2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:background 0.15s,color 0.15s;-webkit-tap-highlight-color:transparent }
+.search-cat-btn.active { background:var(--accent);color:#000 }
+#search-categories { display:flex!important;scrollbar-width:none }
+#search-categories::-webkit-scrollbar { display:none }
 
 /* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
 .fab-plus {
@@ -810,17 +816,37 @@ body {
 }
 .fab-plus:active { transform:scale(0.88); }
 
-/* ЧАТЫ */
-.chat-item{display:flex;align-items:center;gap:12px;padding:8px 12px;cursor:pointer;position:relative;border-bottom:.5px solid var(--sep);transition:background .12s;}
-.chat-item:last-child{border-bottom:none}
+/* ЧАТЫ — TG минимализм */
+.chat-item{display:flex;align-items:center;gap:12px;padding:10px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
-.online-dot { position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid #000;border-radius:50%;box-shadow:0 0 6px var(--accent); }
+.online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 6px var(--accent)}
 
-/* ЧАТ ОКНО */
-.chat-view { position:fixed;inset:0;z-index:2000;background:#000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.35s cubic-bezier(0.22,1,0.36,1);will-change:transform; }
+/* СВАЙП ЖЕСТЫ */
+.chat-swipe-container{position:relative;overflow:hidden;touch-action:pan-y}
+.chat-swipe-action{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;min-width:72px;pointer-events:none;opacity:0;transition:opacity .15s}
+.chat-swipe-action.right{left:0;background:linear-gradient(90deg,rgba(16,185,129,0.25),transparent);padding-left:18px;justify-content:flex-start}
+.chat-swipe-action.left{right:0;background:linear-gradient(270deg,rgba(99,102,241,0.25),transparent);padding-right:18px;justify-content:flex-end}
+
+/* MOMENTS BAR */
+.moment-ava-item{display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;-webkit-tap-highlight-color:transparent;transition:opacity .15s}
+.moment-ava-item:active{opacity:0.65}
+#moments-bar-scroll::-webkit-scrollbar{display:none}
+#moments-bar-scroll{scrollbar-width:none}
+
+/* АНИМАЦИИ МИКРОВЗАИМОДЕЙСТВИЙ */
+@keyframes chatRiseUp{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
+.chat-item-animate{animation:chatRiseUp 0.22s cubic-bezier(0.22,1,0.36,1)}
+@keyframes avaPulse{0%,100%{transform:scale(1)}40%{transform:scale(1.10)}70%{transform:scale(0.97)}}
+.ava-pulse-anim{animation:avaPulse 0.35s cubic-bezier(0.34,1.56,0.64,1)}
+
+/* ЧАТ ОКНО — с эффектом глубины */
+.chat-view { position:fixed;inset:0;z-index:2000;background:#000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.32s cubic-bezier(0.22,1,0.36,1);will-change:transform; }
 .chat-view.active { transform:translateX(0); }
 .chat-wallpaper{background:#212121;}
+/* Эффект глубины на фоне при открытии чата */
+#main-content{transition:transform 0.32s cubic-bezier(0.22,1,0.36,1),filter 0.32s ease,opacity 0.32s ease}
+#main-content.chat-depth{transform:scale(0.94);filter:blur(3px);opacity:0.55;pointer-events:none}
 
 /* СООБЩЕНИЯ */
 .msg-container { display:flex;flex-direction:column;gap:2px;padding:8px 8px 12px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:auto;will-change:scroll-position; }
@@ -985,24 +1011,37 @@ body {
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section" style="padding-top:max(env(safe-area-inset-top,0px),0px)">
-            <!-- Шапка -->
-            <div style="display:flex;align-items:center;padding:14px 16px 0;position:sticky;top:0;z-index:100;background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)">
-                <div style="flex:1;display:flex;align-items:center">
-                    <span style="font-size:22px;font-weight:800;letter-spacing:-.5px">WayChat</span>
+            <!-- Шапка — минималистичная, только аватар + badge -->
+            <div style="display:flex;align-items:center;padding:12px 16px 4px;position:sticky;top:0;z-index:100;background:var(--bg)">
+                <div style="flex:1;display:flex;align-items:center;gap:8px">
                     <div id="total-unread-badge" class="hdr-badge" style="display:none">0</div>
                 </div>
                 <button onclick="openProfileSheet()" style="background:none;border:none;cursor:pointer;padding:0;border-radius:50%;overflow:hidden;flex-shrink:0;-webkit-tap-highlight-color:transparent">
                     <div id="hdr-ava" style="width:34px;height:34px;border-radius:50%;overflow:hidden">${getAvatarHtml(currentUser,'w-9 h-9')}</div>
                 </button>
             </div>
-            <!-- Поиск -->
-            <div style="padding:8px 12px 6px;background:var(--hdr);position:sticky;top:max(calc(env(safe-area-inset-top,0px)+52px),52px);z-index:99">
-                <div class="search-box">
+            <!-- Поиск — нативный iOS стиль, без панели -->
+            <div style="padding:4px 12px 8px;position:sticky;top:max(calc(env(safe-area-inset-top,0px)+44px),44px);z-index:99;background:var(--bg)">
+                <div class="search-box" id="search-box-wrap">
                     <span style="flex-shrink:0;opacity:.4">${ICONS.search}</span>
                     <input id="search-input" style="background:transparent;outline:none;width:100%;color:var(--text);font-size:15px;font-family:inherit"
                            placeholder="Поиск"
                            oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
                     <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0;font-family:inherit">Отмена</button>
+                </div>
+                <!-- Умный поиск: категории (показываются при фокусе) -->
+                <div id="search-categories" style="display:none;margin-top:10px;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none">
+                    <button class="search-cat-btn active" data-cat="all" onclick="setSearchCategory('all',this)">Все</button>
+                    <button class="search-cat-btn" data-cat="people" onclick="setSearchCategory('people',this)">Люди</button>
+                    <button class="search-cat-btn" data-cat="messages" onclick="setSearchCategory('messages',this)">Сообщения</button>
+                    <button class="search-cat-btn" data-cat="media" onclick="setSearchCategory('media',this)">Медиа</button>
+                    <button class="search-cat-btn" data-cat="links" onclick="setSearchCategory('links',this)">Ссылки</button>
+                </div>
+            </div>
+            <!-- Moments-панель (появляется свайпом вниз) -->
+            <div id="moments-bar" style="display:none;overflow:hidden;max-height:0;transition:max-height 0.3s cubic-bezier(0.22,1,0.36,1),opacity 0.25s ease;opacity:0">
+                <div style="padding:8px 12px 4px">
+                    <div id="moments-bar-scroll" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
                 </div>
             </div>
             <div id="search-results" style="padding:0 8px;display:none"></div>
@@ -1148,25 +1187,33 @@ body {
     <!-- ══ FAB ПЛЮС ══ -->
     <div id="fab-bd" class="fab-bd" onclick="closeFabMenu()"></div>
     <div id="fab-menu" class="fab-menu">
-        <div class="fab-mi" onclick="closeFabMenu();pickMedia('moment')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="var(--accent)" stroke-width="2"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
-            Новый момент
+        <div class="fab-mi" onclick="closeFabMenu();openNewContactModal()">
+            <div style="width:34px;height:34px;border-radius:10px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="var(--accent)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><line x1="16" y1="11" x2="22" y2="11" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            Новый чат
         </div>
         <div class="fab-mi" onclick="closeFabMenu();openCreateGroupModal()">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="var(--accent)" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
-            Создать группу
+            <div style="width:34px;height:34px;border-radius:10px;background:rgba(59,130,246,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="#60a5fa" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            Новая группа
         </div>
-        <div class="fab-mi" onclick="closeFabMenu();openNewContactModal()">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="var(--accent)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><line x1="16" y1="11" x2="22" y2="11" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
-            Добавить контакт
+        <div class="fab-mi" onclick="closeFabMenu();pickMedia('moment')">
+            <div style="width:34px;height:34px;border-radius:10px;background:rgba(139,92,246,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="#a78bfa" stroke-width="2"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/></svg>
+            </div>
+            Создать момент
         </div>
         <div class="fab-mi" onclick="closeFabMenu();showToast('Каналы — скоро! 🚀','info')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            Создать канал
+            <div style="width:34px;height:34px;border-radius:10px;background:rgba(251,191,36,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            Канал
         </div>
     </div>
     <button class="fab-btn" onclick="toggleFabMenu()" id="fab-btn-el" aria-label="Новый чат">
-        <svg id="fab-ico" width="22" height="22" viewBox="0 0 24 24" fill="none" style="transition:transform .25s ease">
+        <svg id="fab-ico" width="22" height="22" viewBox="0 0 24 24" fill="none" style="transition:transform .25s cubic-bezier(0.34,1.56,0.64,1)">
             <line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
             <line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/>
         </svg>
@@ -1851,10 +1898,23 @@ function renderChatList(chats) {
 
         if (isNew) {
             div = document.createElement('div');
-            div.className = 'chat-item';
+            div.className = 'chat-item chat-item-animate';
             div.dataset.chatKey   = chatKey;
             div.dataset.partnerId = String(partnerId);
             if (isGroup) div.dataset.isGroup = '1';
+
+            // Подсказки для свайпов
+            const hintR = document.createElement('div');
+            hintR.className = 'swipe-hint-right';
+            hintR.style.cssText = 'position:absolute;left:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;opacity:0;pointer-events:none;z-index:1;transition:opacity .15s';
+            hintR.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span style="font-size:12px;font-weight:600;color:var(--accent)">Ответить</span>';
+            div.appendChild(hintR);
+
+            const hintL = document.createElement('div');
+            hintL.className = 'swipe-hint-left';
+            hintL.style.cssText = 'position:absolute;right:14px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:6px;opacity:0;pointer-events:none;z-index:1;transition:opacity .15s';
+            hintL.innerHTML = '<span style="font-size:12px;font-weight:600;color:rgba(99,102,241,0.9)">Архив</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="21 8 21 21 3 21 3 8" stroke="rgba(99,102,241,0.9)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="3" width="22" height="5" rx="1" stroke="rgba(99,102,241,0.9)" stroke-width="2"/></svg>';
+            div.appendChild(hintL);
 
             // Аватар
             const avaWrap = document.createElement('div');
@@ -1901,7 +1961,7 @@ function renderChatList(chats) {
 
             const info = document.createElement('div');
             info.className = 'chat-info';
-            info.style.cssText = 'flex:1;min-width:0;padding-bottom:10px';
+            info.style.cssText = 'flex:1;min-width:0;padding-bottom:12px;border-bottom:.5px solid var(--sep)';
 
             div.appendChild(avaWrap);
             div.appendChild(info);
@@ -2006,7 +2066,16 @@ function onSearchFocus() {
     searchMode = true;
     document.getElementById('search-cancel').style.display = 'block';
     document.getElementById('chat-list').style.display = 'none';
+    document.getElementById('search-results').style.display = 'block';
     document.getElementById('search-results').classList.remove('hidden');
+    // Показываем умный поиск: категории
+    const cats = document.getElementById('search-categories');
+    if (cats) {
+        cats.style.display = 'flex';
+        cats.style.animation = 'fadeIn 0.18s ease';
+    }
+    // Скрываем Moments bar при поиске
+    _hideMomentsBar?.();
     renderRecentContacts();
 }
 
@@ -2021,9 +2090,25 @@ function cancelSearch() {
     const inp = document.getElementById('search-input');
     if (inp) inp.value = '';
     document.getElementById('search-cancel').style.display = 'none';
+    const cats = document.getElementById('search-categories');
+    if (cats) cats.style.display = 'none';
     document.getElementById('search-results')?.classList.add('hidden');
+    document.getElementById('search-results').style.display = 'none';
     const cl = document.getElementById('chat-list');
     if (cl) cl.style.display = 'block';
+    // Сбрасываем активную категорию
+    document.querySelectorAll('.search-cat-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector('.search-cat-btn[data-cat="all"]')?.classList.add('active');
+}
+
+// Умный поиск: переключение категорий
+let _searchCategory = 'all';
+function setSearchCategory(cat, btn) {
+    _searchCategory = cat;
+    document.querySelectorAll('.search-cat-btn').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    const q = document.getElementById('search-input')?.value.trim();
+    if (q) handleSearch(); else renderRecentContacts();
 }
 
 function renderRecentContacts() {
@@ -2119,6 +2204,8 @@ async function openChat(id, name, avatar) {
     hasMoreMessages  = true;
 
     win.classList.add('active');
+    // Эффект глубины — фон слегка уменьшается и размывается
+    document.getElementById('main-content')?.classList.add('chat-depth');
     const displayName = getContactDisplayName(id, name);
     document.getElementById('chat-name').textContent = displayName;
     document.getElementById('chat-status').textContent = 'загрузка...';
@@ -2195,6 +2282,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     hasMoreMessages  = true;
 
     win.classList.add('active');
+    document.getElementById('main-content')?.classList.add('chat-depth');
     document.getElementById('chat-name').textContent = groupName;
     document.getElementById('chat-status').textContent = 'группа';
     document.getElementById('chat-online-dot').style.display = 'none';
@@ -3241,6 +3329,21 @@ function onNewMessage(msg) {
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
         _debouncedLoadChats();
+        // Пульс аватара при новом сообщении
+        const senderId = msg.is_group_msg ? msg.group_id : msg.sender_id;
+        const chatKey  = msg.is_group_msg ? `g_${senderId}` : `p_${senderId}`;
+        requestAnimationFrame(() => {
+            const chatEl = document.querySelector(`[data-chat-key="${chatKey}"]`);
+            if (chatEl) {
+                chatEl.classList.add('chat-item-animate');
+                setTimeout(() => chatEl.classList.remove('chat-item-animate'), 300);
+                const ava = chatEl.querySelector('[data-uid]');
+                if (ava) {
+                    ava.classList.add('ava-pulse-anim');
+                    setTimeout(() => ava.classList.remove('ava-pulse-anim'), 400);
+                }
+            }
+        });
         // Уведомление только если приложение не на экране
         vibrate([10, 30, 10]);
         const senderName = msg.is_group_msg
@@ -7476,6 +7579,8 @@ function scrollDown(smooth=true){VirtualList.scrollToBottom(smooth);}
 
 function closeChat() {
     document.getElementById('chat-window')?.classList.remove('active');
+    // Убираем эффект глубины
+    document.getElementById('main-content')?.classList.remove('chat-depth');
     if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
     currentChatId    = null;
     currentPartnerId = null;
@@ -7486,7 +7591,13 @@ function closeChat() {
 
 function setupGlobalGestures() {
     let startX = 0, startY = 0;
-    document.addEventListener('touchstart', (e) => { startX = e.touches[0].clientX; startY = e.touches[0].clientY; }, { passive: true });
+
+    // ── Свайп из края экрана → назад из чата ──
+    document.addEventListener('touchstart', (e) => {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+    }, { passive: true });
+
     document.addEventListener('touchmove', (e) => {
         const chatWin = document.getElementById('chat-window');
         if (!chatWin?.classList.contains('active')) return;
@@ -7498,6 +7609,7 @@ function setupGlobalGestures() {
             chatWin.style.transform = `translateX(${Math.min(dx * 0.4, 60)}px)`;
         }
     }, { passive: true });
+
     document.addEventListener('touchend', (e) => {
         const chatWin = document.getElementById('chat-window');
         if (!chatWin?.classList.contains('active')) return;
@@ -7507,6 +7619,230 @@ function setupGlobalGestures() {
         if (ind) ind.style.opacity = '0';
         if (startX < 40 && dx > 80) closeChat();
     }, { passive: true });
+
+    // ── Свайп вниз на списке чатов → показать Moments ──
+    _setupMomentsPullDown();
+
+    // ── Свайп по чату в списке (вправо / влево) ──
+    _setupChatListSwipes();
+}
+
+// ── Moments pull-down ──
+function _setupMomentsPullDown() {
+    const mainContent = document.getElementById('main-content');
+    if (!mainContent) return;
+
+    let _pullStart = 0, _pulling = false, _momentsShown = false;
+
+    mainContent.addEventListener('touchstart', (e) => {
+        const chatSec = document.getElementById('chats-section');
+        if (!chatSec?.contains(e.target)) return;
+        // только если скролл в самом верху
+        if (mainContent.scrollTop > 10) return;
+        _pullStart = e.touches[0].clientY;
+        _pulling = true;
+    }, { passive: true });
+
+    mainContent.addEventListener('touchmove', (e) => {
+        if (!_pulling) return;
+        const chatWin = document.getElementById('chat-window');
+        if (chatWin?.classList.contains('active')) { _pulling = false; return; }
+        const dy = e.touches[0].clientY - _pullStart;
+        if (dy > 40 && !_momentsShown) {
+            _showMomentsBar();
+            _momentsShown = true;
+            vibrate(8);
+        }
+    }, { passive: true });
+
+    mainContent.addEventListener('touchend', () => { _pulling = false; }, { passive: true });
+}
+
+// ── Показать/скрыть Moments bar ──
+let _momentsBarVisible = false;
+function _showMomentsBar() {
+    if (_momentsBarVisible) return;
+    _momentsBarVisible = true;
+    const bar = document.getElementById('moments-bar');
+    if (!bar) return;
+    bar.style.display = 'block';
+    _renderMomentsBar();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        bar.style.maxHeight = '120px';
+        bar.style.opacity = '1';
+    }));
+}
+
+function _hideMomentsBar() {
+    if (!_momentsBarVisible) return;
+    _momentsBarVisible = false;
+    const bar = document.getElementById('moments-bar');
+    if (!bar) return;
+    bar.style.maxHeight = '0';
+    bar.style.opacity = '0';
+    setTimeout(() => { bar.style.display = 'none'; }, 300);
+}
+
+function _renderMomentsBar() {
+    const scroll = document.getElementById('moments-bar-scroll');
+    if (!scroll) return;
+    scroll.innerHTML = '';
+
+    // "Мой момент" — первым
+    const myItem = _buildMomentBarItem(
+        currentUser,
+        false,
+        false,
+        true,
+        () => openCreateMomentModal()
+    );
+    scroll.appendChild(myItem);
+
+    // Моменты из кэша
+    const moments = momentsCache || currentMoments || [];
+    const byUser = new Map();
+    moments.forEach(m => {
+        if (!byUser.has(m.user_id)) byUser.set(m.user_id, m);
+    });
+
+    byUser.forEach((m, uid) => {
+        if (uid === currentUser?.id) return;
+        const viewed = _viewedMomentUsers?.has(uid);
+        // Фиолетовое кольцо для близких друзей (первые 3 контакта из savedContacts)
+        const isClose = savedContacts?.slice(0, 3).some(c => c.id === uid);
+        const item = _buildMomentBarItem(
+            { id: uid, name: m.user_name, avatar: m.user_avatar },
+            !viewed,
+            isClose,
+            false,
+            () => openUserMomentsViewer(uid)
+        );
+        scroll.appendChild(item);
+    });
+
+    // Если нет моментов кроме своего — загружаем
+    if (!moments.length && typeof loadMoments === 'function') {
+        loadMoments();
+    }
+}
+
+function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
+    const wrap = document.createElement('div');
+    wrap.className = 'moment-ava-item';
+    wrap.onclick = onClick;
+
+    const size = 62;
+    const r = 27, cx = 31, cy = 31;
+    const ringColor = isMe ? 'rgba(255,255,255,0.2)' : isClose ? '#8b5cf6' : isNew ? 'var(--accent)' : 'rgba(255,255,255,0.22)';
+    const sw = isNew || isClose ? 3.5 : 2.5;
+
+    const avatarHtml = getAvatarHtml(user, 'w-full h-full');
+
+    wrap.innerHTML = `
+        <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0">
+            <div style="position:absolute;inset:4px;border-radius:50%;overflow:hidden">${avatarHtml}</div>
+            ${isMe ? `<div style="position:absolute;bottom:-2px;right:-2px;width:22px;height:22px;background:var(--accent);border-radius:50%;border:2.5px solid var(--bg);display:flex;align-items:center;justify-content:center;z-index:2">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="#000" stroke-width="3" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="#000" stroke-width="3" stroke-linecap="round"/></svg>
+            </div>` : ''}
+            <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="position:absolute;inset:0;pointer-events:none">
+                <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${ringColor}" stroke-width="${sw}" stroke-linecap="round"
+                    stroke-dasharray="${isMe ? '3 6' : '999'}" opacity="${isMe ? '0.3' : '1'}"/>
+            </svg>
+        </div>
+        <span style="font-size:11px;color:var(--text-2);max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center">${isMe ? 'Мой' : escHtml((user.name||'').split(' ')[0])}</span>`;
+
+    return wrap;
+}
+
+// ── Свайпы по чатам в списке ──
+function _setupChatListSwipes() {
+    let _sw = { el: null, startX: 0, startY: 0, dx: 0, active: false, rAF: null };
+
+    document.addEventListener('touchstart', (e) => {
+        const item = e.target.closest('.chat-item');
+        if (!item) return;
+        const chatWin = document.getElementById('chat-window');
+        if (chatWin?.classList.contains('active')) return;
+        _sw.el = item;
+        _sw.startX = e.touches[0].clientX;
+        _sw.startY = e.touches[0].clientY;
+        _sw.dx = 0;
+        _sw.active = true;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+        if (!_sw.active || !_sw.el) return;
+        const dx = e.touches[0].clientX - _sw.startX;
+        const dy = Math.abs(e.touches[0].clientY - _sw.startY);
+        if (dy > Math.abs(dx) * 1.5) { _sw.active = false; _resetSwipe(_sw.el); return; }
+        if (Math.abs(dx) < 6) return;
+
+        _sw.dx = dx;
+        const clamped = Math.max(-90, Math.min(90, dx * 0.7));
+        if (_sw.rAF) cancelAnimationFrame(_sw.rAF);
+        _sw.rAF = requestAnimationFrame(() => {
+            if (!_sw.el) return;
+            _sw.el.style.transform = `translateX(${clamped}px)`;
+            _sw.el.style.transition = 'none';
+            // Показываем подсказку
+            const rightHint = _sw.el.querySelector('.swipe-hint-right');
+            const leftHint  = _sw.el.querySelector('.swipe-hint-left');
+            if (rightHint) rightHint.style.opacity = dx > 20 ? Math.min((dx - 20) / 40, 1) : '0';
+            if (leftHint)  leftHint.style.opacity  = dx < -20 ? Math.min((-dx - 20) / 40, 1) : '0';
+        });
+    }, { passive: true });
+
+    document.addEventListener('touchend', () => {
+        if (!_sw.active || !_sw.el) return;
+        _sw.active = false;
+        const dx = _sw.dx;
+        const el = _sw.el;
+        _sw.el = null;
+
+        if (dx > 70) {
+            // Свайп вправо — быстрый ответ
+            _triggerQuickReply(el);
+        } else if (dx < -70) {
+            // Свайп влево — архив
+            _triggerArchive(el);
+        } else {
+            _resetSwipe(el);
+        }
+    }, { passive: true });
+}
+
+function _resetSwipe(el) {
+    if (!el) return;
+    el.style.transition = 'transform 0.22s cubic-bezier(0.22,1,0.36,1)';
+    el.style.transform = '';
+    const rh = el.querySelector('.swipe-hint-right');
+    const lh = el.querySelector('.swipe-hint-left');
+    if (rh) rh.style.opacity = '0';
+    if (lh) lh.style.opacity = '0';
+}
+
+function _triggerQuickReply(el) {
+    vibrate([10, 20]);
+    el.style.transition = 'transform 0.18s ease';
+    el.style.transform = 'translateX(12px)';
+    setTimeout(() => _resetSwipe(el), 200);
+    // Открываем чат
+    el.click();
+}
+
+function _triggerArchive(el) {
+    vibrate([10, 20]);
+    el.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+    el.style.transform = 'translateX(-100%)';
+    el.style.opacity = '0';
+    setTimeout(() => {
+        el.style.maxHeight = el.offsetHeight + 'px';
+        el.style.transition += ', max-height 0.22s ease, padding 0.22s ease';
+        el.style.maxHeight = '0';
+        el.style.padding = '0';
+        setTimeout(() => el.remove(), 240);
+    }, 180);
+    showToast('Чат архивирован', 'info', 1800);
 }
 
 // ══════════════════════════════════════════════════════════
