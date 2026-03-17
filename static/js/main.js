@@ -753,19 +753,19 @@ function renderApp() {
     --glow: 0 0 20px rgba(16,185,129,0.4);
     --accent-10: rgba(16,185,129,0.1);
     --accent-30: rgba(16,185,129,0.3);
-    --bg: #212121;
-    --bg2: #181818;
-    --surface: #2a2a2a;
-    --surface2: #222222;
+    --bg: #111113;
+    --bg2: #0e0e10;
+    --surface: #1c1c1e;
+    --surface2: #18181a;
     --border: rgba(255,255,255,0.06);
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
-    --msg-in: #2a2a2a;
+    --msg-in: #1c1c1e;
     --msg-out: var(--accent);
-    --divider: rgba(255,255,255,0.06);
-    --chat-bg: #212121;
-    --hdr: rgba(33,33,33,0.98);
-    --sep: rgba(255,255,255,0.07);
+    --divider: rgba(255,255,255,0.05);
+    --chat-bg: #111113;
+    --hdr: rgba(17,17,19,0.97);
+    --sep: rgba(255,255,255,0.06);
     --item-hover: rgba(255,255,255,0.05);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -797,12 +797,6 @@ body {
 /* ПОИСК */
 .search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.07);border:none;border-radius:14px;padding:9px 14px;transition:background 0.2s; }
 .search-box:focus-within { background:rgba(255,255,255,0.10); }
-
-/* КАТЕГОРИИ ПОИСКА */
-.search-cat-btn { flex-shrink:0;padding:6px 14px;background:rgba(255,255,255,0.07);border:none;border-radius:20px;color:var(--text-2);font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;white-space:nowrap;transition:background 0.15s,color 0.15s;-webkit-tap-highlight-color:transparent }
-.search-cat-btn.active { background:var(--accent);color:#000 }
-#search-categories { display:flex!important;scrollbar-width:none }
-#search-categories::-webkit-scrollbar { display:none }
 
 /* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
 .fab-plus {
@@ -843,7 +837,7 @@ body {
 /* ЧАТ ОКНО — с эффектом глубины */
 .chat-view { position:fixed;inset:0;z-index:2000;background:#000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.32s cubic-bezier(0.22,1,0.36,1);will-change:transform; }
 .chat-view.active { transform:translateX(0); }
-.chat-wallpaper{background:#212121;}
+.chat-wallpaper{background:#111113;}
 /* Эффект глубины на фоне при открытии чата */
 #main-content{transition:transform 0.32s cubic-bezier(0.22,1,0.36,1),filter 0.32s ease,opacity 0.32s ease}
 #main-content.chat-depth{transform:scale(0.94);filter:blur(3px);opacity:0.55;pointer-events:none}
@@ -1028,14 +1022,6 @@ body {
                            placeholder="Поиск"
                            oninput="handleSearch()" onfocus="onSearchFocus()" onblur="onSearchBlur()">
                     <button id="search-cancel" onclick="cancelSearch()" style="display:none;color:var(--accent);font-size:14px;font-weight:600;border:none;background:none;cursor:pointer;white-space:nowrap;flex-shrink:0;font-family:inherit">Отмена</button>
-                </div>
-                <!-- Умный поиск: категории (показываются при фокусе) -->
-                <div id="search-categories" style="display:none;margin-top:10px;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none">
-                    <button class="search-cat-btn active" data-cat="all" onclick="setSearchCategory('all',this)">Все</button>
-                    <button class="search-cat-btn" data-cat="people" onclick="setSearchCategory('people',this)">Люди</button>
-                    <button class="search-cat-btn" data-cat="messages" onclick="setSearchCategory('messages',this)">Сообщения</button>
-                    <button class="search-cat-btn" data-cat="media" onclick="setSearchCategory('media',this)">Медиа</button>
-                    <button class="search-cat-btn" data-cat="links" onclick="setSearchCategory('links',this)">Ссылки</button>
                 </div>
             </div>
             <!-- Moments-панель (появляется свайпом вниз) -->
@@ -2068,13 +2054,6 @@ function onSearchFocus() {
     document.getElementById('chat-list').style.display = 'none';
     document.getElementById('search-results').style.display = 'block';
     document.getElementById('search-results').classList.remove('hidden');
-    // Показываем умный поиск: категории
-    const cats = document.getElementById('search-categories');
-    if (cats) {
-        cats.style.display = 'flex';
-        cats.style.animation = 'fadeIn 0.18s ease';
-    }
-    // Скрываем Moments bar при поиске
     _hideMomentsBar?.();
     renderRecentContacts();
 }
@@ -2090,26 +2069,14 @@ function cancelSearch() {
     const inp = document.getElementById('search-input');
     if (inp) inp.value = '';
     document.getElementById('search-cancel').style.display = 'none';
-    const cats = document.getElementById('search-categories');
-    if (cats) cats.style.display = 'none';
     document.getElementById('search-results')?.classList.add('hidden');
     document.getElementById('search-results').style.display = 'none';
     const cl = document.getElementById('chat-list');
     if (cl) cl.style.display = 'block';
-    // Сбрасываем активную категорию
-    document.querySelectorAll('.search-cat-btn').forEach(b => b.classList.remove('active'));
-    document.querySelector('.search-cat-btn[data-cat="all"]')?.classList.add('active');
 }
 
-// Умный поиск: переключение категорий
+// Умный поиск: переключение категорий — убрано по требованию дизайна
 let _searchCategory = 'all';
-function setSearchCategory(cat, btn) {
-    _searchCategory = cat;
-    document.querySelectorAll('.search-cat-btn').forEach(b => b.classList.remove('active'));
-    if (btn) btn.classList.add('active');
-    const q = document.getElementById('search-input')?.value.trim();
-    if (q) handleSearch(); else renderRecentContacts();
-}
 
 function renderRecentContacts() {
     const res = document.getElementById('search-results');
@@ -7729,7 +7696,14 @@ function _renderMomentsBar() {
 function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
     const wrap = document.createElement('div');
     wrap.className = 'moment-ava-item';
+    // Прямой onclick + touch для надёжной работы на iOS Safari
     wrap.onclick = onClick;
+    wrap.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick && onClick();
+    }, { passive: false });
+    wrap.style.cssText += ';cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
 
     const size = 62;
     const r = 27, cx = 31, cy = 31;
@@ -7739,7 +7713,7 @@ function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
     const avatarHtml = getAvatarHtml(user, 'w-full h-full');
 
     wrap.innerHTML = `
-        <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0">
+        <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0;pointer-events:none">
             <div style="position:absolute;inset:4px;border-radius:50%;overflow:hidden">${avatarHtml}</div>
             ${isMe ? `<div style="position:absolute;bottom:-2px;right:-2px;width:22px;height:22px;background:var(--accent);border-radius:50%;border:2.5px solid var(--bg);display:flex;align-items:center;justify-content:center;z-index:2">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="#000" stroke-width="3" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="#000" stroke-width="3" stroke-linecap="round"/></svg>
@@ -7749,7 +7723,7 @@ function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
                     stroke-dasharray="${isMe ? '3 6' : '999'}" opacity="${isMe ? '0.3' : '1'}"/>
             </svg>
         </div>
-        <span style="font-size:11px;color:var(--text-2);max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center">${isMe ? 'Мой' : escHtml((user.name||'').split(' ')[0])}</span>`;
+        <span style="font-size:11px;color:var(--text-2);max-width:58px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none">${isMe ? 'Мой' : escHtml((user.name||'').split(' ')[0])}</span>`;
 
     return wrap;
 }
