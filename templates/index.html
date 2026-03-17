@@ -13,7 +13,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#2c2d2c">
+    <meta name="theme-color" content="#1d1d1e">
     <meta name="format-detection" content="telephone=no">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -24,20 +24,29 @@
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
+        /*
+            КЛЮЧЕВОЙ ТРЮК против чёрных/белых полос Safari:
+            html background = точный цвет фона приложения.
+            iOS рисует safe-area зоны (статус-бар, home indicator) цветом html.
+            При любом сценарии (перезагрузка, переход, PWA, браузер) — фон совпадает.
+        */
         html {
-            background: #2c2d2c;
+            background: #1d1d1e;
             height: 100%;
             overscroll-behavior: none;
             touch-action: manipulation;
+            /* Запрещаем scroll за пределы — убирает белый/чёрный flash при bounce */
+            -webkit-overflow-scrolling: auto;
         }
 
         body {
             width: 100%;
             height: 100%;
             min-height: 100dvh;
-            background: #2c2d2c;
+            background: #1d1d1e;
             overflow: hidden;
             overscroll-behavior: none;
+            /* НЕТ padding-top/bottom — иначе появится полоса home indicator */
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
@@ -46,11 +55,34 @@
             touch-action: manipulation;
         }
 
-        #root { width: 100%; height: 100%; background: #2c2d2c; }
+        #root { width: 100%; height: 100%; background: #1d1d1e; }
+
+        /* Псевдоэлемент перекрывает зону статус-бара своим цветом.
+           Работает даже если браузер рисует полосу при перезагрузке */
+        #root::before {
+            content: '';
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: env(safe-area-inset-top, 0px);
+            background: #1d1d1e;
+            z-index: 99999;
+            pointer-events: none;
+        }
+
+        /* То же для низа (home indicator) */
+        #root::after {
+            content: '';
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            height: env(safe-area-inset-bottom, 0px);
+            background: #1d1d1e;
+            z-index: 99999;
+            pointer-events: none;
+        }
 
         #splash {
             position: fixed; inset: 0; z-index: 999999;
-            background: #2c2d2c;
+            background: #1d1d1e;
             display: flex; flex-direction: column;
             align-items: center; justify-content: center;
             will-change: opacity; transform: translateZ(0);
@@ -155,7 +187,7 @@ window.currentUser = {{ {
         setTimeout(function () {
             localStorage.setItem('wc_ios_hint_v4', '1');
             var d = document.createElement('div');
-            d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(44,45,44,.98);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
+            d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(29,29,30,.98);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
             var title = document.createElement('div');
             title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:6px';
             title.textContent = 'Добавить WayChat на экран';
