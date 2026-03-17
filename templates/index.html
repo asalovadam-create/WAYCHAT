@@ -2,11 +2,6 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <!--
-        maximum-scale=1.0 — блокирует автозум iOS при фокусе на input.
-        viewport-fit=cover — контент под вырез камеры и home indicator.
-        interactive-widget=resizes-content — клавиатура не двигает viewport.
-    -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>WayChat</title>
 
@@ -14,14 +9,11 @@
     <link rel="icon" type="image/png" href="/static/img/icon-192.png">
     <link rel="manifest" href="/static/manifest.json">
 
-    <!-- iOS PWA: полноэкранный без браузерного chrome -->
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <!-- black-translucent: статус-бар прозрачный, полосы сверху нет -->
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="mobile-web-app-capable" content="yes">
-    <!-- Android: тулбар = фон приложения, визуально исчезает -->
-    <meta name="theme-color" content="#111113">
+    <meta name="theme-color" content="#2c2d2c">
     <meta name="format-detection" content="telephone=no">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -32,16 +24,10 @@
     <style>
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
-        /*
-          html background = цвет safe-area зон.
-          iOS заполняет статус-бар и home indicator фоном <html>.
-          #111113 сливается с интерфейсом — полосы исчезают.
-        */
         html {
-            background: #111113;
+            background: #2c2d2c;
             height: 100%;
             overscroll-behavior: none;
-            /* Блокируем touch-zoom на уровне html */
             touch-action: manipulation;
         }
 
@@ -49,7 +35,7 @@
             width: 100%;
             height: 100%;
             min-height: 100dvh;
-            background: #111113;
+            background: #2c2d2c;
             overflow: hidden;
             overscroll-behavior: none;
             color: #fff;
@@ -60,24 +46,14 @@
             touch-action: manipulation;
         }
 
-        #root {
-            width: 100%;
-            height: 100%;
-            background: #111113;
-        }
+        #root { width: 100%; height: 100%; background: #2c2d2c; }
 
-        /* ══ Сплэш ══ */
         #splash {
-            position: fixed;
-            inset: 0;
-            z-index: 999999;
-            background: #111113;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            will-change: opacity;
-            transform: translateZ(0);
+            position: fixed; inset: 0; z-index: 999999;
+            background: #2c2d2c;
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center;
+            will-change: opacity; transform: translateZ(0);
         }
         #splash-logo-wrap { position: relative; width: 110px; height: 110px; }
         #splash-logo {
@@ -118,7 +94,6 @@
 
 <div id="root"></div>
 
-<!-- Пользователь от Flask -->
 <script>
 window.currentUser = {{ {
     "id": current_user.id,
@@ -137,13 +112,14 @@ window.currentUser = {{ {
 
 <script>
 (function () {
+
     /* Tailwind */
     var tw = document.createElement('script');
     tw.src = 'https://cdn.tailwindcss.com';
     tw.async = true;
     document.head.appendChild(tw);
 
-    /* Скрываем сплэш */
+    /* Сплэш */
     var done = false;
     function hideSplash() {
         if (done) return; done = true;
@@ -179,7 +155,7 @@ window.currentUser = {{ {
         setTimeout(function () {
             localStorage.setItem('wc_ios_hint_v4', '1');
             var d = document.createElement('div');
-            d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(18,18,20,.97);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
+            d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(44,45,44,.98);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
             var title = document.createElement('div');
             title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:6px';
             title.textContent = 'Добавить WayChat на экран';
@@ -195,6 +171,7 @@ window.currentUser = {{ {
             setTimeout(function () { if (d.parentNode) d.remove(); }, 14000);
         }, 4500);
     }
+
 })();
 </script>
 
