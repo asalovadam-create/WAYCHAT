@@ -154,9 +154,9 @@ const WCCache = (() => {
         .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
         .fab-menu  { z-index: 952 !important; }
         .fab-bd    { z-index: 948 !important; }
-        /* main-content: нет лишнего отступа */
+        /* main-content: padding-bottom = 0, safe-area только в input-bar */
         #main-content {
-            padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+            padding-bottom: 0 !important;
             -webkit-overflow-scrolling: touch;
             overscroll-behavior: contain;
         }
@@ -1698,7 +1698,7 @@ body {
 
 <div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:env(safe-area-inset-bottom,0px)">
+    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:0">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section">
