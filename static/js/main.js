@@ -64,122 +64,119 @@ const WCCache = (() => {
 
     return { get, set, del };
 })();
-// ══ iOS SAFARI FIX v9 — метод Telegram/WhatsApp ══════════════
+// ══ iOS SAFARI FIX v10 — единственный механизм (FIXED) ═════════
 (function(){
-    // ── 1. --vh через visualViewport (ключевой fix как в TG) ──
-    function setVH() {
-        const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-        document.documentElement.style.setProperty('--vh', h + 'px');
-        // Старая переменная для совместимости
-        document.documentElement.style.setProperty('--dvh', (h * 0.01) + 'px');
+    'use strict';
+
+    // ── ОДИН источник правды для высоты viewport ──
+    // index.html уже устанавливает --app-height через visualViewport.
+    // Этот блок синхронизирует --vh для совместимости с остальным кодом.
+    function syncVH() {
+        const h = window.visualViewport
+            ? window.visualViewport.height
+            : window.innerHeight;
+        const root = document.documentElement;
+        root.style.setProperty('--vh',         h + 'px');
+        root.style.setProperty('--app-height', h + 'px');
+        root.style.setProperty('--dvh',        (h * 0.01) + 'px');
     }
 
     if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', setVH, { passive: true });
-        window.visualViewport.addEventListener('scroll', setVH, { passive: true });
-    }
-    window.addEventListener('resize', setVH, { passive: true });
-    window.addEventListener('orientationchange', () => setTimeout(setVH, 100), { passive: true });
-    setVH();
-
-    // ── 2. Keyboard handler — двигаем chat-view ──
-    if (window.visualViewport) {
-        let prevH = window.visualViewport.height;
-        window.visualViewport.addEventListener('resize', () => {
-            const vv = window.visualViewport;
-            const kbHeight = Math.max(0, window.innerHeight - vv.height);
-            const chatWin = document.getElementById('chat-window');
-            const isChat = chatWin?.classList.contains('active');
-
-            setVH(); // обновляем --vh при каждом resize
-
-            if (isChat) {
-                if (kbHeight > 60) {
-                    // Сжимаем chat-view сверху — input-bar остаётся снизу
-                    chatWin.style.height = vv.height + 'px';
-                    chatWin.style.top = '0';
-                    chatWin.style.bottom = 'auto';
-                    const m = document.getElementById('messages');
-                    if (m) requestAnimationFrame(() => { m.scrollTop = m.scrollHeight; });
-                } else {
-                    chatWin.style.height = '';
-                    chatWin.style.top = '';
-                    chatWin.style.bottom = '';
-                }
+        window.visualViewport.addEventListener('resize', function() {
+            syncVH();
+            // При открытой клавиатуре — только скроллим вниз.
+            // НЕ трогаем chatWin.style.height — flex layout справляется сам.
+            const vv   = window.visualViewport;
+            const kbH  = Math.max(0, window.innerHeight - vv.height);
+            const chat = document.getElementById('chat-window');
+            const msgs = document.getElementById('messages');
+            if (chat && chat.classList.contains('active') && kbH > 60 && msgs) {
+                requestAnimationFrame(function() {
+                    msgs.scrollTop = msgs.scrollHeight;
+                });
             }
-            prevH = vv.height;
         }, { passive: true });
+        window.visualViewport.addEventListener('scroll', syncVH, { passive: true });
     }
+    window.addEventListener('resize', syncVH, { passive: true });
+    window.addEventListener('orientationchange', function() {
+        setTimeout(syncVH, 150);
+    }, { passive: true });
+    syncVH();
 
-    // ── 3. CSS fixes ──
+    // ── CSS исправления (патч поверх основных стилей) ──
     const st = document.createElement('style');
-    st.id = 'wc-ios9';
+    st.id = 'wc-ios10';
     st.textContent = `
-        /* Высота через --vh (как TG/WhatsApp) */
+        /* Высота = реальный viewport без клавиатуры */
         #app {
             height: var(--vh, 100dvh) !important;
             max-height: var(--vh, 100dvh) !important;
-            background: #1d1d1e !important;
+            overflow: hidden !important;
         }
-        /* chat-view: flex-колонка, высота через JS */
+        /* chat-view: flex-колонка на весь экран */
         .chat-view {
             position: fixed !important;
-            top: 0 !important; left: 0 !important; right: 0 !important;
-            bottom: 0 !important;
+            top: 0 !important; left: 0 !important;
+            right: 0 !important; bottom: 0 !important;
+            height: var(--vh, 100dvh) !important;
             display: flex !important;
             flex-direction: column !important;
-            background: var(--chat-bg, #1d1d1e) !important;
-            transform: translateZ(0);
-            will-change: transform;
-            transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94) !important;
+            overflow: hidden !important;
         }
         .chat-view.active { transform: translateX(0) !important; }
-        /* messages: flex-1, скроллится */
+        /* messages: flex:1 + min-height:0 — ключевая пара для overflow */
         #messages {
-            flex: 1 !important;
+            flex: 1 1 0% !important;
+            min-height: 0 !important;
             overflow-y: auto !important;
+            overflow-x: hidden !important;
             -webkit-overflow-scrolling: touch !important;
-            overscroll-behavior: contain;
+            overscroll-behavior-y: contain !important;
         }
-        /* input-bar: прибит к низу flex-колонки */
+        /* input-bar: в потоке flex, НЕ position:fixed */
         .input-bar {
             flex-shrink: 0 !important;
             position: relative !important;
             transform: none !important;
-            background: var(--hdr, rgba(29,29,30,0.97)) !important;
-            /* padding-bottom учитывает home indicator */
-            padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + 6px), 8px) !important;
+            z-index: 10 !important;
+            /* ЕДИНСТВЕННОЕ место для safe-area */
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
         }
-        /* main-content */
+        /* header: не сжимается */
+        #chat-header { flex-shrink: 0 !important; }
+        /* FAB: всегда поверх и кликабельна */
+        .fab-btn {
+            pointer-events: all !important;
+            z-index: 950 !important;
+            touch-action: manipulation !important;
+        }
+        .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
+        .fab-menu  { z-index: 952 !important; }
+        .fab-bd    { z-index: 948 !important; }
+        /* main-content: нет лишнего отступа */
         #main-content {
+            padding-bottom: env(safe-area-inset-bottom, 0px) !important;
             -webkit-overflow-scrolling: touch;
             overscroll-behavior: contain;
-            scroll-behavior: auto;
         }
-        /* Sticky search */
+        /* sticky search */
         #chat-search-bar {
             position: sticky !important;
             top: 0 !important;
             z-index: 100 !important;
             background: var(--bg, #1d1d1e) !important;
         }
-        /* chat-header */
-        #chat-header {
-            background: var(--hdr, rgba(29,29,30,0.97)) !important;
-            flex-shrink: 0 !important;
-        }
-        /* iOS anti-zoom */
-        input, textarea, select {
-            font-size: 16px !important;
-            -webkit-text-size-adjust: 100%;
-            text-size-adjust: 100%;
-        }
+        /* iOS: минимум 16px предотвращает авто-зум при фокусе */
+        input, textarea, select { font-size: max(16px, 1em) !important; }
         body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
         *, button, a, [onclick], [data-msg-id] { -webkit-tap-highlight-color: transparent; }
         .vl-ph { flex-shrink: 0; width: 100%; pointer-events: none; }
         #app, #main-content, .prof-sheet-inner { touch-action: pan-x pan-y; }
+        /* Offline banner */
         #wc-off {
-            position: fixed; top: max(env(safe-area-inset-top,0px),0px);
+            position: fixed;
+            top: max(env(safe-area-inset-top,0px),0px);
             left: 0; right: 0; z-index: 99997;
             background: rgba(239,68,68,.97); color: #fff;
             padding: 8px 16px; text-align: center;
@@ -187,10 +184,13 @@ const WCCache = (() => {
             transform: translateY(-100%); transition: transform .3s ease;
         }
         #wc-off.v { transform: translateY(0); }
+        /* Skeleton animation */
+        @keyframes wcSkPulse { 0%,100%{opacity:.35} 50%{opacity:.75} }
+        .wc-skeleton { animation: wcSkPulse 1.5s ease-in-out infinite; background: rgba(255,255,255,0.07); }
     `;
     document.head.appendChild(st);
 
-    // ── 4. Offline banner ──
+    // ── Offline banner ──
     const ob = () => {
         let e = document.getElementById('wc-off');
         if (!e) {
@@ -205,7 +205,7 @@ const WCCache = (() => {
     window.addEventListener('online',  () => ob().classList.remove('v'));
     if (!navigator.onLine) setTimeout(() => ob().classList.add('v'), 600);
 
-    // ── 5. Service Worker update pill ──
+    // ── Service Worker update pill ──
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.addEventListener('message', e => {
             if (e.data?.type !== 'SW_UPDATED') return;
@@ -224,36 +224,14 @@ const WCCache = (() => {
             requestAnimationFrame(() => { p.style.transform = 'translateX(-50%) translateY(0)'; });
             setTimeout(() => { p.style.transform = 'translateX(-50%) translateY(-60px)'; }, 12000);
         });
-        navigator.serviceWorker.addEventListener('controllerchange', () => { if (document.hidden) window._swr = true; });
-        document.addEventListener('visibilitychange', () => { if (!document.hidden && window._swr) { window._swr = false; location.reload(); } });
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+            if (document.hidden) window._swr = true;
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && window._swr) { window._swr = false; location.reload(); }
+        });
     }
 
-    window.addEventListener('error', e => console.error('[WC]', e.message));
-    window.addEventListener('unhandledrejection', e => { console.warn('[WC]', e.reason); e.preventDefault(); });
-
-    // ── 6. Anti-zoom viewport reset on focus ──
-    function _fixViewport() {
-        const m = document.querySelector('meta[name=viewport]');
-        if (m) m.content = 'width=device-width,initial-scale=1.0,maximum-scale=1.0,viewport-fit=cover,interactive-widget=resizes-content';
-    }
-    document.addEventListener('focusin', _fixViewport, { passive: true });
-    document.addEventListener('blur', () => {
-        const chatWin = document.getElementById('chat-window');
-        if (!chatWin?.classList.contains('active')) {
-            const ib = document.querySelector('.input-bar');
-            if (ib) ib.style.transform = '';
-        }
-    }, { passive: true, capture: true });
-
-})(); // ═══ конец iOS SAFARI FIX IIFE ═══
-
-// ══ MsgDB ════════════════════════════════════════════════════
-const MsgDB=(()=>{
-    const DB='wc_m2',V=1,ST='m',TTL=7*864e5;let _db=null;
-    function op(){if(_db)return Promise.resolve(_db);return new Promise((r,j)=>{const q=indexedDB.open(DB,V);q.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains(ST))d.createObjectStore(ST);};q.onsuccess=e=>{_db=e.target.result;r(_db);};q.onerror=()=>j(q.error);});}
-    async function load(k){try{const db=await op();const row=await new Promise(r=>{const tx=db.transaction(ST,'readonly');const q=tx.objectStore(ST).get(k);q.onsuccess=()=>r(q.result??null);q.onerror=()=>r(null);});if(!row||Date.now()-row.ts>TTL)return null;return row.msgs;}catch{return null;}}
-    async function save(k,msgs){try{const db=await op();return new Promise(r=>{const tx=db.transaction(ST,'readwrite');tx.objectStore(ST).put({msgs:msgs.slice(-300),ts:Date.now()},k);tx.oncomplete=()=>r(true);tx.onerror=()=>r(false);});}catch{return false;}}
-    return{load,save};
 })();
 
 // ══ VirtualList ═══════════════════════════════════════════════
@@ -689,6 +667,121 @@ const THEMES = {
     rose:    { accent: '#f43f5e', glow: '0 0 20px rgba(244,63,94,0.4)',  name: 'Розовый' },
     amber:   { accent: '#f59e0b', glow: '0 0 20px rgba(245,158,11,0.4)', name: 'Янтарь' },
 };
+
+
+// ══ OPTIMISTIC MEDIA UI — мгновенный blob preview при отправке ═══════════
+function _sendMediaOptimistic(file, chatId) {
+    const blobUrl = URL.createObjectURL(file);
+    const tempId  = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+    const isAudio = file.type.startsWith('audio/');
+    const msgType = isVideo ? 'video' : isImage ? 'image' : isAudio ? 'audio' : 'file';
+
+    // Добавляем оптимистичное сообщение сразу
+    const optimMsg = {
+        id: tempId, type: msgType, type_msg: msgType,
+        file_url: blobUrl, content: file.name,
+        sender_id: currentUser?.id, sender_name: currentUser?.name || '',
+        timestamp: new Date().toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit'}),
+        _optimistic: true, _temp_id: tempId,
+    };
+    if (VirtualList && VirtualList.append) VirtualList.append(optimMsg);
+
+    // Загружаем на сервер
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('chat_id', chatId);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+
+    xhr.upload.addEventListener('progress', (e) => {
+        if (!e.lengthComputable) return;
+        const pct = Math.round(e.loaded / e.total * 100);
+        const el  = document.querySelector(`[data-msg-id="${tempId}"]`);
+        if (!el) return;
+        let prog = el.querySelector('.wc-upld-p');
+        if (!prog) {
+            prog = document.createElement('span');
+            prog.className = 'wc-upld-p';
+            prog.style.cssText = 'position:absolute;bottom:4px;right:8px;font-size:10px;color:rgba(255,255,255,.65);background:rgba(0,0,0,.4);padding:1px 5px;border-radius:8px;';
+            el.style.position = 'relative';
+            el.appendChild(prog);
+        }
+        prog.textContent = pct < 100 ? pct + '%' : '✓';
+    });
+
+    xhr.addEventListener('load', () => {
+        URL.revokeObjectURL(blobUrl);
+        if (xhr.status >= 200 && xhr.status < 300) {
+            const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+            if (el) el.dataset.delivered = '1';
+        } else {
+            _markMsgFailed(tempId);
+        }
+    });
+    xhr.addEventListener('error', () => { URL.revokeObjectURL(blobUrl); _markMsgFailed(tempId); });
+    xhr.send(fd);
+    return tempId;
+}
+
+function _markMsgFailed(tempId) {
+    const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+    if (!el) return;
+    el.style.opacity = '0.45';
+    if (!el.querySelector('.wc-fail')) {
+        const e = document.createElement('div');
+        e.className = 'wc-fail';
+        e.style.cssText = 'font-size:11px;color:#ef4444;margin-top:3px;';
+        e.textContent = '⚠️ Ошибка отправки';
+        el.appendChild(e);
+    }
+}
+
+// Scroll-down button — автоматически создаётся при открытии чата
+function _initScrollDownBtn() {
+    const msgs = document.getElementById('messages');
+    if (!msgs || document.getElementById('wc-sd-btn')) return;
+
+    const btn = document.createElement('button');
+    btn.id = 'wc-sd-btn';
+    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+        <path d="M6 9l6 6 6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+    btn.style.cssText = [
+        'position:absolute','bottom:72px','right:12px','z-index:50',
+        'width:36px','height:36px','border-radius:50%','border:none',
+        'background:rgba(40,40,42,.96)',
+        'border:.5px solid rgba(255,255,255,.1)',
+        'box-shadow:0 4px 16px rgba(0,0,0,.45)',
+        'cursor:pointer','display:none','align-items:center','justify-content:center',
+        'opacity:0','transition:opacity .2s ease',
+        'backdrop-filter:blur(8px)','-webkit-backdrop-filter:blur(8px)',
+    ].join(';');
+    btn.onclick = () => msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+
+    if (msgs.parentNode) {
+        msgs.parentNode.style.position = 'relative';
+        msgs.parentNode.appendChild(btn);
+    }
+
+    // Debounced scroll listener
+    let _sdTimer;
+    msgs.addEventListener('scroll', () => {
+        clearTimeout(_sdTimer);
+        _sdTimer = setTimeout(() => {
+            const dist = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight;
+            if (dist > 150) {
+                btn.style.display = 'flex';
+                requestAnimationFrame(() => { btn.style.opacity = '1'; });
+            } else {
+                btn.style.opacity = '0';
+                setTimeout(() => { btn.style.display = 'none'; }, 200);
+            }
+        }, 80);
+    }, { passive: true });
+}
 
 // ══════════════════════════════════════════════════════════
 //  SOCKET.IO — ИНИЦИАЛИЗАЦИЯ
@@ -1206,17 +1299,20 @@ function getInitialAvatar(name, sizeClass, uid = '') {
     for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
     const color = colors[Math.abs(hash) % colors.length];
     const char  = n.charAt(0).toUpperCase();
-    // Размеры как в TG — буква ~45% от диаметра аватара
-    const fs = sizeClass.includes('w-28') ? '46px'
-        : sizeClass.includes('w-16') ? '32px'
-        : sizeClass.includes('w-14') ? '28px'
-        : sizeClass.includes('w-12') ? '24px'
-        : sizeClass.includes('w-10') ? '22px'
-        : sizeClass.includes('w-9')  ? '20px'
-        : sizeClass.includes('w-8')  ? '18px'
-        : sizeClass.includes('full') ? '44%'
-        : '20px';
-    return `<div class="${sizeClass} rounded-full flex items-center justify-center" style="background:${color};font-size:${fs};font-weight:600;color:#fff;letter-spacing:-0.5px;line-height:1;display:flex;align-items:center;justify-content:center" data-uid="${uid}">${char}</div>`;
+    // FIXED: адаптивный font-size — минимум 14px (было 20px дефолт — слишком мелко)
+    const sc = sizeClass || '';
+    const fs = sc.includes('w-28') ? '46px'
+        : sc.includes('w-20') ? '36px'
+        : sc.includes('w-16') ? '28px'
+        : sc.includes('w-14') ? '24px'
+        : sc.includes('w-12') ? '20px'
+        : sc.includes('w-11') ? '18px'
+        : sc.includes('w-10') ? '17px'
+        : sc.includes('w-9')  ? '16px'
+        : sc.includes('w-8')  ? '14px'   // минимум 14px
+        : sc.includes('full') ? '42%'    // w-full — процент от контейнера
+        : '14px';                         // FIXED: дефолт 14px (было 20px)
+    return `<div class="${sc} rounded-full" style="background:${color};font-size:${fs};font-weight:700;color:#fff;letter-spacing:-0.5px;line-height:1;display:flex;align-items:center;justify-content:center;flex-shrink:0" data-uid="${uid}">${char}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -1354,8 +1450,8 @@ html, body {
     height: 100%;
     overflow: hidden;
     margin: 0;
-    /* position:fixed убирает "резиновый скролл" Safari — панели не мерцают */
-    position: fixed;
+    /* FIXED: position:fixed убран — ломал scroll на Android Chrome.
+       overflow:hidden достаточно для предотвращения резинового скролла. */
     width: 100%;
     -webkit-text-size-adjust: 100%;
     -webkit-font-smoothing: antialiased;
@@ -1453,7 +1549,7 @@ body {
 .ava-pulse-anim{animation:avaPulse 0.4s cubic-bezier(0.34,1.56,0.64,1)}
 
 /* ЧАТ ОКНО — плавное открытие как в TG */
-.chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform; }
+.chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform; }
 .chat-view.active { transform:translateX(0); }
 .chat-wallpaper{
     background-color: #1a1a2e;
@@ -1467,7 +1563,7 @@ body {
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:8px 8px 12px;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:auto;will-change:scroll-position; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:8px 8px 12px;scroll-behavior:auto;will-change:scroll-position; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
 .msg-row { display:flex;width:100%;margin-bottom:1px; }
@@ -2883,6 +2979,8 @@ async function openChat(id, name, avatar) {
     hasMoreMessages  = true;
 
     win.classList.add('active');
+    // FIXED: инициализируем кнопку "вниз" при открытии чата
+    setTimeout(_initScrollDownBtn, 150);
     // Скрываем FAB и закрываем меню при открытии чата
     closeFabMenu();
     const fabBtn=document.getElementById('fab-btn-el');
@@ -3223,17 +3321,24 @@ function buildMessageRow(msg, animate = true) {
           </div>
           ${_callbackBtn}
         </div>`;
-    } else if (type === 'image' || type === 'photo') {
-        // iOS26 стиль — фото без рамки, на весь пузырь, с zoom
-        contentHtml = `<div class="img-bubble" style="overflow:hidden;border-radius:18px;max-width:280px;cursor:zoom-in" onclick="openImgZoom(this.querySelector('img').src)">
-            <img src="${msg.file_url}" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover;aspect-ratio:auto"
-                 loading="lazy" decoding="async" 
-                 onerror="this.style.display='none';this.parentElement.innerHTML='<div style=padding:16px;color:rgba(255,255,255,.4);font-size:13px>Не удалось загрузить</div>'">
+        } else if (type === 'image' || type === 'photo') {
+        // FIXED: skeleton + retry + eager load для blob (optimistic UI)
+        const _isSrc  = msg.file_url || '';
+        const _isBlob = _isSrc.startsWith('blob:');
+        contentHtml = `<div class="img-bubble" style="overflow:hidden;border-radius:18px;max-width:280px;cursor:zoom-in;position:relative;min-height:60px;background:rgba(255,255,255,0.06)"
+            onclick="openImgZoom(this.querySelector('img')?.src||'')">
+            <div class="wc-img-sk" style="position:absolute;inset:0;border-radius:18px;animation:wcSkPulse 1.5s ease-in-out infinite;background:rgba(255,255,255,0.07);pointer-events:none"></div>
+            <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
+                 style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover;aspect-ratio:auto;position:relative;z-index:1"
+                 onload="const sk=this.parentElement.querySelector('.wc-img-sk');if(sk)sk.remove()"
+                 onerror="const sk=this.parentElement.querySelector('.wc-img-sk');if(sk)sk.remove();this.style.display='none';this.insertAdjacentHTML('afterend','<div style=\"padding:12px 16px;color:rgba(255,255,255,.4);font-size:13px;cursor:pointer\" onclick=\"event.stopPropagation();const img=this.previousElementSibling;img.style.display=\'block\';img.src=img.src.split(\'?r=\')[0]+\'?r=\'+Date.now()\">⚠ Нажмите для повтора</div>')">
         </div>`;
     } else if (type === 'video') {
-        // Видео без рамки
-        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px">
-            <video src="${msg.file_url}" controls playsinline style="display:block;width:100%;max-height:380px;object-fit:cover"></video>
+        // FIXED: preload=metadata для мгновенного thumb, controls видны сразу
+        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px;background:rgba(255,255,255,0.06)">
+            <video src="${msg.file_url}" controls playsinline preload="metadata"
+                   style="display:block;width:100%;max-height:380px;object-fit:cover"
+                   onerror="this.insertAdjacentHTML('afterend','<div style=\"padding:10px;color:rgba(255,255,255,.4);font-size:13px\">⚠ Видео недоступно</div>')"></video>
         </div>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
@@ -8498,17 +8603,33 @@ function _setupMomentsPullDown() {
 
 // ── Показать/скрыть Moments bar ──
 let _momentsBarVisible = false;
-function _showMomentsBar() {
+async function _showMomentsBar() {
     if (_momentsBarVisible) return;
     _momentsBarVisible = true;
-    const bar = document.getElementById('moments-bar');
+    const bar    = document.getElementById('moments-bar');
+    const scroll = document.getElementById('moments-bar-scroll');
     if (!bar) return;
+
     bar.style.display = 'block';
-    _renderMomentsBar();
     requestAnimationFrame(() => requestAnimationFrame(() => {
         bar.style.maxHeight = '120px';
-        bar.style.opacity = '1';
+        bar.style.opacity   = '1';
     }));
+
+    // FIXED: skeleton пока данные грузятся
+    const stale = !momentsCache || (Date.now() - momentsLastLoad) > 30000;
+    if (stale && scroll && !scroll.children.length) {
+        scroll.innerHTML = Array(5).fill(0).map(() =>
+            `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0">
+                <div class="wc-skeleton" style="width:62px;height:62px;border-radius:50%"></div>
+                <div class="wc-skeleton" style="width:38px;height:9px;border-radius:5px;margin-top:3px"></div>
+            </div>`).join('');
+    }
+    if (stale) {
+        await loadMoments(); // loadMoments сам вызовет _renderMomentsBar внутри
+    } else {
+        _renderMomentsBar();
+    }
 }
 
 function _hideMomentsBar() {
@@ -8526,7 +8647,7 @@ function _renderMomentsBar() {
     if (!scroll) return;
     scroll.innerHTML = '';
 
-    const moments = momentsCache || currentMoments || [];
+    const moments = momentsCache || window.currentMoments || []; // FIXED: safe fallback
     const myMoment = moments.find(m => m.user_id === currentUser?.id);
 
     // ── Блок "Мой": аватар (если есть момент) + кнопка "+"
