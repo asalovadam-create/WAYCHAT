@@ -845,17 +845,17 @@ function getInitialAvatar(name, sizeClass, uid = '') {
     for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
     const color = colors[Math.abs(hash) % colors.length];
     const char  = n.charAt(0).toUpperCase();
-    // Размеры как в TG — буква ~45% от диаметра аватара
-    const fs = sizeClass.includes('w-28') ? '46px'
-        : sizeClass.includes('w-16') ? '32px'
-        : sizeClass.includes('w-14') ? '28px'
-        : sizeClass.includes('w-12') ? '24px'
-        : sizeClass.includes('w-10') ? '22px'
-        : sizeClass.includes('w-9')  ? '20px'
-        : sizeClass.includes('w-8')  ? '18px'
-        : sizeClass.includes('full') ? '44%'
-        : '20px';
-    return `<div class="${sizeClass} rounded-full flex items-center justify-center" style="background:${color};font-size:${fs};font-weight:600;color:#fff;letter-spacing:-0.5px;line-height:1;display:flex;align-items:center;justify-content:center" data-uid="${uid}">${char}</div>`;
+    // Размер из Tailwind-класса → px (не зависим от загрузки Tailwind)
+    const pxMap = {'w-28':112,'w-16':64,'w-14':56,'w-12':48,'w-10':40,'w-9':36,'w-8':32};
+    let px = 36;
+    for (const [cls, val] of Object.entries(pxMap)) {
+        if (sizeClass.includes(cls)) { px = val; break; }
+    }
+    const isFull = sizeClass.includes('full');
+    const size = isFull ? '100%' : px + 'px';
+    // Буква = 45% диаметра — точно как Telegram
+    const fs   = isFull ? '44%' : Math.round(px * 0.45) + 'px';
+    return `<div data-uid="${uid}" style="width:${size};height:${size};min-width:${size};min-height:${size};border-radius:50%;background:${color};color:#fff;font-size:${fs};font-weight:600;letter-spacing:-0.3px;display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;user-select:none">${char}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -1264,7 +1264,7 @@ body {
 
 <div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 58px)">
+    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 58px);overscroll-behavior-y:none">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section">
@@ -2108,7 +2108,31 @@ function _confirmDeleteChat(chatId, name) {
     sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
 }
 // Чаты, помеченные удалёнными — не возвращаем через loadChats
-const _deletedChatIds = new Set();
+// Персистентный Set удалённых чатов — переживает перезагрузку
+const _deletedChatIds = (() => {
+    let _ids = new Set();
+    try {
+        const saved = JSON.parse(localStorage.getItem('wc_deleted_chats') || '[]');
+        _ids = new Set(saved);
+    } catch(e) {}
+
+    return {
+        has: id => _ids.has(id),
+        add: id => {
+            _ids.add(id);
+            try { localStorage.setItem('wc_deleted_chats', JSON.stringify([..._ids])); } catch(e) {}
+        },
+        delete: id => {
+            _ids.delete(id);
+            try { localStorage.setItem('wc_deleted_chats', JSON.stringify([..._ids])); } catch(e) {}
+        },
+        // Чистим старые (старше 30 дней) чтобы localStorage не рос бесконечно
+        cleanup: (validIds) => {
+            _ids = new Set([..._ids].filter(id => validIds.has(id)));
+            try { localStorage.setItem('wc_deleted_chats', JSON.stringify([..._ids])); } catch(e) {}
+        }
+    };
+})();
 
 async function _doDeleteChat(chatId) {
     _deletedChatIds.add(chatId);  // сразу помечаем — loadChats их игнорирует
@@ -2323,13 +2347,36 @@ function renderChatList(chats) {
         // Обновляем текстовый контент (info)
         const info = div.querySelector('.chat-info');
         if (info) {
+            // Формируем превью — если фото, показываем миниатюру как у TG
+            const lastType = chat.last_message_type || '';
+            const lastFileUrl = chat.last_file_url || '';
+            let previewHtml = '';
+
+            if ((lastType === 'image' || lastType === 'photo') && lastFileUrl) {
+                previewHtml = `<div style="display:flex;align-items:center;gap:6px;min-width:0">
+                    <div style="width:20px;height:20px;border-radius:3px;overflow:hidden;flex-shrink:0;background:var(--surface)">
+                        <img src="${escHtml(lastFileUrl)}" style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.parentNode.innerHTML='📷'">
+                    </div>
+                    <span style="color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-size:14px;font-weight:${isUnread?'500':'400'}">Фото</span>
+                </div>`;
+            } else if (lastType === 'video') {
+                previewHtml = `<div style="display:flex;align-items:center;gap:5px;min-width:0">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:0.6"><path d="M15 10l4.55-2.27A1 1 0 0121 8.68v6.64a1 1 0 01-1.45.9L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" stroke="currentColor" stroke-width="2"/></svg>
+                    <span style="color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-size:14px;font-weight:${isUnread?'500':'400'}">Видео</span>
+                </div>`;
+            } else if (lastType === 'audio') {
+                previewHtml = `<span style="color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-size:14px">🎙 Голосовое</span>`;
+            } else {
+                previewHtml = `<p style="font-size:14px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0">${escHtml(preview)}</p>`;
+            }
+
             info.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
                     <span style="font-weight:${isUnread?'700':'600'};font-size:16px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${escHtml(displayName)}</span>
                     <span style="font-size:11px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px">${time}</span>
                 </div>
-                <div style="display:flex;justify-content:space-between;align-items:center">
-                    <p style="font-size:14px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
+                <div style="display:flex;justify-content:space-between;align-items:center;overflow:hidden">
+                    <div style="flex:1;min-width:0;margin-right:8px;overflow:hidden">${previewHtml}</div>
                     ${isUnread?`<span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:20px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0">${chat.unread_count}</span>`:''}
                 </div>`;
         }
@@ -7997,7 +8044,6 @@ function closeChat() {
     const chatWin = document.getElementById('chat-window');
     if(chatWin){
         chatWin.classList.remove('active');
-        // Сбрасываем всё что мог выставить keyboard handler
         chatWin.style.height = '';
         chatWin.style.top    = '';
         chatWin.style.bottom = '';
@@ -8013,6 +8059,131 @@ function closeChat() {
     currentChatType  = 'private';
     hideTypingIndicator();
     loadChats();
+}
+
+// ── Меню чата (3 точки) ──────────────────────────────────
+function showChatMenu() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+
+    const sheet = document.createElement('div');
+    sheet.className = 'modal-sheet';
+    sheet.innerHTML = '<div class="modal-handle"></div>';
+
+    const isGroup = currentChatType === 'group';
+    const muted   = currentChatId ? _mutedChats?.has(currentChatId) : false;
+
+    const items = [
+        {
+            icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+            label: 'Поиск по сообщениям',
+            color: '#60a5fa',
+            action: () => { overlay.remove(); _openChatSearch(); }
+        },
+        {
+            icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M13.73 21a2 2 0 01-3.46 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>${muted ? '<line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>' : ''}</svg>`,
+            label: muted ? 'Включить уведомления' : 'Выключить уведомления',
+            color: '#a78bfa',
+            action: () => { overlay.remove(); if (currentChatId) _toggleMute(currentChatId); }
+        },
+        {
+            icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+            label: 'Очистить историю',
+            color: '#f59e0b',
+            action: () => {
+                overlay.remove();
+                _confirmClearHistory();
+            }
+        },
+        !isGroup ? {
+            icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+            label: 'Заблокировать',
+            color: '#f97316',
+            action: () => { overlay.remove(); if (currentPartnerId) _confirmBlockUser(currentPartnerId, document.getElementById('chat-name')?.textContent || ''); }
+        } : null,
+        {
+            icon: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/><path d="M19 6l-1 14H6L5 6M10 11v6M14 11v6M9 6V4h6v2" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/></svg>`,
+            label: isGroup ? 'Покинуть группу' : 'Удалить чат',
+            color: '#ef4444',
+            isDanger: true,
+            action: () => {
+                overlay.remove();
+                const chat = recentChats.find(c => c.chat_id === currentChatId);
+                if (chat) _confirmDeleteChat(currentChatId, chat.partner_name || chat.group_name || '');
+            }
+        },
+    ].filter(Boolean);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+
+    items.forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'settings-row';
+        row.style.cssText = 'border-radius:16px;cursor:pointer;padding:14px 16px';
+        row.innerHTML = `
+            <span style="width:38px;height:38px;border-radius:50%;background:${item.isDanger ? 'rgba(239,68,68,0.12)' : `rgba(${hexToRgb(item.color)},0.12)`};display:flex;align-items:center;justify-content:center;flex-shrink:0;color:${item.color}">
+                ${item.icon}
+            </span>
+            <span style="font-size:15px;font-weight:500;color:${item.isDanger ? '#ef4444' : 'var(--text)'}">${item.label}</span>`;
+        row.onclick = item.action;
+        list.appendChild(row);
+    });
+
+    sheet.appendChild(list);
+    overlay.appendChild(sheet);
+    document.body.appendChild(overlay);
+}
+
+function hexToRgb(hex) {
+    const r = parseInt(hex.slice(1,3),16);
+    const g = parseInt(hex.slice(3,5),16);
+    const b = parseInt(hex.slice(5,7),16);
+    return `${r},${g},${b}`;
+}
+
+function _confirmClearHistory() {
+    if (!currentChatId) return;
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if(e.target===ov) ov.remove(); };
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.innerHTML = `<div class="modal-handle"></div>
+        <div style="text-align:center;padding:8px 0 18px">
+            <div style="font-size:36px;margin-bottom:10px">🗑</div>
+            <div style="font-size:17px;font-weight:700;margin-bottom:6px">Очистить историю?</div>
+            <div style="font-size:14px;color:var(--text-2)">Все сообщения будут удалены</div>
+        </div>`;
+    const btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:10px';
+    const ca = document.createElement('button');
+    ca.style.cssText = 'flex:1;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;color:var(--text);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit';
+    ca.textContent = 'Отмена'; ca.onclick = () => ov.remove();
+    const ok = document.createElement('button');
+    ok.style.cssText = 'flex:1;padding:14px;background:#f59e0b;border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
+    ok.textContent = 'Очистить';
+    ok.onclick = async () => {
+        ov.remove();
+        try {
+            await apiFetch('/delete_chat/' + currentChatId + '?clear_only=1', { method: 'POST' });
+            const m = document.getElementById('messages');
+            if (m) m.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>История очищена</p></div>`;
+            showToast('История очищена', 'success');
+        } catch(e) { showToast('Ошибка', 'error'); }
+    };
+    btns.appendChild(ca); btns.appendChild(ok);
+    sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
+}
+
+function _openChatSearch() {
+    // Фокус на поле ввода с префиксом поиска
+    const input = document.getElementById('msg-input');
+    if (input) {
+        input.focus();
+        showToast('Поиск по чату — скоро 🔍', 'info', 2000);
+    }
 }
 
 function setupGlobalGestures() {
@@ -8060,10 +8231,14 @@ function _setupMomentsPullDown() {
 
     let _pullStart = 0, _pulling = false, _momentsShown = false;
 
+    // Блокируем скролл выше 0 (как в TG — нельзя прокрутить выше поиска)
+    mainContent.addEventListener('scroll', () => {
+        if (mainContent.scrollTop < 0) mainContent.scrollTop = 0;
+    }, { passive: true });
+
     mainContent.addEventListener('touchstart', (e) => {
         const chatSec = document.getElementById('chats-section');
         if (!chatSec?.contains(e.target)) return;
-        // только если скролл в самом верху
         if (mainContent.scrollTop > 10) return;
         _pullStart = e.touches[0].clientY;
         _pulling = true;
@@ -8074,12 +8249,17 @@ function _setupMomentsPullDown() {
         const chatWin = document.getElementById('chat-window');
         if (chatWin?.classList.contains('active')) { _pulling = false; return; }
         const dy = e.touches[0].clientY - _pullStart;
+        // Блокируем overscroll вверх
+        if (dy < 0 && mainContent.scrollTop <= 0) {
+            e.preventDefault();
+            return;
+        }
         if (dy > 40 && !_momentsShown) {
             _showMomentsBar();
             _momentsShown = true;
             vibrate(8);
         }
-    }, { passive: true });
+    }, { passive: false }); // passive:false чтобы preventDefault работал
 
     mainContent.addEventListener('touchend', () => { _pulling = false; }, { passive: true });
 }
@@ -8097,6 +8277,8 @@ function _showMomentsBar() {
         bar.style.maxHeight = '120px';
         bar.style.opacity = '1';
     }));
+    // Всегда обновляем моменты при открытии bar
+    loadMoments().then(() => _renderMomentsBar()).catch(() => {});
 }
 
 function _hideMomentsBar() {
@@ -8114,27 +8296,30 @@ function _renderMomentsBar() {
     if (!scroll) return;
     scroll.innerHTML = '';
 
-    // "Мой момент" — первым
+    const moments = momentsCache || currentMoments || [];
+
+    // Проверяем есть ли у текущего юзера момент
+    const myMoment = moments.find(m => m.user_id === currentUser?.id);
+
+    // "Мой момент" — всегда первым
     const myItem = _buildMomentBarItem(
         currentUser,
-        false,
+        !!myMoment,   // зелёное кольцо если есть момент
         false,
         true,
-        () => openCreateMomentModal()
+        () => myMoment ? openUserMomentsViewer(currentUser.id) : openCreateMomentModal()
     );
     scroll.appendChild(myItem);
 
-    // Моменты из кэша
-    const moments = momentsCache || currentMoments || [];
+    // Моменты других пользователей
     const byUser = new Map();
     moments.forEach(m => {
+        if (m.user_id === currentUser?.id) return; // пропускаем себя — уже добавили
         if (!byUser.has(m.user_id)) byUser.set(m.user_id, m);
     });
 
     byUser.forEach((m, uid) => {
-        if (uid === currentUser?.id) return;
-        const viewed = _viewedMomentUsers?.has(uid);
-        // Фиолетовое кольцо для близких друзей (первые 3 контакта из savedContacts)
+        const viewed  = _viewedMomentUsers?.has(uid);
         const isClose = savedContacts?.slice(0, 3).some(c => c.id === uid);
         const item = _buildMomentBarItem(
             { id: uid, name: m.user_name, avatar: m.user_avatar },
@@ -8145,11 +8330,6 @@ function _renderMomentsBar() {
         );
         scroll.appendChild(item);
     });
-
-    // Если нет моментов кроме своего — загружаем
-    if (!moments.length && typeof loadMoments === 'function') {
-        loadMoments();
-    }
 }
 
 function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
