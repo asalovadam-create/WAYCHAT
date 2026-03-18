@@ -45,6 +45,11 @@
             overflow: hidden;
             overscroll-behavior: none;
             position: fixed;
+            /*
+                НЕТ padding-bottom здесь — серая полоса PWA исчезает.
+                safe-area управляется внутри #app (main.js).
+                position:fixed убивает Safari bounce + полосы при перезагрузке.
+            */
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
