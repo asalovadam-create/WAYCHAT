@@ -2,7 +2,9 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <!-- FIX: interactive-widget=resizes-content prevents iOS keyboard from
+         pushing the whole page up (use visualViewport instead) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
     <title>WayChat</title>
 
     <link rel="apple-touch-icon" href="/static/logo.png">
@@ -18,58 +20,65 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" as="style"
-          onload="this.onload=null;this.rel='stylesheet'">
-    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap"></noscript>
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap"
+          as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <noscript>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap">
+    </noscript>
 
     <style>
-        /* ── RESET ── */
+        /* ── Critical CSS — inlined for zero render-blocking ── */
         *, *::before, *::after {
             box-sizing: border-box;
-            margin: 0; padding: 0;
+            margin: 0;
+            padding: 0;
             -webkit-tap-highlight-color: transparent;
         }
 
-        /*
-         * ИСПРАВЛЕНИЕ iOS Safari / PWA:
-         * НЕ используем position:fixed на html/body — это ломает scroll и создаёт серые полосы.
-         * Вместо этого используем height: 100dvh (dynamic viewport height) + overflow:hidden на #root.
-         * dvh автоматически учитывает адресную строку Safari.
-         */
+        /* FIX: position:fixed on html+body is the Telegram/WhatsApp method for
+           eliminating Safari rubber-band scroll, grey bars on reload, and
+           panel flicker during navigation transitions. */
         html {
-            height: 100%;
             background: #1d1d1e;
+            height: 100%;
+            position: fixed;
+            width: 100%;
             overscroll-behavior: none;
+            touch-action: manipulation;
         }
 
         body {
+            width: 100%;
             height: 100%;
             background: #1d1d1e;
+            overflow: hidden;
             overscroll-behavior: none;
+            position: fixed;
             color: #fff;
-            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                         "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
             text-size-adjust: 100%;
             -webkit-font-smoothing: antialiased;
             touch-action: manipulation;
-            /* НЕТ overflow:hidden и position:fixed здесь */
         }
 
-        /* #root занимает весь экран, overflow:hidden для предотвращения bounce */
+        /* OPT: #root uses --app-height set by JS visualViewport handler.
+           FIX 6d: consolidated — one height declaration with @supports fallback */
         #root {
             width: 100%;
-            /* dvh = dynamic viewport height, учитывает Safari UI */
-            height: 100dvh;
-            /* Fallback для старых браузеров */
-            height: calc(var(--app-height, 100vh));
+            height: var(--app-height, 100dvh);
+            /* FIX: fallback for browsers without dvh support */
+            @supports not (height: 1dvh) {
+                height: var(--app-height, 100vh);
+            }
             background: #1d1d1e;
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            position: relative;
         }
 
-        /* ── SPLASH SCREEN ── */
+        /* ── Splash screen ── */
         #splash {
             position: fixed;
             inset: 0;
@@ -82,39 +91,27 @@
             will-change: opacity;
             transform: translateZ(0);
         }
-
-        #splash-logo-wrap {
-            position: relative;
-            width: 110px;
-            height: 110px;
-        }
-
+        #splash-logo-wrap { position: relative; width: 110px; height: 110px; }
         #splash-logo {
-            width: 110px;
-            height: 110px;
+            width: 110px; height: 110px;
             border-radius: 26px;
             display: block;
             box-shadow: 0 0 0 1px rgba(16,185,129,.25), 0 12px 48px rgba(16,185,129,.2);
             animation: splashPop .5s cubic-bezier(.34,1.56,.64,1) both;
         }
-
         #splash-ring {
-            position: absolute;
-            inset: -8px;
+            position: absolute; inset: -8px;
             border-radius: 34px;
             border: 1.5px solid rgba(16,185,129,.35);
             animation: ringPulse 1.8s ease-in-out infinite;
         }
-
         #splash-name {
             position: absolute;
             bottom: max(env(safe-area-inset-bottom, 0px), 52px);
             left: 0; right: 0;
             text-align: center;
             font-family: "Pacifico", cursive;
-            font-size: 34px;
-            font-weight: 400;
-            letter-spacing: .5px;
+            font-size: 34px; font-weight: 400; letter-spacing: .5px;
             background: linear-gradient(135deg, #fff 0%, #10b981 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -122,31 +119,26 @@
             animation: splashTextIn .6s .15s ease both;
         }
 
-        @keyframes splashPop    { from{opacity:0;transform:scale(.7)} to{opacity:1;transform:scale(1)} }
+        @keyframes splashPop    { from{opacity:0;transform:scale(.7)}     to{opacity:1;transform:scale(1)} }
         @keyframes splashTextIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes ringPulse    { 0%,100%{opacity:.4;transform:scale(1)} 50%{opacity:.8;transform:scale(1.06)} }
+        @keyframes ringPulse    { 0%,100%{opacity:.4;transform:scale(1)}  50%{opacity:.8;transform:scale(1.06)} }
         @keyframes slideUpBanner{ from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes fadeIn       { from{opacity:0} to{opacity:1} }
-        @keyframes slideInRight { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
-        @keyframes slideInUp    { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
-        @keyframes bounce       { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
     </style>
 </head>
 <body>
 
-<!-- Splash -->
 <div id="splash">
     <div id="splash-logo-wrap">
-        <img id="splash-logo" src="/static/logo.png" alt="WayChat" onerror="this.style.display='none'">
+        <img id="splash-logo" src="/static/logo.png" alt="WayChat"
+             onerror="this.style.display='none'">
         <div id="splash-ring"></div>
     </div>
     <div id="splash-name">WayChat</div>
 </div>
 
-<!-- App Root -->
 <div id="root"></div>
 
-<!-- Current User Data (injected by Flask/Jinja2) -->
+<!-- Inject current user data from Flask/Jinja2 -->
 <script>
 window.currentUser = {{ {
     "id":            current_user.id,
@@ -160,38 +152,45 @@ window.currentUser = {{ {
 } | tojson | safe }};
 </script>
 
-<!-- Socket.IO -->
+<!-- Socket.IO client — loaded synchronously before main.js -->
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<!-- Main App -->
-<script src="/static/js/main.js"></script>
+<!-- Main application bundle -->
+<script src="/static/js/main.js" defer></script>
 
 <script>
 (function () {
     'use strict';
 
-    /* ── Dynamic viewport height fix (iOS Safari) ──
-     * Решает проблему: при появлении/скрытии адресной строки высота экрана меняется.
-     * Используем CSS переменную --app-height которую обновляем через ResizeObserver.
-     */
+    // ── 1. Dynamic viewport height fix (iOS Safari) ──────────────────────
+    // FIX 6b/6d: Use visualViewport API — the only reliable way to get true
+    // viewport height on iOS when keyboard is open. Stores in --app-height CSS var.
+    // DO NOT use window.scrollTo or scrollIntoView inside this handler.
     function setAppHeight() {
-        var h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        var h = window.visualViewport
+            ? window.visualViewport.height
+            : window.innerHeight;
         document.documentElement.style.setProperty('--app-height', h + 'px');
     }
     setAppHeight();
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', setAppHeight);
-        window.visualViewport.addEventListener('scroll', setAppHeight);
-    } else {
-        window.addEventListener('resize', setAppHeight);
-    }
 
-    /* ── Tailwind CSS ── */
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', setAppHeight, { passive: true });
+        window.visualViewport.addEventListener('scroll', setAppHeight, { passive: true });
+    }
+    window.addEventListener('resize', setAppHeight, { passive: true });
+    window.addEventListener('orientationchange', function() {
+        // FIX: delay needed on iOS — height not updated immediately after rotation
+        setTimeout(setAppHeight, 150);
+    }, { passive: true });
+
+    // ── 2. Tailwind CSS (async, non-blocking) ─────────────────────────────
+    // OPT: loaded async so it never blocks main.js execution
     var tw = document.createElement('script');
     tw.src = 'https://cdn.tailwindcss.com';
     tw.async = true;
     document.head.appendChild(tw);
 
-    /* ── Splash hide ── */
+    // ── 3. Splash screen hide ─────────────────────────────────────────────
     var splashDone = false;
     function hideSplash() {
         if (splashDone) return;
@@ -199,65 +198,110 @@ window.currentUser = {{ {
         var s = document.getElementById('splash');
         if (!s) return;
         s.style.transition = 'opacity .22s ease';
-        s.style.opacity = '0';
+        s.style.opacity    = '0';
         s.style.pointerEvents = 'none';
-        setTimeout(function () { if (s && s.parentNode) s.parentNode.removeChild(s); }, 240);
+        setTimeout(function() {
+            if (s && s.parentNode) s.parentNode.removeChild(s);
+        }, 240);
     }
-    var checkCount = 0;
-    var splashTimer = setInterval(function () {
+    // Poll for root content OR timeout after 2s
+    var splashCheckCount = 0;
+    var splashTimer = setInterval(function() {
         var r = document.getElementById('root');
-        if ((r && r.children.length > 0) || ++checkCount > 80) {
+        if ((r && r.children.length > 0) || ++splashCheckCount > 66) {
             clearInterval(splashTimer);
             hideSplash();
         }
-    }, 25);
+    }, 30);
 
-    /* ── Service Worker ── */
+    // ── 4. Service Worker registration ───────────────────────────────────
     if ('serviceWorker' in navigator) {
-        window.addEventListener('load', function () {
+        window.addEventListener('load', function() {
             navigator.serviceWorker
                 .register('/sw.js', { scope: '/', updateViaCache: 'none' })
-                .then(function (reg) {
-                    reg.update().catch(function () {});
-                    setInterval(function () { reg.update().catch(function () {}); }, 30 * 60 * 1000);
+                .then(function(reg) {
+                    // Check for updates every 30 minutes
+                    reg.update().catch(function() {});
+                    var swUpdateInterval = setInterval(function() {
+                        reg.update().catch(function() {});
+                    }, 30 * 60 * 1000);
 
-                    /* ИСПРАВЛЕНИЕ: обработка push → открытие call UI.
-                     * При загрузке страницы проверяем URL параметры — мог прийти deep link из SW */
-                    var urlParams = new URLSearchParams(window.location.search);
-                    var swAction = urlParams.get('sw_action');
-                    if (swAction === 'answer_call') {
-                        // Ждём пока приложение загрузится, затем открываем call UI
-                        var callTimer = setInterval(function () {
+                    // FIX Task 4c — SCENARIO C: app was closed, opened via deep link
+                    // Poll for window.WayChat being ready (main.js may still be loading)
+                    var params = new URLSearchParams(window.location.search);
+                    if (params.get('sw_action') === 'answer_call') {
+                        var callId  = params.get('call_id')  || '';
+                        var fromId  = params.get('from_id')  || '';
+                        // Clean URL so reload doesn't re-trigger
+                        window.history.replaceState({}, '', '/');
+                        var pollAttempts = 0;
+                        var callPollTimer = setInterval(function() {
                             if (window.WayChat && window.WayChat.handleCallAction) {
-                                clearInterval(callTimer);
-                                window.WayChat.handleCallAction('answer');
+                                clearInterval(callPollTimer);
+                                window.WayChat.handleCallAction('answer', fromId, callId);
+                            } else if (++pollAttempts > 50) { // 5s max
+                                clearInterval(callPollTimer);
+                                console.warn('[WC] WayChat not ready after 5s — giving up on call auto-open');
                             }
                         }, 100);
-                        setTimeout(function () { clearInterval(callTimer); }, 5000);
+                    }
+
+                    // Handle open_chat deep link
+                    if (params.get('open_chat')) {
+                        var chatId = params.get('open_chat');
+                        window.history.replaceState({}, '', '/');
+                        var chatPollAttempts = 0;
+                        var chatPollTimer = setInterval(function() {
+                            if (window.WayChat && window.WayChat.openChatById) {
+                                clearInterval(chatPollTimer);
+                                window.WayChat.openChatById(parseInt(chatId, 10));
+                            } else if (++chatPollAttempts > 50) {
+                                clearInterval(chatPollTimer);
+                            }
+                        }, 100);
                     }
                 })
-                .catch(function (e) { console.warn('[SW]', e); });
-        });
+                .catch(function(err) {
+                    console.warn('[SW] Registration failed:', err);
+                });
 
-        /* Обработка сообщений от SW (decline/answer call, open chat) */
-        navigator.serviceWorker.addEventListener('message', function (event) {
-            var msg = event.data;
-            if (!msg || !msg.type) return;
-            if (msg.type === 'answer_call' && window.WayChat) {
-                window.WayChat.handleCallAction && window.WayChat.handleCallAction('answer');
-            } else if (msg.type === 'decline_call' && window.WayChat) {
-                window.WayChat.handleCallAction && window.WayChat.handleCallAction('decline', msg.from_id);
-            } else if (msg.type === 'open_chat' && window.WayChat) {
-                window.WayChat.openChat && window.WayChat.openChat(msg.chat_id);
-            }
+            // FIX Task 4 — SCENARIO A/B: relay SW messages to main.js
+            // This runs even when app is in background (tab exists)
+            navigator.serviceWorker.addEventListener('message', function(event) {
+                var msg = event.data;
+                if (!msg || !msg.type) return;
+
+                if (msg.type === 'answer_call') {
+                    if (window.WayChat && window.WayChat.handleCallAction) {
+                        window.WayChat.handleCallAction('answer', msg.from_id, msg.call_id);
+                    } else {
+                        // Queue it — main.js hasn't loaded yet
+                        window._pendingSWCallAction = {
+                            action:  'answer',
+                            from_id: msg.from_id,
+                            call_id: msg.call_id,
+                        };
+                    }
+                } else if (msg.type === 'decline_call') {
+                    if (window.WayChat && window.WayChat.handleCallAction) {
+                        window.WayChat.handleCallAction('decline', msg.from_id, msg.call_id);
+                    }
+                } else if (msg.type === 'open_chat') {
+                    if (window.WayChat && window.WayChat.openChatById) {
+                        window.WayChat.openChatById(msg.chat_id);
+                    } else {
+                        window._pendingSWOpenChat = msg.chat_id;
+                    }
+                }
+            });
         });
     }
 
-    /* ── iOS "Add to Home Screen" hint (один раз) ── */
+    // ── 5. iOS "Add to Home Screen" hint (shown once) ────────────────────
     if (/iphone|ipad|ipod/i.test(navigator.userAgent)
         && !window.navigator.standalone
         && !localStorage.getItem('wc_ios_hint_v5')) {
-        setTimeout(function () {
+        setTimeout(function() {
             localStorage.setItem('wc_ios_hint_v5', '1');
             var d = document.createElement('div');
             d.style.cssText = [
@@ -269,21 +313,25 @@ window.currentUser = {{ {
                 'background:rgba(29,29,30,.98)',
                 'backdrop-filter:blur(28px)',
                 '-webkit-backdrop-filter:blur(28px)',
+                // FIX 6a: safe-area-inset-bottom for bottom bars
                 'padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px))',
                 'border-top:.5px solid rgba(255,255,255,.1)',
                 'color:white',
                 'font-family:-apple-system,sans-serif',
-                'animation:slideUpBanner .4s ease forwards'
+                'animation:slideUpBanner .4s ease forwards',
             ].join(';');
-
             d.innerHTML = [
                 '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Добавить WayChat на экран</div>',
-                '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">Нажми Поделиться → «На экран "Домой"»</div>',
-                '<button onclick="this.parentNode.remove()" style="width:100%;padding:12px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Понял, спасибо!</button>'
+                '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">',
+                'Нажми <b>Поделиться</b> → <b>На экран «Домой»</b>',
+                '</div>',
+                '<button style="width:100%;padding:12px;background:#10b981;border:none;',
+                'border-radius:14px;color:#000;font-size:15px;font-weight:700;',
+                'cursor:pointer;font-family:inherit">Понял, спасибо!</button>',
             ].join('');
-
+            d.querySelector('button').addEventListener('click', function() { d.remove(); });
             document.body.appendChild(d);
-            setTimeout(function () { if (d.parentNode) d.remove(); }, 14000);
+            setTimeout(function() { if (d.parentNode) d.remove(); }, 14000);
         }, 5000);
     }
 
