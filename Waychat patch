@@ -1,0 +1,434 @@
+/**
+ * ╔══════════════════════════════════════════════════════════════╗
+ * ║       WAYCHAT PATCH v1.0 — вставить В НАЧАЛО main.js        ║
+ * ║  Исправляет: viewport · safe-area · FAB · avatars · media    ║
+ * ╚══════════════════════════════════════════════════════════════╝
+ *
+ * ИНСТРУКЦИЯ: добавить этот файл через <script> ДО main.js
+ * <script src="/static/js/waychat_patch.js"></script>
+ * <script src="/static/js/main.js" defer></script>
+ */
+
+// ══ ПАТЧ 1: iOS/Android viewport — единственный механизм ══════
+// Заменяет конфликтующие --vh и --app-height из index.html + main.js
+(function() {
+    'use strict';
+
+    // Удаляем старый wc-ios9 если есть (из main.js)
+    const old = document.getElementById('wc-ios9');
+    if (old) old.remove();
+
+    // ── Единый обработчик высоты ──────────────────────────────
+    function updateHeight() {
+        const h = window.visualViewport
+            ? window.visualViewport.height
+            : window.innerHeight;
+        const root = document.documentElement;
+        root.style.setProperty('--vh',         h + 'px');
+        root.style.setProperty('--app-height', h + 'px');
+        root.style.setProperty('--dvh',        (h * 0.01) + 'px');
+    }
+
+    // Один listener — никаких дублей
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', function() {
+            updateHeight();
+            // При открытой клавиатуре — скроллим чат вниз (не двигаем окно)
+            const vv    = window.visualViewport;
+            const kbH   = Math.max(0, window.innerHeight - vv.height);
+            const chat  = document.getElementById('chat-window');
+            const msgs  = document.getElementById('messages');
+            if (chat && chat.classList.contains('active') && kbH > 60 && msgs) {
+                requestAnimationFrame(function() {
+                    msgs.scrollTop = msgs.scrollHeight;
+                });
+            }
+        }, { passive: true });
+        window.visualViewport.addEventListener('scroll', updateHeight, { passive: true });
+    }
+    window.addEventListener('resize',            updateHeight, { passive: true });
+    window.addEventListener('orientationchange', function() {
+        setTimeout(updateHeight, 150);
+    }, { passive: true });
+    updateHeight();
+
+    // ── CSS патч — применяется поверх всех стилей ────────────
+    const style = document.createElement('style');
+    style.id = 'wc-patch-v1';
+    style.textContent = [
+        /* ─── LAYOUT: убираем тройной safe-area ─── */
+
+        // body: только overflow, без padding-bottom
+        'body { padding-bottom: 0 !important; }',
+
+        // html/body: убираем position:fixed — ломает Android Chrome
+        // overflow:hidden достаточно для предотвращения резинового скролла
+        'html, body { position: relative !important; }',
+
+        // #root и #app: высота через --app-height
+        '#root, #app {',
+        '    height: var(--app-height, 100dvh) !important;',
+        '    max-height: var(--app-height, 100dvh) !important;',
+        '    padding-bottom: 0 !important;',
+        '    overflow: hidden !important;',
+        '}',
+
+        /* ─── CHAT WINDOW: flex-колонка на весь экран ─── */
+        '.chat-view {',
+        '    position: fixed !important;',
+        '    top: 0 !important;',
+        '    left: 0 !important;',
+        '    right: 0 !important;',
+        '    bottom: 0 !important;',
+        '    height: var(--app-height, 100dvh) !important;',
+        '    display: flex !important;',
+        '    flex-direction: column !important;',
+        '    overflow: hidden !important;',
+        '}',
+
+        /* ─── MESSAGES: занимает всё между header и input ─── */
+        '#messages {',
+        '    flex: 1 1 0% !important;',      // flex:1 + min-height:0 — ключевая пара
+        '    min-height: 0 !important;',      // без этого flex не обрежет overflow
+        '    overflow-y: auto !important;',
+        '    overflow-x: hidden !important;',
+        '    -webkit-overflow-scrolling: touch !important;',
+        '    overscroll-behavior-y: contain !important;',
+        '}',
+
+        /* ─── INPUT BAR: в потоке flex, не fixed ─── */
+        '.input-bar {',
+        '    flex-shrink: 0 !important;',
+        '    position: relative !important;',
+        '    transform: none !important;',
+        '    z-index: 10 !important;',
+        // ЕДИНСТВЕННОЕ место для safe-area
+        '    padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;',
+        '}',
+
+        /* ─── HEADER: не сжимается ─── */
+        '#chat-header { flex-shrink: 0 !important; }',
+
+        /* ─── FAB: всегда кликабелен ─── */
+        '.fab-btn {',
+        '    pointer-events: all !important;',
+        '    z-index: 950 !important;',
+        '    touch-action: manipulation !important;',
+        '    -webkit-tap-highlight-color: transparent !important;',
+        '}',
+        '.fab-plus {',
+        '    pointer-events: all !important;',
+        '    z-index: 951 !important;',
+        '    touch-action: manipulation !important;',
+        '}',
+        '.fab-menu { z-index: 952 !important; }',
+        '.fab-bd   { z-index: 948 !important; }',
+
+        /* ─── MAIN CONTENT: нет лишнего отступа снизу ─── */
+        '#main-content {',
+        '    padding-bottom: env(safe-area-inset-bottom, 0px) !important;',
+        '    overflow-y: auto !important;',
+        '    -webkit-overflow-scrolling: touch !important;',
+        '    overscroll-behavior: contain !important;',
+        '}',
+
+        /* ─── iOS ANTI-ZOOM ─── */
+        'input, textarea, select {',
+        '    font-size: max(16px, 1em) !important;',
+        '}',
+
+        /* ─── SKELETON ANIMATION ─── */
+        '@keyframes wcPulse {',
+        '    0%, 100% { opacity: 0.4; }',
+        '    50% { opacity: 0.8; }',
+        '}',
+        '.wc-skeleton {',
+        '    animation: wcPulse 1.5s ease-in-out infinite !important;',
+        '    background: rgba(255,255,255,0.07) !important;',
+        '}',
+
+        /* ─── OFFLINE BANNER ─── */
+        '#wc-off {',
+        '    position: fixed !important;',
+        '    top: max(env(safe-area-inset-top, 0px), 0px) !important;',
+        '    left: 0 !important; right: 0 !important;',
+        '    z-index: 99997 !important;',
+        '    background: rgba(239,68,68,.97) !important;',
+        '    color: #fff !important;',
+        '    padding: 8px 16px !important;',
+        '    text-align: center !important;',
+        '    font-size: 13px !important; font-weight: 700 !important;',
+        '    transform: translateY(-100%) !important;',
+        '    transition: transform .3s ease !important;',
+        '}',
+        '#wc-off.v { transform: translateY(0) !important; }',
+    ].join('\n');
+    document.head.appendChild(style);
+
+})();
+
+
+// ══ ПАТЧ 2: getInitialAvatar — минимум 14px ════════════════════
+// Перезаписывает функцию после загрузки main.js
+window.addEventListener('DOMContentLoaded', function() {
+    // Переопределяем с задержкой чтобы main.js успел загрузиться
+    setTimeout(function() {
+        window._origGetInitialAvatar = window.getInitialAvatar;
+
+        window.getInitialAvatar = function(name, sizeClass, uid) {
+            uid = uid || '';
+            const colors = ['#f43f5e','#6366f1','#10b981','#f59e0b','#3b82f6','#8b5cf6','#ec4899','#06b6d4'];
+            const n = name || '?';
+            let hash = 0;
+            for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
+            const color = colors[Math.abs(hash) % colors.length];
+            const char  = n.charAt(0).toUpperCase();
+
+            // Адаптивный размер: минимум 14px
+            const sc = sizeClass || '';
+            const fs = sc.includes('w-28') ? '46px'
+                : sc.includes('w-20') ? '36px'
+                : sc.includes('w-16') ? '28px'
+                : sc.includes('w-14') ? '24px'
+                : sc.includes('w-12') ? '20px'
+                : sc.includes('w-11') ? '18px'
+                : sc.includes('w-10') ? '17px'
+                : sc.includes('w-9')  ? '16px'
+                : sc.includes('w-8')  ? '14px'  // минимум 14px
+                : sc.includes('full') ? '42%'    // для w-full — процент
+                : '14px';                        // дефолт — 14px
+
+            return '<div class="' + sc + ' rounded-full" style="background:' + color
+                + ';font-size:' + fs
+                + ';font-weight:700;color:#fff;letter-spacing:-0.5px;line-height:1'
+                + ';display:flex;align-items:center;justify-content:center;flex-shrink:0" data-uid="'
+                + uid + '">' + char + '</div>';
+        };
+    }, 100);
+});
+
+
+// ══ ПАТЧ 3: Optimistic UI для медиа ════════════════════════════
+window._wcOptimisticMedia = (function() {
+    'use strict';
+
+    /**
+     * Отправляет файл с мгновенным blob preview
+     * @param {File} file
+     * @param {number} chatId
+     * @param {Function} onSuccess - колбэк(serverUrl)
+     * @param {Function} onError - колбэк(error)
+     */
+    function sendWithPreview(file, chatId, onSuccess, onError) {
+        const blobUrl   = URL.createObjectURL(file);
+        const tempId    = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+        const isVideo   = file.type.startsWith('video/');
+        const isImage   = file.type.startsWith('image/');
+        const isAudio   = file.type.startsWith('audio/');
+
+        // Тип для рендера
+        const msgType = isVideo ? 'video' : isImage ? 'image' : isAudio ? 'audio' : 'file';
+
+        // Создаём оптимистичный payload
+        const optimMsg = {
+            id:          tempId,
+            type:        msgType,
+            type_msg:    msgType,
+            file_url:    blobUrl,
+            content:     file.name,
+            sender_id:   window.currentUser ? window.currentUser.id : 0,
+            sender_name: window.currentUser ? window.currentUser.name : '',
+            timestamp:   new Date().toLocaleTimeString('ru', {hour:'2-digit', minute:'2-digit'}),
+            _optimistic: true,
+            _temp_id:    tempId,
+        };
+
+        // Добавляем в чат немедленно
+        if (window.VirtualList && window.VirtualList.append) {
+            window.VirtualList.append(optimMsg);
+        }
+
+        // Загружаем на сервер
+        const formData = new FormData();
+        formData.append('file',    file);
+        formData.append('chat_id', chatId);
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/upload');
+
+        // Прогресс
+        xhr.upload.addEventListener('progress', function(e) {
+            if (!e.lengthComputable) return;
+            const pct = Math.round(e.loaded / e.total * 100);
+            const el  = document.querySelector('[data-msg-id="' + tempId + '"]');
+            if (!el) return;
+            let prog = el.querySelector('.wc-upload-pct');
+            if (!prog) {
+                prog = document.createElement('span');
+                prog.className = 'wc-upload-pct';
+                prog.style.cssText = 'position:absolute;bottom:5px;right:10px;font-size:10px;color:rgba(255,255,255,0.6);background:rgba(0,0,0,0.4);padding:1px 5px;border-radius:8px;';
+                el.style.position = 'relative';
+                el.appendChild(prog);
+            }
+            prog.textContent = pct < 100 ? pct + '%' : '✓';
+        });
+
+        xhr.addEventListener('load', function() {
+            URL.revokeObjectURL(blobUrl);
+            if (xhr.status >= 200 && xhr.status < 300) {
+                try {
+                    const resp = JSON.parse(xhr.responseText);
+                    // Помечаем что ответ сервера придёт через socket
+                    const el = document.querySelector('[data-msg-id="' + tempId + '"]');
+                    if (el) el.dataset.delivered = '1';
+                    if (onSuccess) onSuccess(resp);
+                } catch(e) {}
+            } else {
+                _markFailed(tempId);
+                if (onError) onError(new Error('HTTP ' + xhr.status));
+            }
+        });
+
+        xhr.addEventListener('error', function() {
+            URL.revokeObjectURL(blobUrl);
+            _markFailed(tempId);
+            if (onError) onError(new Error('Network error'));
+        });
+
+        xhr.send(formData);
+        return tempId;
+    }
+
+    function _markFailed(tempId) {
+        const el = document.querySelector('[data-msg-id="' + tempId + '"]');
+        if (!el) return;
+        el.style.opacity = '0.45';
+        // Кнопка повтора
+        let retryBtn = el.querySelector('.wc-retry');
+        if (!retryBtn) {
+            retryBtn = document.createElement('div');
+            retryBtn.className = 'wc-retry';
+            retryBtn.style.cssText = 'font-size:11px;color:#ef4444;margin-top:4px;cursor:pointer;';
+            retryBtn.textContent = '⚠️ Ошибка — нажмите для повтора';
+            el.appendChild(retryBtn);
+        }
+    }
+
+    return { sendWithPreview: sendWithPreview };
+})();
+
+
+// ══ ПАТЧ 4: Moments bar — skeleton + гарантированная загрузка ══
+window.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        // Переопределяем showMomentsBar если она существует
+        if (typeof window.showMomentsBar === 'function') {
+            const _orig = window.showMomentsBar;
+            window.showMomentsBar = async function() {
+                const bar    = document.getElementById('moments-bar');
+                const scroll = document.getElementById('moments-bar-scroll');
+                if (!bar) return;
+
+                // Показываем bar сразу
+                bar.style.display  = 'block';
+                bar.style.maxHeight = '110px';
+                bar.style.opacity  = '1';
+
+                const now     = Date.now();
+                const cache   = window.momentsCache;
+                const lastLoad= window.momentsLastLoad || 0;
+                const stale   = !cache || (now - lastLoad) > 30000;
+
+                if (stale && scroll) {
+                    // Skeleton пока грузится
+                    scroll.innerHTML = Array(5).fill(0).map(function() {
+                        return '<div style="display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0">'
+                            + '<div class="wc-skeleton" style="width:62px;height:62px;border-radius:50%"></div>'
+                            + '<div class="wc-skeleton" style="width:38px;height:9px;border-radius:5px;margin-top:2px"></div>'
+                            + '</div>';
+                    }).join('');
+                }
+
+                // Загружаем моменты если нужно
+                if (stale && typeof window.loadMoments === 'function') {
+                    await window.loadMoments();
+                } else {
+                    if (typeof window._renderMomentsBar === 'function') {
+                        window._renderMomentsBar();
+                    }
+                }
+            };
+        }
+    }, 200);
+});
+
+
+// ══ ПАТЧ 5: Chat scroll — автоскролл при новом сообщении ═══════
+window.addEventListener('DOMContentLoaded', function() {
+    setTimeout(function() {
+        // Дебаунс для scroll событий
+        function debounce(fn, ms) {
+            let timer;
+            return function() {
+                clearTimeout(timer);
+                timer = setTimeout(fn, ms);
+            };
+        }
+
+        const msgs = document.getElementById('messages');
+        if (!msgs) return;
+
+        // Показываем кнопку "вниз" если пользователь прокрутил вверх
+        let scrollDownBtn = document.getElementById('wc-scroll-down');
+        if (!scrollDownBtn) {
+            scrollDownBtn = document.createElement('button');
+            scrollDownBtn.id = 'wc-scroll-down';
+            scrollDownBtn.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            scrollDownBtn.style.cssText = [
+                'position:absolute',
+                'bottom:70px',
+                'right:16px',
+                'z-index:100',
+                'width:38px',
+                'height:38px',
+                'border-radius:50%',
+                'background:rgba(40,40,42,0.95)',
+                'border:0.5px solid rgba(255,255,255,0.12)',
+                'box-shadow:0 4px 16px rgba(0,0,0,0.4)',
+                'cursor:pointer',
+                'display:none',
+                'align-items:center',
+                'justify-content:center',
+                'opacity:0',
+                'transition:opacity 0.2s ease',
+                'backdrop-filter:blur(8px)',
+                '-webkit-backdrop-filter:blur(8px)',
+            ].join(';');
+            scrollDownBtn.onclick = function() {
+                msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+            };
+
+            // Вставляем в родитель messages
+            if (msgs.parentNode) {
+                msgs.parentNode.style.position = 'relative';
+                msgs.parentNode.appendChild(scrollDownBtn);
+            }
+        }
+
+        var onScroll = debounce(function() {
+            const threshold = 150;
+            const distFromBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight;
+            if (distFromBottom > threshold) {
+                scrollDownBtn.style.display = 'flex';
+                requestAnimationFrame(function() { scrollDownBtn.style.opacity = '1'; });
+            } else {
+                scrollDownBtn.style.opacity = '0';
+                setTimeout(function() { scrollDownBtn.style.display = 'none'; }, 200);
+            }
+        }, 80);
+
+        msgs.addEventListener('scroll', onScroll, { passive: true });
+    }, 500);
+});
+
+console.log('[WayChat Patch v1.0] Applied: viewport + safe-area + FAB + avatars + optimistic media + moments');
