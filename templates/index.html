@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>WayChat</title>
 
     <link rel="apple-touch-icon" href="/static/logo.png">
@@ -25,25 +25,28 @@
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
         /*
-            Против чёрных/белых полос Safari:
-            html/body background = точный цвет фона.
-            iOS рисует safe-area (статус-бар, home indicator) цветом html.
+            position:fixed на html+body — метод TG/WhatsApp для Safari.
+            Убивает «резиновый скролл», мерцание панелей, серые полосы
+            при перезагрузке и при переходе между экранами.
         */
         html {
             background: #1d1d1e;
             height: 100%;
+            position: fixed;
+            width: 100%;
             overscroll-behavior: none;
             touch-action: manipulation;
-            -webkit-overflow-scrolling: auto;
         }
 
         body {
             width: 100%;
             height: 100%;
-            min-height: 100dvh;
             background: #1d1d1e;
             overflow: hidden;
             overscroll-behavior: none;
+            position: fixed;
+            /* home indicator — закрашиваем фоном */
+            padding-bottom: env(safe-area-inset-bottom, 0px);
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
@@ -52,18 +55,14 @@
             touch-action: manipulation;
         }
 
+        /* #root — flex-колонка, высота через JS (--vh) */
         #root {
             width: 100%;
             height: 100%;
             background: #1d1d1e;
-            /* НЕТ псевдоэлементов ::before/::after — они перекрывали input-bar и chat-header */
+            display: flex;
+            flex-direction: column;
         }
-
-        /*
-            Вместо псевдоэлементов — закрашиваем safe-area через
-            background на самом #app (задаётся из main.js).
-            Это работает без перекрытия контента.
-        */
 
         #splash {
             position: fixed; inset: 0; z-index: 999999;
