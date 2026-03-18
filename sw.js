@@ -1,179 +1,278 @@
-/**
- * ╔══════════════════════════════════════════════════════════════╗
- * ║  WayChat Service Worker v8.1.0                              ║
- * ║  Zero-black-screen · Smart caching · Offline fallback       ║
- * ╚══════════════════════════════════════════════════════════════╝
- *
- * ⚠️  ВАЖНО: меняй CACHE_VERSION при каждом деплое!
- *
- * Стратегии:
- *   HTML          → Network-First   (всегда свежий index.html)
- *   JS/CSS/img    → Cache-First     + фоновое обновление
- *   Шрифты        → Stale-While-Revalidate
- *   API/Socket.IO → Network-Only    (никогда не кэшируем)
- */
+// WayChat Service Worker v5 — production ready
+// Fixes: push→call deep link, cache strategy, offline queue
 
-const CACHE_VERSION = 'wc-v8.1.0';        // ← МЕНЯТЬ ПРИ КАЖДОМ ДЕПЛОЕ
-const STATIC_CACHE  = CACHE_VERSION + '-static';
-const FONT_CACHE    = CACHE_VERSION + '-fonts';
-const ALL_CACHES    = [STATIC_CACHE, FONT_CACHE];
+const CACHE_VER    = 'v5';
+const CACHE_STATIC = `waychat-static-${CACHE_VER}`;
+const CACHE_MEDIA  = `waychat-media-${CACHE_VER}`;
+const CACHE_API    = `waychat-api-${CACHE_VER}`;
 
-const PRECACHE = [
+const PRECACHE_URLS = [
     '/static/js/main.js',
-    '/static/logo.png',
+    '/static/css/main.css',
     '/static/img/icon-192.png',
-    '/static/img/icon-512.png',
+    '/static/img/icon-96.png',
+    '/static/logo.png',
 ];
 
-// Паттерны которые ВСЕГДА идут в сеть
-const BYPASS = [
-    /\/socket\.io\//,
-    /\/api\//,
-    /\/get_/,   /\/send_/,   /\/upload/,
-    /\/mark_/,  /\/delete_/, /\/update_/,
-    /\/search/, /\/login/,   /\/register/,
-    /\/logout/, /\/moments/, /\/push/,
-    /\/chats/,  /\/messages/,
-];
-const bypass = url => BYPASS.some(r => r.test(url));
-
-// ══ INSTALL ════════════════════════════════════════════════════
+// ── Install: precache static assets ──
 self.addEventListener('install', event => {
-    self.skipWaiting();
     event.waitUntil(
-        caches.open(STATIC_CACHE).then(cache =>
-            Promise.allSettled(
-                PRECACHE.map(u => cache.add(u).catch(e => console.warn('[SW] pre-cache fail:', u, e.message)))
-            )
-        )
+        caches.open(CACHE_STATIC)
+            .then(cache => Promise.allSettled(
+                PRECACHE_URLS.map(url => cache.add(url).catch(() => {}))
+            ))
+            .then(() => self.skipWaiting())
     );
 });
 
-// ══ ACTIVATE — удаляем старые кэши ════════════════════════════
+// ── Activate: remove old caches ──
 self.addEventListener('activate', event => {
+    const KEEP = [CACHE_STATIC, CACHE_MEDIA, CACHE_API];
     event.waitUntil(
         caches.keys()
-            .then(keys => Promise.all(keys.filter(k => !ALL_CACHES.includes(k)).map(k => caches.delete(k))))
+            .then(keys => Promise.all(
+                keys
+                    .filter(k => k.startsWith('waychat-') && !KEEP.includes(k))
+                    .map(k => caches.delete(k))
+            ))
             .then(() => self.clients.claim())
     );
-    self.clients.matchAll({ type: 'window' }).then(clients =>
-        clients.forEach(c => c.postMessage({ type: 'SW_UPDATED', version: CACHE_VERSION }))
-    );
 });
 
-// ══ FETCH ══════════════════════════════════════════════════════
-self.addEventListener('fetch', event => {
-    const req = event.request;
-    const url = new URL(req.url);
-    const sameOrigin = url.origin === self.location.origin;
-    const isFont = url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com';
-
-    if (!sameOrigin && !isFont) return;
-    if (bypass(url.pathname + url.search)) { event.respondWith(fetch(req)); return; }
-
-    if (req.headers.get('accept')?.includes('text/html')) {
-        event.respondWith(networkFirst(req)); return;
-    }
-    if (isFont || /\.(woff2?|ttf|otf|eot)$/i.test(url.pathname)) {
-        event.respondWith(staleWhileRevalidate(req, FONT_CACHE)); return;
-    }
-    if (url.pathname.startsWith('/static/') || /\.(js|css|png|jpg|jpeg|svg|ico|webp|gif)$/i.test(url.pathname)) {
-        event.respondWith(cacheFirst(req)); return;
-    }
-    event.respondWith(netWithFallback(req));
-});
-
-async function networkFirst(req) {
-    try {
-        const res = await fetchTimed(req, 5000);
-        if (res.ok) caches.open(STATIC_CACHE).then(c => c.put(req, res.clone())).catch(() => {});
-        return res;
-    } catch {
-        return (await caches.match(req)) || offlinePage();
-    }
-}
-
-async function cacheFirst(req) {
-    const cache = await caches.open(STATIC_CACHE);
-    const hit   = await cache.match(req);
-    if (hit) {
-        fetch(req).then(r => { if (r.ok) cache.put(req, r); }).catch(() => {});
-        return hit;
-    }
-    const res = await fetch(req).catch(() => null);
-    if (res?.ok) cache.put(req, res.clone()).catch(() => {});
-    return res || new Response('', { status: 503 });
-}
-
-async function staleWhileRevalidate(req, cacheName) {
-    const cache = await caches.open(cacheName);
-    const hit   = await cache.match(req);
-    const fresh = fetch(req).then(r => { if (r.ok) cache.put(req, r.clone()); return r; }).catch(() => null);
-    return hit || (await fresh) || new Response('', { status: 503 });
-}
-
-async function netWithFallback(req) {
-    try {
-        const res = await fetch(req);
-        if (res.ok) caches.open(STATIC_CACHE).then(c => c.put(req, res.clone())).catch(() => {});
-        return res;
-    } catch {
-        return (await caches.match(req)) || new Response('', { status: 503 });
-    }
-}
-
-function fetchTimed(req, ms) {
-    const ctrl = new AbortController();
-    const id   = setTimeout(() => ctrl.abort(), ms);
-    return fetch(req, { signal: ctrl.signal }).finally(() => clearTimeout(id));
-}
-
-function offlinePage() {
-    return new Response(
-        `<!DOCTYPE html><html lang="ru"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>WayChat — Нет сети</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;background:#17212b;color:#e8eef4;
-  font-family:-apple-system,BlinkMacSystemFont,sans-serif;
-  display:flex;align-items:center;justify-content:center}
-.c{text-align:center;padding:24px}
-.ico{font-size:72px;display:block;margin-bottom:24px}
-h1{font-size:24px;font-weight:800;margin-bottom:10px}
-p{color:rgba(232,238,244,.45);font-size:15px;line-height:1.6;margin-bottom:28px}
-button{padding:14px 36px;background:#10b981;border:none;border-radius:16px;
-  color:#000;font-size:16px;font-weight:800;cursor:pointer;font-family:inherit}
-button:active{transform:scale(.96)}
-</style></head>
-<body><div class="c">
-  <span class="ico">📡</span>
-  <h1>Нет подключения</h1>
-  <p>Проверьте интернет и попробуйте снова.<br>Ранее открытые чаты доступны в кэше.</p>
-  <button onclick="location.reload()">Попробовать снова</button>
-</div></body></html>`,
-        { headers: { 'Content-Type': 'text/html;charset=utf-8' } }
-    );
-}
-
-// ══ PUSH ═══════════════════════════════════════════════════════
+// ── Push Notifications ──
 self.addEventListener('push', event => {
-    if (!event.data) return;
-    let d; try { d=event.data.json(); } catch { d={title:'WayChat',body:event.data.text()}; }
-    event.waitUntil(self.registration.showNotification(d.title||'WayChat', {
-        body:d.body||'',icon:d.icon||'/static/img/icon-192.png',
-        badge:'/static/img/icon-192.png',tag:d.tag||'wc-msg',
-        data:d.url||'/',vibrate:[200,100,200],renotify:true,
-    }));
+    if (!e.data) return;  // safety check alias
+    const e = event;
+    let data = {};
+    try { data = e.data.json(); } catch { data = { title: 'WayChat', body: e.data.text() }; }
+
+    const isCall    = data.type === 'incoming_call';
+    const callId    = data.call_id || '';
+    const fromId    = data.from_id || '';
+    const chatId    = data.chat_id || '';
+
+    // ИСПРАВЛЕНИЕ: deep link включает call_id чтобы SW мог передать его приложению
+    const callUrl   = `/?sw_action=answer_call&call_id=${callId}&from_id=${fromId}`;
+    const chatUrl   = data.url || (chatId ? `/?open_chat=${chatId}` : '/');
+
+    const options = {
+        body:    data.body  || '',
+        icon:    data.icon  || '/static/img/icon-192.png',
+        badge:   data.badge || '/static/img/icon-96.png',
+        tag:     data.tag   || (isCall ? `wc-call-${fromId}` : `wc-msg-${chatId}`),
+        renotify: true,
+        data: {
+            url:     isCall ? callUrl : chatUrl,
+            chat_id: chatId,
+            call_id: callId,
+            from_id: fromId,
+            type:    data.type,
+        },
+        requireInteraction: isCall,
+        silent: false,
+        vibrate: isCall ? [500, 200, 500, 200, 500] : [200, 100, 200],
+    };
+
+    // Action buttons для входящего звонка
+    if (isCall) {
+        options.actions = [
+            { action: 'answer',  title: '✅ Ответить', icon: '/static/img/answer.png' },
+            { action: 'decline', title: '❌ Отклонить', icon: '/static/img/decline.png' },
+        ];
+    }
+
+    event.waitUntil(
+        self.registration.showNotification(data.title || 'WayChat', options)
+    );
 });
 
+// ── Notification Click ──
 self.addEventListener('notificationclick', event => {
     event.notification.close();
-    const url = event.notification.data || '/';
+    const nd     = event.notification.data || {};
+    const action = event.action;
+    const isCall = nd.type === 'incoming_call';
+
     event.waitUntil(
-        self.clients.matchAll({type:'window',includeUncontrolled:true}).then(cs => {
-            for (const c of cs) if (c.url.includes(self.location.origin)&&'focus'in c) return c.focus();
-            return self.clients.openWindow(url);
+        clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+            // Если нажали "Отклонить" — шлём сообщение в открытые вкладки и выходим
+            if (isCall && action === 'decline') {
+                list.forEach(c => c.postMessage({
+                    type:    'decline_call',
+                    from_id: nd.from_id,
+                    call_id: nd.call_id,
+                }));
+                return;
+            }
+
+            // Ищем уже открытую вкладку приложения
+            const appClient = list.find(c =>
+                c.url.includes(self.location.origin) && 'focus' in c
+            );
+
+            if (appClient) {
+                // Фокусируем и отправляем команду
+                return appClient.focus().then(() => {
+                    if (isCall && action === 'answer') {
+                        appClient.postMessage({
+                            type:    'answer_call',
+                            from_id: nd.from_id,
+                            call_id: nd.call_id,
+                        });
+                    } else if (nd.chat_id) {
+                        appClient.postMessage({
+                            type:    'open_chat',
+                            chat_id: nd.chat_id,
+                        });
+                    }
+                });
+            } else {
+                // Открываем новую вкладку с deep link
+                const url = isCall && action === 'answer'
+                    ? `/?sw_action=answer_call&call_id=${nd.call_id}&from_id=${nd.from_id}`
+                    : (nd.url || '/');
+                return clients.openWindow(url);
+            }
         })
     );
 });
+
+// ── Push Subscription Change ──
+self.addEventListener('pushsubscriptionchange', event => {
+    event.waitUntil(
+        self.registration.pushManager
+            .subscribe(event.oldSubscription.options)
+            .then(sub => {
+                const p256dh = btoa(String.fromCharCode(
+                    ...new Uint8Array(sub.getKey('p256dh'))
+                ));
+                const auth = btoa(String.fromCharCode(
+                    ...new Uint8Array(sub.getKey('auth'))
+                ));
+                return fetch('/push-subscribe', {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({ endpoint: sub.endpoint, p256dh, auth }),
+                });
+            })
+    );
+});
+
+// ── Fetch: Cache Strategy ──
+self.addEventListener('fetch', event => {
+    const req = event.request;
+    const url = new URL(req.url);
+
+    // Пропускаем не-GET и socket.io
+    if (req.method !== 'GET') return;
+    if (url.pathname.startsWith('/socket.io')) return;
+
+    // Cloudinary: cache-first 7 дней
+    if (url.hostname.includes('cloudinary.com') || url.hostname.includes('res.cloudinary.com')) {
+        event.respondWith(cacheFirst(req, CACHE_MEDIA, 7 * 86400));
+        return;
+    }
+
+    // Статика с хешем: cache-first 1 год
+    if (url.pathname.startsWith('/static/')) {
+        event.respondWith(cacheFirst(req, CACHE_STATIC, 365 * 86400));
+        return;
+    }
+
+    // API чатов: network-first с таймаутом
+    const apiNetworkFirst = ['/get_my_chats', '/get_moments', '/get_user_profile'];
+    if (apiNetworkFirst.some(p => url.pathname.startsWith(p))) {
+        event.respondWith(networkFirst(req, CACHE_API, 8));
+        return;
+    }
+
+    // Изображения: cache-first 24ч
+    if (/\.(jpg|jpeg|png|webp|gif|svg|ico)(\?|$)/i.test(url.pathname)) {
+        event.respondWith(cacheFirst(req, CACHE_MEDIA, 86400));
+        return;
+    }
+
+    // HTML страницы: network-first (чтобы всегда получать свежий HTML)
+    if (req.headers.get('accept') && req.headers.get('accept').includes('text/html')) {
+        event.respondWith(
+            fetch(req).catch(() => caches.match(req))
+        );
+        return;
+    }
+
+    // Остальное: stale-while-revalidate
+    event.respondWith(staleWhileRevalidate(req, CACHE_STATIC));
+});
+
+// ── Cache Helpers ──
+
+async function cacheFirst(req, cacheName, maxAgeSec) {
+    const cache  = await caches.open(cacheName);
+    const cached = await cache.match(req);
+
+    if (cached) {
+        const ts = cached.headers.get('sw-cached-at');
+        if (!ts || (Date.now() - Number(ts)) < maxAgeSec * 1000) {
+            return cached;
+        }
+    }
+
+    try {
+        const fresh = await fetch(req.clone());
+        if (fresh && fresh.ok) {
+            const headers = new Headers(fresh.headers);
+            headers.set('sw-cached-at', String(Date.now()));
+            const toCache = new Response(await fresh.clone().arrayBuffer(), {
+                status:  fresh.status,
+                headers,
+            });
+            cache.put(req, toCache);
+        }
+        return fresh;
+    } catch {
+        return cached || new Response('', { status: 503 });
+    }
+}
+
+async function networkFirst(req, cacheName, timeoutSec) {
+    const cache = await caches.open(cacheName);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutSec * 1000);
+
+    try {
+        const fresh = await fetch(req.clone(), { signal: controller.signal });
+        clearTimeout(timer);
+        if (fresh && fresh.ok) {
+            const headers = new Headers(fresh.headers);
+            headers.set('sw-cached-at', String(Date.now()));
+            const toCache = new Response(await fresh.clone().arrayBuffer(), {
+                status:  fresh.status,
+                headers,
+            });
+            cache.put(req, toCache);
+        }
+        return fresh;
+    } catch {
+        clearTimeout(timer);
+        const cached = await cache.match(req);
+        if (cached) return cached;
+        // Для API возвращаем пустой массив чтобы не ломать UI
+        return new Response(JSON.stringify([]), {
+            status:  200,
+            headers: { 'Content-Type': 'application/json' },
+        });
+    }
+}
+
+async function staleWhileRevalidate(req, cacheName) {
+    const cache  = await caches.open(cacheName);
+    const cached = await cache.match(req);
+
+    const fetchPromise = fetch(req.clone()).then(fresh => {
+        if (fresh && fresh.ok) cache.put(req, fresh.clone());
+        return fresh;
+    }).catch(() => null);
+
+    return cached || fetchPromise;
+}
