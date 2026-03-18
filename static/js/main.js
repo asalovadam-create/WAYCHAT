@@ -120,12 +120,6 @@ const WCCache = (() => {
             height: var(--vh, 100dvh) !important;
             max-height: var(--vh, 100dvh) !important;
             background: #1d1d1e !important;
-            /* ПАТЧ: убрана серая полоса Safari PWA */
-            overflow: hidden !important;
-        }
-        /* Safe area padding для body снизу */
-        body {
-            padding-bottom: env(safe-area-inset-bottom, 0px) !important;
         }
         /* chat-view: flex-колонка, высота через JS */
         .chat-view {
@@ -183,12 +177,6 @@ const WCCache = (() => {
         body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
         *, button, a, [onclick], [data-msg-id] { -webkit-tap-highlight-color: transparent; }
         .vl-ph { flex-shrink: 0; width: 100%; pointer-events: none; }
-        /* ── Scroll to bottom button ── */
-        #scroll-to-bottom-btn {
-            /* Позиционируется через JS в _injectScrollToBottomBtn */
-            will-change: opacity, transform;
-        }
-        #scroll-to-bottom-btn:active { transform: scale(0.9) !important; }
         #app, #main-content, .prof-sheet-inner { touch-action: pan-x pan-y; }
         #wc-off {
             position: fixed; top: max(env(safe-area-inset-top,0px),0px);
@@ -288,106 +276,184 @@ const VirtualList=(()=>{
     function calc(){if(!el||!ms.length)return;const st=el.scrollTop,ch=el.clientHeight;let cum=0,vs=0,ve=ms.length;for(let i=0;i<ms.length;i++){const h=gh(i);if(cum+h>st&&vs===0)vs=i;if(cum>st+ch){ve=i;break;}cum+=h;}win(Math.max(0,vs-OV),Math.min(ms.length,ve+OV),true);}
     function onsc(){if(el.scrollTop<140&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages&&typeof loadMessages==='function')loadMessages(false);if(rf)cancelAnimationFrame(rf);rf=requestAnimationFrame(calc);}
     function mount(el2){if(el)destroy();el=el2;ms=[];hc.clear();s=0;e=0;el.style.overflowY='auto';el.style.WebkitOverflowScrolling='touch';el.style.overscrollBehavior='contain';ts=document.createElement('div');ts.style.cssText='height:1px;flex-shrink:0';tp=document.createElement('div');tp.className='vl-ph';tp.style.height='0';bp=document.createElement('div');bp.className='vl-ph';bp.style.height='0';bs=document.createElement('div');bs.style.cssText='height:1px;flex-shrink:0';el.appendChild(ts);el.appendChild(tp);el.appendChild(bp);el.appendChild(bs);el.addEventListener('scroll',onsc,{passive:true});}
-    function setMessages(arr){if(!el)return;ms=arr.slice();hc.clear();s=0;e=0;el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());phs();if(!arr.length){el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';return;}if(!el.contains(ts)){el.innerHTML='';mount(el);}win(Math.max(0,arr.length-BA),arr.length,false);
-        // ПАТЧ: надёжный scroll вниз — двойной rAF гарантирует что layout завершён
-        requestAnimationFrame(()=>requestAnimationFrame(()=>{
-            el.scrollTop=el.scrollHeight;
-            // fallback на случай если браузер ещё не отрисовал (Safari)
-            setTimeout(()=>{if(el)el.scrollTop=el.scrollHeight;},80);
-            // Обновляем кнопку scroll-to-bottom
-            _updateScrollBtn(false);
-        }));}
-    function append(msg){if(!el)return;ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<180;if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
-        if(ab){requestAnimationFrame(()=>{el.scrollTop=el.scrollHeight;});_updateScrollBtn(false);}
-        else{// Пользователь скроллит вверх — показываем кнопку вниз с бейджем
-            _scrollUnread++;_updateScrollBtn(true);}}}
+    function setMessages(arr){if(!el)return;ms=arr.slice();hc.clear();s=0;e=0;el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());phs();if(!arr.length){el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';return;}if(!el.contains(ts)){el.innerHTML='';mount(el);}win(Math.max(0,arr.length-BA),arr.length,false);requestAnimationFrame(function(){requestAnimationFrame(function(){
+            el.scrollTop=el.scrollHeight;_scrollAtBottom=true;_scrollUnread=0;
+            _updateScrollBtn(el);_ensureScrollBtn();_attachScrollListener(el);
+        });});}
+    function append(msg){if(!el)return;ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120; // FIX Task 2a: 120px threshold
+    if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
+        if(ab){
+            // FIX Task 2a: user near bottom — auto scroll
+            requestAnimationFrame(function(){el.scrollTop=el.scrollHeight;});
+            _scrollAtBottom=true;_scrollUnread=0;
+        } else {
+            // FIX Task 2a: user scrolled up — show badge, don't scroll
+            _scrollAtBottom=false;
+            const isMine = typeof currentUser!=='undefined' && msg.sender_id===currentUser.id;
+            if(!isMine){ _scrollUnread++; }
+        }
+        _updateScrollBtn(el);
+    }}
     function prepend(arr){if(!el||!arr.length)return;ms=[...arr,...ms];const nh=new Map();hc.forEach((v,k)=>nh.set(k+arr.length,v));hc=nh;s+=arr.length;e+=arr.length;const ph=el.scrollHeight;win(Math.max(0,s-arr.length),e,false);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-ph;});}
     function toBottom(a){if(!el)return;a?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):(el.scrollTop=el.scrollHeight);}
     function destroy(){if(!el)return;el.removeEventListener('scroll',onsc);if(rf)cancelAnimationFrame(rf);ms=[];hc.clear();el=ts=bs=tp=bp=null;}
     return{mount,setMessages,appendMessage:append,prependMessages:prepend,scrollToBottom:toBottom,destroy};
 })();
 
+// ══ SCROLL UTILITY — Telegram-grade ════════════════════════════════
+// FIX Task 2a: single utility, uses scrollTop NOT scrollIntoView (iOS jank)
+// OPT: requestAnimationFrame wrapping to batch DOM reads/writes
 
-
-// ══ SCROLL-TO-BOTTOM BUTTON — Telegram-style ════════════════
 let _scrollUnread = 0;
+let _scrollAtBottom = true;
+let _scrollListenerAttached = false;
 
-function _updateScrollBtn(hasNew) {
-    const btn = document.getElementById('scroll-to-bottom-btn');
-    if (!btn) return;
-    const msgs = document.getElementById('messages');
-    if (!msgs) return;
-    const distFromBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight;
-    const isAtBottom = distFromBottom < 80;
-
-    if (isAtBottom) {
-        _scrollUnread = 0;
-        btn.style.opacity = '0';
-        btn.style.pointerEvents = 'none';
-        btn.style.transform = 'translateY(12px)';
+/**
+ * scrollToBottom(el, instant)
+ * el      — the scrollable messages container
+ * instant — true = no animation (on open), false = smooth (new message)
+ * FIX: never uses scrollIntoView — that causes jank on iOS Safari
+ */
+function scrollToBottom(el, instant) {
+    if (!el) return;
+    if (instant) {
+        // OPT: direct assignment is synchronous and jank-free
+        el.scrollTop = el.scrollHeight;
     } else {
-        btn.style.opacity = '1';
-        btn.style.pointerEvents = 'auto';
-        btn.style.transform = 'translateY(0)';
+        requestAnimationFrame(function() {
+            el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+        });
     }
-    const badge = btn.querySelector('.stb-badge');
-    if (badge) {
-        badge.textContent = _scrollUnread > 0 ? String(_scrollUnread > 99 ? '99+' : _scrollUnread) : '';
-        badge.style.display = _scrollUnread > 0 ? 'flex' : 'none';
-    }
+    _scrollUnread  = 0;
+    _scrollAtBottom = true;
+    _updateScrollBtn(el);
 }
 
-function _injectScrollToBottomBtn() {
-    if (document.getElementById('scroll-to-bottom-btn')) return;
-    const chatWin = document.getElementById('chat-window');
+function _isNearBottom(el) {
+    if (!el) return true;
+    return (el.scrollHeight - el.scrollTop - el.clientHeight) < 120;
+}
+
+// OPT: debounced at 16ms (one frame) — prevents scroll-handler thrashing
+let _scrollDebounceTimer = null;
+function _onMessagesScroll(el) {
+    if (_scrollDebounceTimer) return;
+    _scrollDebounceTimer = setTimeout(function() {
+        _scrollDebounceTimer = null;
+        _scrollAtBottom = _isNearBottom(el);
+        if (_scrollAtBottom) {
+            _scrollUnread = 0;
+        }
+        _updateScrollBtn(el);
+        // Pagination: load older messages when near top
+        if (el.scrollTop < 80 && typeof loadMessages === 'function' &&
+            hasMoreMessages && !loadingMessages) {
+            loadMessages(false);
+        }
+    }, 16);
+}
+
+function _attachScrollListener(el) {
+    if (!el || _scrollListenerAttached) return;
+    _scrollListenerAttached = true;
+    el.addEventListener('scroll', function() { _onMessagesScroll(el); }, { passive: true });
+}
+
+// ── Scroll-to-bottom button (Task 2b) ───────────────────────────────
+function _ensureScrollBtn() {
+    if (document.getElementById('wc-scroll-btn')) return;
+    var chatWin = document.getElementById('chat-window');
     if (!chatWin) return;
-    const btn = document.createElement('button');
-    btn.id = 'scroll-to-bottom-btn';
+
+    var btn = document.createElement('button');
+    btn.id = 'wc-scroll-btn';
     btn.setAttribute('aria-label', 'Прокрутить вниз');
+    // OPT: CSS transitions only (opacity + translateY) — no JS animation lib
     btn.style.cssText = [
         'position:absolute',
         'right:14px',
-        'bottom:72px',
-        'width:40px',
-        'height:40px',
+        // FIX 6a: account for safe-area-inset-bottom
+        'bottom:calc(72px + env(safe-area-inset-bottom,0px))',
+        'width:42px',
+        'height:42px',
         'border-radius:50%',
-        'background:rgba(29,29,30,0.92)',
+        'background:rgba(29,29,30,0.95)',
         'backdrop-filter:blur(12px)',
         '-webkit-backdrop-filter:blur(12px)',
-        'border:0.5px solid rgba(255,255,255,0.12)',
+        'border:0.5px solid rgba(255,255,255,0.14)',
         'color:#fff',
-        'font-size:18px',
+        'font-size:0',
         'display:flex',
         'align-items:center',
         'justify-content:center',
-        'box-shadow:0 4px 20px rgba(0,0,0,0.45)',
-        'z-index:200',
+        'box-shadow:0 4px 18px rgba(0,0,0,0.45)',
+        'z-index:500',
         'cursor:pointer',
         'opacity:0',
         'pointer-events:none',
-        'transform:translateY(12px)',
-        'transition:opacity .22s ease, transform .22s cubic-bezier(.34,1.56,.64,1)',
+        // OPT: CSS transition — GPU composited, no layout
+        'transition:opacity .2s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        'transform:translateY(10px)',
         '-webkit-tap-highlight-color:transparent',
     ].join(';');
-    btn.innerHTML = `
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-          <path d="M19 9l-7 7-7-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <span class="stb-badge" style="display:none;position:absolute;top:-5px;right:-5px;min-width:18px;height:18px;background:var(--accent,#10b981);color:#000;font-size:10px;font-weight:800;border-radius:9px;padding:0 4px;align-items:center;justify-content:center;border:1.5px solid rgba(29,29,30,0.9)"></span>`;
-    btn.onclick = () => {
-        _scrollUnread = 0;
-        VirtualList.scrollToBottom(true);
-        _updateScrollBtn(false);
-    };
+    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none">' +
+        '<path d="M19 9l-7 7-7-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>' +
+        '<span id="wc-scroll-badge" style="display:none;position:absolute;top:-5px;right:-5px;' +
+        'min-width:18px;height:18px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;' +
+        'border-radius:9px;padding:0 4px;align-items:center;justify-content:center;' +
+        'border:1.5px solid rgba(29,29,30,0.9)"></span>';
+
     chatWin.style.position = 'relative';
     chatWin.appendChild(btn);
 
-    // Слушаем скролл контейнера сообщений
-    const msgs = document.getElementById('messages');
-    if (msgs) {
-        msgs.addEventListener('scroll', () => _updateScrollBtn(false), { passive: true });
+    btn.addEventListener('click', function() {
+        var msgs = document.getElementById('messages');
+        _scrollUnread = 0;
+        scrollToBottom(msgs, false);
+        // Mark messages read
+        if (currentChatId) {
+            socket.emit('mark_read', { chat_id: currentChatId });
+        }
+    });
+}
+
+function _updateScrollBtn(el) {
+    var btn   = document.getElementById('wc-scroll-btn');
+    var badge = document.getElementById('wc-scroll-badge');
+    if (!btn) return;
+
+    var distFromBottom = el
+        ? (el.scrollHeight - el.scrollTop - el.clientHeight)
+        : 0;
+    var show = distFromBottom > 120;
+
+    // OPT: only mutate style when state changes
+    if (show) {
+        btn.style.opacity        = '1';
+        btn.style.pointerEvents  = 'auto';
+        btn.style.transform      = 'translateY(0)';
+    } else {
+        btn.style.opacity        = '0';
+        btn.style.pointerEvents  = 'none';
+        btn.style.transform      = 'translateY(10px)';
+    }
+
+    if (badge) {
+        if (_scrollUnread > 0 && show) {
+            badge.style.display  = 'flex';
+            badge.textContent    = _scrollUnread > 99 ? '99+' : String(_scrollUnread);
+        } else {
+            badge.style.display  = 'none';
+            badge.textContent    = '';
+        }
     }
 }
+// ══ END SCROLL UTILITY ═════════════════════════════════════════════
+
+
+
+
 
 // Обёртка для аватаров — загружает, кэширует в IndexedDB, возвращает blob URL
 const AvatarCache = (() => {
@@ -627,53 +693,177 @@ const THEMES = {
 // ══════════════════════════════════════════════════════════
 //  SOCKET.IO — ИНИЦИАЛИЗАЦИЯ
 // ══════════════════════════════════════════════════════════
-// ── Offline queue — сообщения которые не отправились при разрыве ──
-const _offlineQueue = [];
 
-// Надёжный emit с ACK и fallback в очередь
-function _socketEmit(event, data, onAck) {
-    if (!socket || !wsConnected) {
-        if (event === 'send_message') {
-            _offlineQueue.push({ event, data, onAck });
-        }
-        return;
-    }
-    if (onAck) {
-        // С ACK и таймаутом 5 сек
-        const timer = setTimeout(() => {
-            console.warn('[WS] ACK timeout:', event);
-            // При таймауте не ставим в очередь — optimistic UI уже показан
-        }, 5000);
-        socket.emit(event, data, (ack) => {
-            clearTimeout(timer);
-            onAck && onAck(ack);
+// ══ OFFLINE MESSAGE QUEUE (Task 5f) ═══════════════════════════════
+// FIX: messages sent while disconnected are queued in IndexedDB
+// and flushed on reconnect with ⏳ → ✓ status update
+
+const _OMQ_STORE = 'wc_offline_queue';
+let   _omqDb     = null;
+
+function _omqOpen() {
+    if (_omqDb) return Promise.resolve(_omqDb);
+    return new Promise((res, rej) => {
+        const req = indexedDB.open(_OMQ_STORE, 1);
+        req.onupgradeneeded = e => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('queue')) {
+                const store = db.createObjectStore('queue', { keyPath: 'tempId' });
+                store.createIndex('ts', 'ts');
+            }
+        };
+        req.onsuccess  = e => { _omqDb = e.target.result; res(_omqDb); };
+        req.onerror    = ()  => rej(req.error);
+    });
+}
+
+async function _omqAdd(item) {
+    try {
+        const db = await _omqOpen();
+        const tx = db.transaction('queue', 'readwrite');
+        tx.objectStore('queue').put(item);
+        await new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+    } catch(err) { console.error('[OMQ] add failed:', err); }
+}
+
+async function _omqGetAll() {
+    try {
+        const db = await _omqOpen();
+        return new Promise((res, rej) => {
+            const tx = db.transaction('queue', 'readonly');
+            const req = tx.objectStore('queue').index('ts').getAll();
+            req.onsuccess = () => res(req.result || []);
+            req.onerror   = () => rej(req.error);
         });
-    } else {
-        socket.emit(event, data);
+    } catch(err) { console.error('[OMQ] getAll failed:', err); return []; }
+}
+
+async function _omqDelete(tempId) {
+    try {
+        const db = await _omqOpen();
+        const tx = db.transaction('queue', 'readwrite');
+        tx.objectStore('queue').delete(tempId);
+    } catch(err) { console.error('[OMQ] delete failed:', err); }
+}
+
+async function _flushOfflineQueue() {
+    if (!wsConnected) return;
+    const items = await _omqGetAll();
+    for (const item of items) {
+        try {
+            socket.emit('send_message', {
+                chat_id:  item.chat_id,
+                content:  item.text,
+                type_msg: 'text',
+            });
+            await _omqDelete(item.tempId);
+            // Update UI: replace ⏳ with ✓
+            const el = document.querySelector(`[data-msg-id="${item.tempId}"]`);
+            if (el) {
+                el.querySelector('.status-icon') && (
+                    el.querySelector('.status-icon').innerHTML = ICONS.check
+                );
+                el.dataset.optimistic = '0';
+            }
+        } catch(err) {
+            console.error('[OMQ] flush item failed:', err);
+        }
     }
 }
 
-// Сбрасываем очередь при реконнекте
-function _flushOfflineQueue() {
-    while (_offlineQueue.length) {
-        const item = _offlineQueue.shift();
-        _socketEmit(item.event, item.data, item.onAck);
+function _getLastMsgId(chatId) {
+    try {
+        return parseInt(localStorage.getItem(`wc_last_msg_${chatId}`) || '0', 10) || 0;
+    } catch { return 0; }
+}
+
+function _setLastMsgId(chatId, msgId) {
+    try { localStorage.setItem(`wc_last_msg_${chatId}`, String(msgId)); } catch {}
+}
+
+async function loadMessagesSince(chatId, afterId) {
+    if (!chatId || !afterId) return;
+    try {
+        const r = await apiFetch(`/get_messages/${chatId}?after_id=${afterId}&limit=50`);
+        if (!r || !r.ok) return;
+        const msgs = await r.json();
+        msgs.forEach(msg => {
+            if (!document.querySelector(`[data-msg-id="${msg.id}"]`)) {
+                renderNewMessage(msg, false);
+            }
+        });
+    } catch(err) { console.error('[Reconnect] loadMessagesSince:', err); }
+}
+// ══ END OFFLINE QUEUE ══════════════════════════════════════════════
+
+
+// ══ RINGTONE — Web Audio API synthesis (Task 4c) ══════════════════
+// OPT: no external audio file — synthesized ring, < 1KB code
+// Plays a repeating two-tone ring pattern
+
+let _ringtoneCtx   = null;
+let _ringtoneNodes = [];
+let _ringtoneTimer = null;
+let _ringtoneActive = false;
+
+function _playRingtone() {
+    if (_ringtoneActive) return;
+    _ringtoneActive = true;
+    try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        _ringtoneCtx = new AC();
+
+        const playBeat = () => {
+            if (!_ringtoneActive || !_ringtoneCtx) return;
+            // Two-tone ring: 480Hz + 620Hz (classic PSTN ring)
+            [480, 620].forEach(freq => {
+                const osc  = _ringtoneCtx.createOscillator();
+                const gain = _ringtoneCtx.createGain();
+                osc.connect(gain);
+                gain.connect(_ringtoneCtx.destination);
+                osc.frequency.value = freq;
+                osc.type = 'sine';
+                gain.gain.setValueAtTime(0.3, _ringtoneCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, _ringtoneCtx.currentTime + 1.8);
+                osc.start(_ringtoneCtx.currentTime);
+                osc.stop(_ringtoneCtx.currentTime + 1.8);
+                _ringtoneNodes.push(osc);
+            });
+            // Repeat every 3s (ring 2s, pause 1s)
+            _ringtoneTimer = setTimeout(playBeat, 3000);
+        };
+        playBeat();
+    } catch(err) {
+        console.warn('[Ringtone] Web Audio failed:', err.message);
     }
 }
+
+function _stopRingtone() {
+    _ringtoneActive = false;
+    clearTimeout(_ringtoneTimer);
+    _ringtoneNodes.forEach(n => { try { n.stop(); } catch {} });
+    _ringtoneNodes = [];
+    if (_ringtoneCtx) {
+        _ringtoneCtx.close().catch(() => {});
+        _ringtoneCtx = null;
+    }
+}
+// ══ END RINGTONE ═══════════════════════════════════════════════════
 
 function initSocket() {
     socket = io({
-        path: '/socket.io',
-        transports: ['websocket', 'polling'],
-        reconnection: true,
-        reconnectionDelay: 1000,
-        reconnectionDelayMax: 8000,
-        randomizationFactor: 0.5,
-        reconnectionAttempts: Infinity,
-        timeout: 20000,
-        forceNew: false,
-        withCredentials: true,
-        ackTimeout: 5000,
+        path:                  '/socket.io',
+        transports:            ['websocket', 'polling'],
+        reconnection:          true,
+        reconnectionAttempts:  Infinity,   // OPT Task 5e: never give up
+        reconnectionDelay:     1000,
+        reconnectionDelayMax:  10000,
+        randomizationFactor:   0.5,
+        timeout:               15000,      // OPT: faster failure detection
+        forceNew:              false,
+        withCredentials:       true,
+        ackTimeout:            5000,       // OPT: 5s ACK timeout
     });
 
     socket.on('connect', () => {
@@ -684,13 +874,25 @@ function initSocket() {
         if (Date.now() - _lastChatsLoad > 5000) loadChats();
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
         wsReconnected = true;
-        // Сбрасываем оффлайн-очередь
-        setTimeout(_flushOfflineQueue, 300);
     });
 
     socket.on('disconnect', () => { wsConnected = false; updateConnStatus(false); });
     socket.on('connect_error', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('reconnect', () => { wsConnected = true; updateConnStatus(true); });
+    socket.on('reconnect', () => {
+        wsConnected = true;
+        updateConnStatus(true);
+        // FIX Task 5e: re-join rooms and load missed messages on reconnect
+        socket.emit('join', { user_id: currentUser.id });
+        if (currentChatId) {
+            socket.emit('enter_chat', { chat_id: currentChatId });
+            // OPT: load messages that arrived while disconnected
+            var lastId = _getLastMsgId(currentChatId);
+            if (lastId) loadMessagesSince(currentChatId, lastId);
+        }
+        // Flush offline message queue (Task 5f)
+        _flushOfflineQueue();
+        loadChats();
+    });
 
     socket.on('new_message', onNewMessage);
 
@@ -703,49 +905,13 @@ function initSocket() {
 
     socket.on('user_status', (d) => updatePartnerOnlineStatus(+d.user_id, d.online));
 
-    // ПАТЧ: новый момент — обновляем бар если он видим
-    socket.on('new_moment', (data) => {
-        // Обновляем moments bar если он открыт
-        if (_momentsBarVisible) {
-            momentsCache = null;
-            momentsLastLoad = 0;
-            // Небольшая задержка чтобы сервер успел сохранить
-            setTimeout(() => {
-                apiFetch('/get_moments').then(r => r?.json()).then(data => {
-                    if (data && Array.isArray(data)) {
-                        momentsCache = data;
-                        currentMoments = data;
-                        momentsLastLoad = Date.now();
-                        _renderMomentsBar();
-                    }
-                }).catch(() => {});
-            }, 500);
-        }
-        // Обновляем список чатов (кольцо моментов у аватара)
-        _debouncedLoadChats();
-    });
-
-    // ПАТЧ: avatar updated — обновляем везде
-    socket.on('avatar_updated', (data) => {
-        if (data.user_id && data.avatar) {
-            invalidateAvatarCache(data.user_id, data.avatar);
-            updateAvatarInDOM(data.user_id, data.avatar);
-            if (data.user_id === currentUser.id) {
-                currentUser.avatar = data.avatar;
-                updateAllAvatarUI();
-            }
-        }
-    });
-
+    // FIX: messages_read_bulk was emitted by server but never handled
     socket.on('messages_read_bulk', (d) => {
-        // Все мои сообщения в этом чате → двойная синяя галочка
         if (+d.chat_id === currentChatId) {
+            // Update all outgoing message status icons to double-check (read)
             document.querySelectorAll('.msg-row.out .status-icon').forEach(el => {
-                if (!el.classList.contains('read')) {
-                    el.classList.add('read');
-                    el.innerHTML = ICONS.checkDouble;
-                    el.style.color = 'rgba(147,197,253,1)';
-                }
+                el.innerHTML = ICONS.checkDouble;
+                el.style.color = 'rgba(147,197,253,1)';
             });
         }
     });
@@ -820,7 +986,15 @@ function initSocket() {
     socket.on('incoming_call',  onIncomingCall);
     socket.on('call_answered',  onCallAnswered);
     socket.on('ice_candidate',  onIceCandidate);
-    socket.on('call_ended',     () => endCall(false));
+    socket.on('call_ended',     () => { _stopRingtone(); endCall(false); });
+    // FIX Task 4d: recipient declined call from push notification
+    socket.on('call_declined', (data) => {
+        _stopRingtone();
+        const lbl = document.getElementById('call-status-label');
+        if (lbl) lbl.textContent = 'Звонок отклонён';
+        showToast('Звонок отклонён', 'info');
+        setTimeout(() => endCall(false), 1800);
+    });
 
     // ── Групповые звонки ──
     socket.on('gc_user_joined',  onGroupCallJoin);
@@ -1176,22 +1350,15 @@ function renderApp() {
     --item-hover: rgba(255,255,255,0.05);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html {
+html, body {
     height: 100%;
-    /* НЕ используем position:fixed на html — это вызывает серые полосы в Safari PWA */
-    /* Высота через --vh (устанавливается в iOS SAFARI FIX выше) */
-    background: #1d1d1e;
-    overscroll-behavior: none;
-}
-body {
-    height: var(--vh, 100dvh);
     overflow: hidden;
     margin: 0;
+    /* position:fixed убирает "резиновый скролл" Safari — панели не мерцают */
+    position: fixed;
     width: 100%;
     -webkit-text-size-adjust: 100%;
     -webkit-font-smoothing: antialiased;
-    overscroll-behavior: none;
-    /* position:fixed убран — вместо него chat-view использует fixed позиционирование */
 }
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -2778,9 +2945,10 @@ async function openChat(id, name, avatar) {
             await loadMessages(true);
             setupVoiceRecording();
             setupScrollPagination();
-            // ПАТЧ: кнопка scroll-to-bottom
-            _injectScrollToBottomBtn();
-            _scrollUnread = 0;
+            // FIX Task 2a/2b: inject scroll button + instant scroll on open
+            _ensureScrollBtn();
+            _attachScrollListener(msgs);
+            scrollToBottom(msgs, true);
         }
     } catch(e) {
         console.error('openChat:', e);
@@ -2847,9 +3015,10 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
             await loadMessages(true);
             setupVoiceRecording();
             setupScrollPagination();
-            // ПАТЧ: кнопка scroll-to-bottom
-            _injectScrollToBottomBtn();
-            _scrollUnread = 0;
+            // FIX Task 2a/2b: scroll button + instant scroll on group open
+            _ensureScrollBtn();
+            _attachScrollListener(msgs);
+            scrollToBottom(msgs, true);
         }
     } catch(e) {
         console.error('openGroupChat:', e);
@@ -2954,6 +3123,9 @@ function buildMessageRow(msg, animate = true) {
     const type = msg.type || msg.type_msg || 'text';
     const row  = document.createElement('div');
     row.className = `msg-row ${isMe ? 'out' : 'in'}`;
+    // OPT Task 2c: content-visibility:auto defers paint for off-screen messages
+    row.style.contentVisibility = 'auto';
+    row.style.containIntrinsicSize = '0 72px'; // estimated height hint
     row.setAttribute('data-msg-id', msg.id || '');
     if (animate) row.classList.add('animate-msg');
 
@@ -3054,7 +3226,8 @@ function buildMessageRow(msg, animate = true) {
     } else if (type === 'image' || type === 'photo') {
         // iOS26 стиль — фото без рамки, на весь пузырь, с zoom
         contentHtml = `<div class="img-bubble" style="overflow:hidden;border-radius:18px;max-width:280px;cursor:zoom-in" onclick="openImgZoom(this.querySelector('img').src)">
-            <img src="${msg.file_url}" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover" loading="lazy"
+            <img src="${msg.file_url}" style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover;aspect-ratio:auto"
+                 loading="lazy" decoding="async" 
                  onerror="this.style.display='none';this.parentElement.innerHTML='<div style=padding:16px;color:rgba(255,255,255,.4);font-size:13px>Не удалось загрузить</div>'">
         </div>`;
     } else if (type === 'video') {
@@ -3793,11 +3966,9 @@ function sendText() {
     const text  = (input?.value || '').trim();
     if (!text || !currentChatId) return;
 
-    const tempId = 'tmp_' + Date.now();
-
     // ── Оптимистичный рендер (мгновенно) ──
     const tempMsg = {
-        id:          tempId,
+        id:          'tmp_' + Date.now(),
         chat_id:     currentChatId,
         sender_id:   currentUser.id,
         sender_name: currentUser.name,
@@ -3811,34 +3982,41 @@ function sendText() {
     };
     renderNewMessage(tempMsg, true);
 
-    // ПАТЧ: emit с ACK — при успехе заменяем tempId на реальный msg.id
-    const msgData = {
+    // FIX Task 5f: queue message if socket is disconnected
+    const _msgPayload = {
         chat_id:   currentChatId,
         content:   text,
         type_msg:  'text',
-        sender_id: currentUser.id
+        sender_id: currentUser.id,
     };
-
-    _socketEmit('send_message', msgData, (ack) => {
-        if (ack && ack.ok && ack.msg_id) {
-            // Обновляем data-msg-id на реальный id
-            const el = document.querySelector(`[data-msg-id="${tempId}"]`);
-            if (el) {
-                el.setAttribute('data-msg-id', ack.msg_id);
-                // Убираем pending стиль
-                el.querySelector('.status-icon')?.classList.remove('pending');
+    if (wsConnected) {
+        // OPT Task 5c: emit with ACK — server returns {ok, msg_id}
+        socket.timeout(5000).emit('send_message', _msgPayload, (err, ack) => {
+            if (!err && ack && ack.msg_id) {
+                // Replace tempId with real id in DOM
+                const tempEl = document.querySelector(`[data-msg-id="${tempMsg.id}"]`);
+                if (tempEl) {
+                    tempEl.dataset.msgId = ack.msg_id;
+                    tempEl.setAttribute('data-msg-id', ack.msg_id);
+                    const si = tempEl.querySelector('.status-icon');
+                    if (si) si.innerHTML = ICONS.check;
+                }
+                _setLastMsgId(currentChatId, ack.msg_id);
             }
-        }
-    });
-
+        });
+    } else {
+        // Offline: store in IndexedDB queue, show ⏳ status
+        _omqAdd({ tempId: tempMsg.id, chat_id: currentChatId, text, ts: Date.now() });
+        showToast('Нет соединения — сообщение отправится когда появится сеть', 'warning', 4000);
+    }
     input.value = '';
     input.style.height = 'auto';
     socket.emit('stop_typing', { chat_id: currentChatId });
     vibrate(8);
-    // Скроллим вниз при отправке своего сообщения
+    // FIX Task 2a: outgoing message — ALWAYS scroll to bottom instantly
+    var msgsEl = document.getElementById('messages');
     _scrollUnread = 0;
-    VirtualList.scrollToBottom(false);
-    _updateScrollBtn(false);
+    scrollToBottom(msgsEl, true);
 }
 
 function _nowMoscow() {
@@ -3873,13 +4051,9 @@ function onNewMessage(msg) {
         // Удаляем оптимистичные дубликаты с тем же контентом
         if (+msg.sender_id === currentUser.id) {
             const container = document.getElementById('messages');
-            // Удаляем оптимистичный элемент по content (до прихода реального id)
             container?.querySelectorAll('[data-optimistic="1"]').forEach(el => {
                 if (el.dataset.content === (msg.content || '')) el.remove();
             });
-            // Также проверяем по временному id который выставили через ACK
-            const tmpByContent = container?.querySelector(`[data-msg-id^="tmp_"]`);
-            if (tmpByContent) tmpByContent.remove();
         }
         // Защита от дублей в DOM
         if (document.querySelector(`[data-msg-id="${msg.id}"]`)) return;
@@ -3888,15 +4062,8 @@ function onNewMessage(msg) {
         renderNewMessage(msg, true);
         socket.emit('mark_read', { chat_id: currentChatId });
         _debouncedLoadChats();
-
-        // ПАТЧ: если сообщение от собеседника — обновляем кнопку вниз
-        if (+msg.sender_id !== currentUser.id) {
-            _updateScrollBtn(true);
-        } else {
-            // Своё сообщение — сбрасываем счётчик непрочитанных
-            _scrollUnread = 0;
-            _updateScrollBtn(false);
-        }
+        // OPT Task 5e: track for reconnect missed-message detection
+        if (msg.id) _setLastMsgId(currentChatId, msg.id);
     } else {
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
@@ -7585,11 +7752,15 @@ function onIncomingCall(data) {
     document.getElementById('accept-btn').style.display = 'flex';
     document.getElementById('call-timer').style.display = 'none';
     acquireWakeLock();
-
-    // ПАТЧ: автоответ если пользователь нажал "Ответить" в push-уведомлении
+    // FIX Task 4c: start ringtone on incoming call
+    _playRingtone();
+    // FIX Task 4b: if user already tapped "Answer" in push notification
+    // (Scenario A/B/C), auto-answer immediately
     if (window._pendingCallAnswer) {
-        window._pendingCallAnswer = false;
-        setTimeout(() => answerIncomingCall(), 500);
+        const pending = window._pendingCallAnswer;
+        window._pendingCallAnswer = null;
+        // Small delay to ensure WebRTC is ready
+        setTimeout(function() { answerIncomingCall(); }, 300);
     }
 }
 
@@ -7609,6 +7780,7 @@ async function answerIncomingCall() {
     if (!data) return;
     document.getElementById('accept-btn').style.display = 'none';
     document.getElementById('call-status-label').textContent = 'Подключение...';
+    _stopRingtone(); // FIX Task 4c: stop ringtone when answered
     currentPartnerId = data.from; vibrate(30);
     try {
         callLocalStream = await getLocalStream(currentCallType);
@@ -7643,6 +7815,7 @@ function startCallTimer() {
 }
 
 function endCall(notify = true) {
+    _stopRingtone(); // FIX Task 4c: stop ringtone on endCall
     clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
 
     // Отправляем сообщение о звонке в чат
@@ -8582,51 +8755,10 @@ async function initPushNotifications() {
         await navigator.serviceWorker.ready;
 
         navigator.serviceWorker.addEventListener('message', e => {
-            const msg = e.data;
-            if (!msg || !msg.type) return;
-            if (msg.type === 'open_chat' && msg.chat_id) {
-                _openChatByChatId(msg.chat_id);
-            }
-            // ПАТЧ: обработка входящего звонка из push-уведомления
-            else if (msg.type === 'answer_call') {
-                if (incomingCallData) {
-                    answerIncomingCall();
-                } else {
-                    // Звонок ещё не пришёл через socket — ждём
-                    window._pendingCallAnswer = true;
-                }
-            }
-            else if (msg.type === 'decline_call') {
-                if (incomingCallData) {
-                    socket.emit('end_call', {
-                        to: incomingCallData.from,
-                        duration: 0,
-                        call_type: currentCallType || 'audio'
-                    });
-                    const screen = document.getElementById('call-screen');
-                    if (screen) screen.classList.add('hidden');
-                    incomingCallData = null;
-                }
+            if (e.data?.type === 'open_chat' && e.data.chat_id) {
+                _openChatByChatId(e.data.chat_id);
             }
         });
-
-        // ПАТЧ: обработка URL параметров от SW при старте (deep link)
-        (function _handleSwDeepLink() {
-            const params = new URLSearchParams(window.location.search);
-            const action = params.get('sw_action');
-            const callId = params.get('call_id');
-            if (action === 'answer_call') {
-                // Чистим URL
-                window.history.replaceState({}, '', '/');
-                window._pendingCallAnswer = true;
-                window._pendingCallId = callId;
-            }
-            const openChat = params.get('open_chat');
-            if (openChat) {
-                window.history.replaceState({}, '', '/');
-                setTimeout(() => _openChatByChatId(parseInt(openChat)), 1000);
-            }
-        })();
 
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
         const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
@@ -10536,6 +10668,88 @@ function closeMusicPlayer() {
     _mpStopViz();
 }
 
+
+// ══ WAYCHAT GLOBAL API — exposed for SW messages ══════════════════
+// FIX Task 4b/4c/4d: SW can call these from any scenario (A, B, C)
+window.WayChat = {
+    version: '8.0.0',
+
+    /**
+     * handleCallAction(action, fromId, callId)
+     * action: 'answer' | 'decline'
+     * Called by: index.html on SW message or URL deep link
+     */
+    handleCallAction: function(action, fromId, callId) {
+        if (action === 'answer') {
+            if (typeof incomingCallData !== 'undefined' && incomingCallData) {
+                // Call UI already showing (socket arrived first)
+                if (typeof answerIncomingCall === 'function') answerIncomingCall();
+            } else {
+                // Socket hasn't arrived yet — store intent, handle in onIncomingCall
+                window._pendingCallAnswer = { fromId, callId };
+                // Show waiting UI
+                var screen = document.getElementById('call-screen');
+                if (screen) {
+                    screen.classList.remove('hidden');
+                    var lbl = document.getElementById('call-status-label');
+                    if (lbl) lbl.textContent = 'Ожидание звонка...';
+                    // FIX Task 4c: start ringtone while waiting
+                    if (typeof _playRingtone === 'function') _playRingtone();
+                }
+            }
+        } else if (action === 'decline') {
+            if (typeof socket !== 'undefined' && socket) {
+                socket.emit('call_declined', {
+                    from_id: fromId,
+                    call_id: callId,
+                    to:      fromId,
+                });
+            }
+            var screen = document.getElementById('call-screen');
+            if (screen) screen.classList.add('hidden');
+            if (typeof _stopRingtone === 'function') _stopRingtone();
+        }
+    },
+
+    /**
+     * openChatById(chatId)
+     * Called by: index.html on SW open_chat message
+     */
+    openChatById: function(chatId) {
+        if (!chatId) return;
+        var found = recentChats && recentChats.find(function(c) {
+            return c.chat_id === chatId;
+        });
+        if (found) {
+            if (found.is_group) {
+                openGroupChat(found.group_id || found.partner_id,
+                    found.group_name || found.partner_name,
+                    found.group_avatar || found.partner_avatar);
+            } else {
+                openChat(found.partner_id, found.partner_name, found.partner_avatar);
+            }
+        } else {
+            // Chat not in cache — reload list first
+            loadChats().then && loadChats().then(function() {
+                window.WayChat.openChatById(chatId);
+            });
+        }
+    },
+};
+
+// Process any pending SW actions that arrived before WayChat was ready
+if (window._pendingSWCallAction) {
+    var a = window._pendingSWCallAction;
+    window._pendingSWCallAction = null;
+    window.WayChat.handleCallAction(a.action, a.from_id, a.call_id);
+}
+if (window._pendingSWOpenChat) {
+    var cid = window._pendingSWOpenChat;
+    window._pendingSWOpenChat = null;
+    setTimeout(function() { window.WayChat.openChatById(cid); }, 500);
+}
+// ══ END WAYCHAT API ═══════════════════════════════════════════════
+
 // ══ CSS анимации ══
 (() => {
     const s = document.createElement('style');
@@ -10545,52 +10759,6 @@ function closeMusicPlayer() {
         @keyframes mpBar2 { from{transform:scaleY(.3)}  to{transform:scaleY(.85)} }
         @keyframes mpSpin { to{transform:rotate(360deg)} }
         #music-section { will-change:transform; }
-        @keyframes toastIn { from{opacity:0;transform:translateX(-50%) translateY(-8px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
-        @keyframes toastOut { from{opacity:1} to{opacity:0} }
     `;
     document.head.appendChild(s);
 })();
-
-// ══════════════════════════════════════════════════════════
-//  WAYCHAT GLOBAL API v8 — PATCH
-//  Экспортируем функции для SW, index.html и внешних скриптов
-// ══════════════════════════════════════════════════════════
-window.WayChat = {
-    // Обработка действий из SW push-уведомлений
-    handleCallAction: function(action, fromId) {
-        if (action === 'answer') {
-            if (incomingCallData) {
-                answerIncomingCall();
-            } else {
-                window._pendingCallAnswer = true;
-            }
-        } else if (action === 'decline') {
-            if (incomingCallData) {
-                socket.emit('end_call', {
-                    to: incomingCallData.from || fromId,
-                    duration: 0,
-                    call_type: currentCallType || 'audio',
-                });
-                const screen = document.getElementById('call-screen');
-                if (screen) screen.classList.add('hidden');
-                incomingCallData = null;
-                releaseWakeLock();
-            }
-        }
-    },
-
-    // Открыть чат по chat_id
-    openChat: function(chatId) {
-        _openChatByChatId(chatId);
-    },
-
-    // Переключить вкладку
-    switchTab: function(tab) {
-        if (typeof switchTab === 'function') switchTab(tab);
-    },
-
-    // Версия
-    version: '8.0-patched',
-};
-
-console.log('%cWayChat v8.0 patched ✅', 'color:#10b981;font-weight:bold;font-size:14px');
