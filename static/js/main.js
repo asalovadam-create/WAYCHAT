@@ -589,10 +589,7 @@ async function _getCachedMedia(url) {
         return blobUrl;
     } catch(e) { return url; }
 }
-function _preloadMedia(url) {
-    if (!url || _mediaCache.has(url)) return;
-    _getCachedMedia(url).catch(() => {});
-}
+
 
 // Кеш профилей — не запрашиваем одно и то же дважды
 const _profileCache = new Map(); // id → {data, ts}
@@ -965,6 +962,8 @@ function initSocket() {
         socket.emit('join', { user_id: currentUser.id });
         // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
         if (Date.now() - _lastChatsLoad > 5000) loadChats();
+    // Предзагружаем моменты сразу при старте
+    setTimeout(() => loadMoments(), 800);
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
         wsReconnected = true;
     });
@@ -985,6 +984,7 @@ function initSocket() {
         // Flush offline message queue (Task 5f)
         _flushOfflineQueue();
         loadChats();
+    loadMoments(); // INIT: загружаем моменты при старте
     });
 
     socket.on('new_message', onNewMessage);
@@ -1105,30 +1105,7 @@ function initSocket() {
 
     // ── Новый момент ──
     socket.on('new_moment', (d) => {
-        // Инвалидируем кеш моментов — при следующем открытии загрузятся новые
-        momentsCache = null;
-        momentsLastLoad = 0;
-
-        // Если moments-bar открыт — обновляем его
-        const bar = document.getElementById('moments-bar');
-        if (bar && bar.style.display !== 'none' && bar.style.maxHeight !== '0px') {
-            _renderMomentsBar();
-        }
-
-        // Если открыта вкладка moments — перегружаем список
-        if (currentTab === 'moments') {
-            loadMoments();
-        }
-
-        // Пульсация аватара в списке чатов если есть элемент
-        if (d.user_id) {
-            const chatKey = `p_${d.user_id}`;
-            const chatEl = document.querySelector(`[data-chat-key="${chatKey}"]`);
-            if (chatEl) {
-                chatEl.classList.add('chat-item-animate');
-                setTimeout(() => chatEl.classList.remove('chat-item-animate'), 500);
-            }
-        }
+        onNewMomentSocket(d);
     });
 }
 
@@ -2319,14 +2296,7 @@ function _syncHeaderAva(){
     if(b)b.innerHTML=getAvatarHtml(currentUser,'w-9 h-9');
 }
 
-function switchTab(tab) {
-    currentTab = tab;
-    if (tab === 'chats') {
-        const cl = document.getElementById('chat-list');
-        if (!cl?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
-        else renderChatList(recentChats);
-    }
-}
+
 
 function updateSettingsUI() {
     const bg = document.getElementById('settings-bg');
@@ -6475,287 +6445,194 @@ async function _requestMeGeo(btn, geoTag) {
     }
 }
 
-async function _publishMomentEditor(ov, file, url) {
-    const sBtn = document.getElementById('me-share');
-    if(sBtn){
-        sBtn.disabled=true;
-        sBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" style="animation:spin 1s linear infinite"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="#000" stroke-width="2.5" stroke-linecap="round"/></svg> Публикую...';
-    }
-    const caption = (document.getElementById('me-cap')?.value||'').trim();
-    showToast('Загрузка медиа...','info',120000);
-    try {
-        const fd = new FormData();
-        fd.append('file', file);
-        if(caption) fd.append('text', caption);
-        if(_meGeo){ fd.append('geo_name',_meGeo.name); fd.append('geo_lat',_meGeo.lat); fd.append('geo_lng',_meGeo.lng); }
-        // Используем прямой fetch БЕЗ таймаута — видео может грузиться долго
-        const r = await fetch('/create_moment', {
-            method: 'POST',
-            body: fd,
-            credentials: 'include'
-        });
-        if(!r || !r.ok) {
-            const errText = r ? await r.text() : 'no response';
-            console.error('create_moment error:', r?.status, errText);
-            throw new Error('server error ' + r?.status);
-        }
-        const data = await r.json();
-        if(!data.success) throw new Error(data.error || 'failed');
-        ov.remove(); URL.revokeObjectURL(url);
-        _meFile=null; _meGeo=null;
-        momentsCache=null; loadMoments();
-        showToast('Момент опубликован! 🎉','success');
-    } catch(e){
-        console.error('publish moment error:', e);
-        showToast('Ошибка загрузки: ' + (e.message||''),'error', 5000);
-        if(sBtn){
-            sBtn.disabled=false;
-            sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-        }
-    }
+
+
+// ══════════════════════════════════════════════════════════
+//  МОМЕНТЫ v2 — полная перезапись
+//  Архитектура: один fetch → momentsCache → bar + tab рендерятся из кэша
+// ══════════════════════════════════════════════════════════
+
+// ── Стейт ──────────────────────────────────────────────
+let _momentUploading       = false;
+let _momentUploadFile      = null;
+let _momentUploadPreviewUrl= null;
+let _momentUploadCaption   = '';
+let _momentUploadGeo       = null;
+let _momentsBarVisible     = false;
+let _mediaCache            = new Set();
+
+// ── Viewed tracking ──────────────────────────────────────
+function _getViewedUsers() {
+    try { return new Set(JSON.parse(localStorage.getItem('wc_viewed_mu') || '[]').map(Number)); }
+    catch(e) { return new Set(); }
+}
+function _markUserViewed(uid) {
+    const s = _getViewedUsers(); s.add(uid);
+    try { localStorage.setItem('wc_viewed_mu', JSON.stringify([...s].slice(-200))); } catch(e) {}
 }
 
-// ══════════════════════════════════════════════════════════
-//  МОМЕНТЫ
-// ══════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════
-//  МОМЕНТЫ — полная переработка
-// ══════════════════════════════════════════════════════════
-
-// Глобальный стейт загрузки момента
-let _momentUploading = false;
-let _momentUploadFile = null;
-let _momentUploadPreviewUrl = null; // ObjectURL для превью карточки
-let _momentUploadCaption = '';
-let _momentUploadGeo = null;
-
-async function loadMoments() {
-    const container = document.getElementById('full-moments-list');
-    // FIXED: не выходим если контейнер не найден —
-    // moments-bar грузится независимо от tab
-    // Просто не рендерим список если контейнер не открыт
-
-    if (!container) {
-        // Нет таба — только грузим данные в кэш для moments-bar
-        try {
-            const r = await fetch('/get_moments', {
-                credentials: 'include',
-                headers: {'Accept-Encoding': 'gzip, deflate'},
-            });
-            if (!r.ok) return;
-            const moments = await r.json();
-            if (!Array.isArray(moments)) return;
-            momentsCache    = moments;
-            momentsLastLoad = Date.now();
-            window.currentMoments = moments;
-            // Обновляем bar если открыт
-            _renderMomentsBar();
-        } catch(e) { console.error('loadMoments (bar):', e); }
-        return;
-    }
-
-    // Показываем скелетон только если список пустой
-    if (!container.children.length || container.querySelector('[data-skeleton]')) {
-        container.innerHTML = '<div data-skeleton style="display:flex;flex-direction:column;gap:2px">'
-            + _skeletonMomentRow() + _skeletonMomentRow() + _skeletonMomentRow() + '</div>';
-    }
-
+// ── ГЛАВНАЯ ФУНКЦИЯ ЗАГРУЗКИ ─────────────────────────────
+// Всегда грузит с сервера → обновляет кэш → рендерит bar + таб
+async function loadMoments(forceRender = false) {
     try {
         const r = await fetch('/get_moments', {
             credentials: 'include',
-            headers: {'Accept-Encoding': 'gzip, deflate'},
+            cache: 'no-store',
         });
-        if (!r.ok) { console.error('get_moments:', r.status); return; }
+        if (!r.ok) {
+            console.warn('[moments] fetch failed:', r.status);
+            // Рендерим из кэша если есть
+            _renderMomentsBar();
+            _renderMomentsTab();
+            return;
+        }
         const moments = await r.json();
-        if (!Array.isArray(moments)) { console.error('not array:', moments); return; }
-        momentsCache = moments;
-        momentsLastLoad = Date.now();
-        currentMoments = moments;
-        renderMomentsList(container, moments);
-        // Предзагружаем первые 3 медиа фоново — не блокирует UI
-        setTimeout(() => {
-            // Предзагружаем первые 6 — важнее скорость открытия первых
-            moments.slice(0, 6).forEach(m => { if (m.media_url) _preloadMedia(m.media_url); });
-        }, 200);
+        if (!Array.isArray(moments)) { console.warn('[moments] not array'); return; }
+
+        momentsCache        = moments;
+        momentsLastLoad     = Date.now();
+        window.currentMoments = moments;
+
+        _renderMomentsBar();
+        _renderMomentsTab();
     } catch(e) {
-        console.error('loadMoments error:', e);
-        if (!momentsCache) container.innerHTML = '<div style="text-align:center;opacity:0.25;padding:40px;font-size:14px">Не удалось загрузить</div>';
+        console.error('[moments] loadMoments error:', e);
+        // Рендерим из кэша даже при ошибке сети
+        _renderMomentsBar();
+        _renderMomentsTab();
     }
 }
 
+// ── БАР: рендер ─────────────────────────────────────────
 
-function _skeletonMomentRow() {
-    return '<div style="display:flex;align-items:center;gap:14px;padding:11px 2px">'
-        + '<div class="skeleton-shimmer" style="width:62px;height:62px;border-radius:50%;flex-shrink:0"></div>'
-        + '<div style="flex:1">'
-        + '<div class="skeleton-shimmer" style="height:14px;width:130px;border-radius:7px;margin-bottom:9px"></div>'
-        + '<div class="skeleton-shimmer" style="height:11px;width:75px;border-radius:6px"></div>'
-        + '</div></div>';
+
+// ── Строим кольцо + аватар (SVG кольцо как в TG) ────────
+function _buildRingAvatar(user, isNew, size) {
+    const r  = size / 2 - 3;
+    const cx = size / 2, cy = size / 2;
+    const C  = (2 * Math.PI * r).toFixed(2);
+    const gid = 'rg_' + (user.id || 0) + '_' + Math.random().toString(36).slice(2, 5);
+
+    let ringColor;
+    if (isNew) {
+        ringColor = `url(#${gid})`;
+    } else {
+        ringColor = 'rgba(255,255,255,0.18)';
+    }
+
+    const grad = isNew ? `<defs><linearGradient id="${gid}" x1="0%" y1="100%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="#10b981"/>
+        <stop offset="50%" stop-color="#06b6d4"/>
+        <stop offset="100%" stop-color="#3b82f6"/>
+    </linearGradient></defs>` : '';
+
+    const avatarHtml = getAvatarHtml(user, 'w-full h-full');
+
+    return `
+        <div style="position:absolute;inset:5px;border-radius:50%;overflow:hidden">${avatarHtml}</div>
+        <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="position:absolute;inset:0;pointer-events:none;overflow:visible">
+            ${grad}
+            <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${ringColor}" stroke-width="2" stroke-linecap="round"/>
+        </svg>`;
 }
 
-function escHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-}
+// ── ТАБ «Моменты»: рендер списка ────────────────────────
+function _renderMomentsTab() {
+    const container = document.getElementById('full-moments-list');
+    if (!container) return;
 
-function renderMomentsList(container, moments) {
+    const moments = momentsCache || [];
     container.innerHTML = '';
 
-    // Карточка загрузки (если есть активная загрузка) — вставляем первой
     if (_momentUploading && _momentUploadFile) {
         _renderUploadingCard(container);
     }
 
-    if (!moments?.length && !_momentUploading) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'text-align:center;opacity:0.25;padding:48px 20px;font-size:15px';
-        empty.textContent = 'Моментов пока нет';
-        container.appendChild(empty);
+    if (!moments.length) {
+        container.innerHTML += `<div style="text-align:center;padding:60px 20px;opacity:0.3">
+            <div style="font-size:48px;margin-bottom:12px">🌅</div>
+            <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет моментов</div>
+            <div style="font-size:13px">Моменты появляются от людей которых вы сохранили</div>
+        </div>`;
         return;
     }
 
-    if (!moments?.length) return;
-    currentMoments = moments;
-
-    // Группируем по пользователю
-    const userOrder = [];
+    const myUid  = currentUser?.id;
     const byUser = new Map();
     moments.forEach(m => {
-        if (!byUser.has(m.user_id)) { byUser.set(m.user_id, []); userOrder.push(m.user_id); }
+        if (!byUser.has(m.user_id)) byUser.set(m.user_id, []);
         byUser.get(m.user_id).push(m);
     });
 
-    userOrder.forEach(uid => {
-        const list  = byUser.get(uid);
-        const first = list[0];
-        const cnt   = list.length;
-        const isMe  = uid === currentUser?.id;
-        const viewed = !isMe && _viewedMomentUsers.has(uid);
+    const viewed = _getViewedUsers();
+    byUser.forEach((userMoments, uid) => {
+        const first  = userMoments[0];
+        const isNew  = !viewed.has(uid);
+        const isMe   = uid === myUid;
 
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:10px 2px;cursor:pointer;border-radius:18px;margin-bottom:2px;-webkit-tap-highlight-color:transparent;transition:background 0.15s';
+        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:11px 16px;cursor:pointer;transition:background .15s;-webkit-tap-highlight-color:transparent';
+        row.onpointerdown = () => row.style.background = 'rgba(255,255,255,0.05)';
+        row.onpointerup   = () => row.style.background = '';
+        row.onpointerleave= () => row.style.background = '';
+
+        // Аватар с кольцом
+        const avaDiv = document.createElement('div');
+        avaDiv.style.cssText = 'position:relative;width:62px;height:62px;flex-shrink:0';
+        avaDiv.innerHTML = _buildRingAvatar(
+            { id: uid, name: first.user_name, avatar: first.user_avatar },
+            isNew, 62
+        );
+
+        const infoDiv = document.createElement('div');
+        infoDiv.style.cssText = 'flex:1;min-width:0';
+        infoDiv.innerHTML = `
+            <div style="font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+                ${isMe ? 'Мой момент' : escHtml(first.user_name || '')}
+                ${isNew ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;margin-left:6px;vertical-align:middle"></span>' : ''}
+            </div>
+            <div style="font-size:12px;color:var(--text-2);margin-top:2px">
+                ${userMoments.length > 1 ? userMoments.length + ' моментов · ' : ''}${first.timestamp || ''}
+            </div>`;
+
+        row.appendChild(avaDiv);
+        row.appendChild(infoDiv);
         row.onclick = () => openUserMomentsViewer(uid);
-        row.onpointerdown = () => row.style.background = 'rgba(255,255,255,0.04)';
-        row.onpointerup = () => row.style.background = '';
-        row.onpointercancel = () => row.style.background = '';
-
-        // Аватар с SVG кольцом
-        const avaWrap = document.createElement('div');
-        avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:62px;height:62px';
-
-        const avaInner = document.createElement('div');
-        avaInner.style.cssText = 'position:absolute;inset:4px;border-radius:50%;overflow:hidden';
-        avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
-        avaWrap.appendChild(avaInner);
-
-        // SVG кольцо
-        const NS = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(NS, 'svg');
-        svg.setAttribute('width','62'); svg.setAttribute('height','62'); svg.setAttribute('viewBox','0 0 62 62');
-        svg.style.cssText = 'position:absolute;inset:0;pointer-events:none';
-        const CX=31, CY=31, R=29;
-        const GAP_DEG = cnt > 1 ? 6 : 0;
-        const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
-        const ringColor = viewed ? 'rgba(255,255,255,0.2)' : 'var(--accent)';
-        for (let i=0; i<cnt; i++) {
-            const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
-            const tr = d => d*Math.PI/180;
-            const x1=CX+R*Math.cos(tr(s)), y1=CY+R*Math.sin(tr(s));
-            const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
-            const path = document.createElementNS(NS, 'path');
-            path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
-            path.setAttribute('stroke', ringColor);
-            path.setAttribute('stroke-width', viewed ? '2.5' : '3.5');
-            path.setAttribute('fill','none');
-            path.setAttribute('stroke-linecap','round');
-            svg.appendChild(path);
-        }
-        avaWrap.appendChild(svg);
-        row.appendChild(avaWrap);
-
-        // Инфо справа
-        const info = document.createElement('div');
-        info.style.cssText = 'flex:1;min-width:0';
-        const mediaLabel = first.media_url
-            ? (first.media_url.match(/\.(mp4|mov|webm)/i) ? '🎥 Видео' : '📷 Фото')
-            : '';
-        const preview = first.text || mediaLabel;
-        info.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
-            + '<div style="font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(first.user_name) + (isMe?' <span style="font-size:12px;color:var(--text-2);font-weight:500">(Вы)</span>':'') + '</div>'
-            + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">'
-            + (cnt>1 ? '<span style="font-size:11px;background:var(--accent);color:black;border-radius:10px;padding:2px 7px;font-weight:800">'+cnt+'</span>' : '')
-            + '<span style="font-size:12px;color:var(--text-2)">'+first.timestamp+'</span>'
-            + '</div></div>'
-            + '<div style="font-size:13px;color:var(--text-2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:'+(viewed?'0.45':'0.8')+'">'+(preview||'')+'</div>';
-        row.appendChild(info);
+        row.addEventListener('touchend', (e) => { e.preventDefault(); openUserMomentsViewer(uid); }, { passive: false });
         container.appendChild(row);
     });
-
-    // Предзагрузка первых 5 медиа в фоне
-    moments.slice(0, 5).forEach(m => {
-        if (m.media_url && !m.media_url.match(/\.(mp4|mov|webm)/i)) {
-            // Для фото — предзагружаем через Image
-            if (!_mediaCache.has(m.media_url)) {
-                const img = new Image();
-                img.src = m.media_url;
-            }
-        }
-        // Для видео — только первые 2 (тяжёлые)
-    });
-    if (moments[0]?.media_url) _preloadMedia(moments[0].media_url);
-    if (moments[1]?.media_url) _preloadMedia(moments[1].media_url);
 }
 
+// ── Карточка загрузки момента ────────────────────────────
 function _renderUploadingCard(container) {
     const card = document.createElement('div');
     card.id = 'moment-uploading-card';
-    card.style.cssText = `
-        display:flex;align-items:center;gap:16px;
-        padding:14px 16px;
-        background:rgba(16,185,129,0.06);
-        border:1px solid rgba(16,185,129,0.18);
-        border-radius:20px;margin-bottom:10px;
-        animation:fadeIn 0.3s ease;
-    `;
+    card.style.cssText = 'display:flex;align-items:center;gap:16px;padding:14px 16px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.18);border-radius:20px;margin:8px 16px 4px;animation:fadeIn 0.3s ease';
 
-    // Превью с красивым прогресс-кольцом
-    const preview = document.createElement('div');
-    preview.style.cssText = 'width:68px;height:68px;border-radius:16px;overflow:hidden;flex-shrink:0;position:relative;background:#111';
-    if (_momentUploadFile) {
-        const isVid = _momentUploadFile.type.startsWith('video');
-        const previewUrl = _momentUploadPreviewUrl || '';
-        const media = document.createElement(isVid ? 'video' : 'img');
-        media.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(4px) brightness(0.6)';
-        if (isVid) { media.muted = true; media.playsInline = true; }
-        media.src = previewUrl;
-        preview.appendChild(media);
-    }
-    // Кольцо прогресса поверх превью
-    const ringWrap = document.createElement('div');
-    ringWrap.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center';
-    const C = 2 * Math.PI * 22; // circumference r=22
-    ringWrap.innerHTML = `
-        <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
-            <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
-            <circle id="upload-ring" cx="26" cy="26" r="22" fill="none"
-                stroke="#10b981" stroke-width="3" stroke-linecap="round"
-                stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${C.toFixed(2)}"
-                style="transition:stroke-dashoffset 0.4s ease"/>
-        </svg>
-        <span id="upload-pct-text" style="position:absolute;font-size:11px;font-weight:700;color:#fff;letter-spacing:-0.3px">0%</span>`;
-    preview.appendChild(ringWrap);
-    card.appendChild(preview);
+    const isVid = _momentUploadFile?.type.startsWith('video');
+    const previewUrl = _momentUploadPreviewUrl || '';
 
-    // Текст
-    const info = document.createElement('div');
-    info.style.cssText = 'flex:1;min-width:0';
-    info.innerHTML = `
-        <div style="font-weight:600;font-size:14px;color:#fff;margin-bottom:5px">Публикация момента</div>
-        <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
-            <div id="moment-upload-bar" style="height:100%;background:linear-gradient(90deg,#10b981,#34d399);width:0%;transition:width 0.4s ease;border-radius:2px"></div>
+    const C = (2 * Math.PI * 22).toFixed(2);
+    card.innerHTML = `
+        <div style="width:68px;height:68px;border-radius:16px;overflow:hidden;flex-shrink:0;position:relative;background:#111">
+            ${previewUrl ? `<${isVid ? 'video' : 'img'} src="${previewUrl}" style="width:100%;height:100%;object-fit:cover;filter:blur(3px) brightness(0.55)" ${isVid ? 'muted playsinline' : ''}/>` : ''}
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center">
+                <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
+                    <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+                    <circle id="upload-ring" cx="26" cy="26" r="22" fill="none" stroke="#10b981" stroke-width="3"
+                        stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}"
+                        style="transition:stroke-dashoffset 0.4s ease"/>
+                </svg>
+                <span id="upload-pct-text" style="position:absolute;font-size:11px;font-weight:700;color:#fff">0%</span>
+            </div>
         </div>
-        <div id="moment-upload-pct" style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px">Загрузка...</div>`;
-    card.appendChild(info);
+        <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px;margin-bottom:6px">Публикация момента...</div>
+            <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+                <div id="moment-upload-bar" style="height:100%;background:linear-gradient(90deg,#10b981,#34d399);width:0%;transition:width 0.4s ease;border-radius:2px"></div>
+            </div>
+            <div id="moment-upload-pct" style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px">Загрузка...</div>
+        </div>`;
     container.insertBefore(card, container.firstChild);
 }
 
@@ -6765,42 +6642,44 @@ function _updateUploadProgress(pct) {
     const ring   = document.getElementById('upload-ring');
     const pctTxt = document.getElementById('upload-pct-text');
     const C = 2 * Math.PI * 22;
-    if (bar) bar.style.width = pct + '%';
-    if (pctEl) pctEl.textContent = pct < 100 ? `${Math.round(pct)}%` : 'Готово!';
+    if (bar)    bar.style.width = pct + '%';
+    if (pctEl)  pctEl.textContent = pct < 100 ? `${Math.round(pct)}%` : 'Готово!';
     if (pctTxt) pctTxt.textContent = pct < 100 ? `${Math.round(pct)}%` : '✓';
-    if (ring) ring.style.strokeDashoffset = (C * (1 - pct / 100)).toFixed(2);
+    if (ring)   ring.style.strokeDashoffset = (C * (1 - pct / 100)).toFixed(2);
 }
 
-// Публикация момента
+// ── Публикация момента из редактора ─────────────────────
 async function _publishMomentEditor(ov, file, url) {
     const caption = (document.getElementById('me-cap')?.value || '').trim();
-    const geo = _meGeo;
+    const geo     = _meGeo;
 
-    // 1. Сохраняем стейт загрузки
-    _momentUploading = true;
-    _momentUploadFile = file;
+    _momentUploading        = true;
+    _momentUploadFile       = file;
+    _momentUploadCaption    = caption;
+    _momentUploadGeo        = geo;
     if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} }
     _momentUploadPreviewUrl = URL.createObjectURL(file);
 
-    // 2. Закрываем редактор → открываем Моменты
+    // Закрываем редактор
     ov.remove();
-    URL.revokeObjectURL(url);
+    try { URL.revokeObjectURL(url); } catch(e) {}
     _meFile = null; _meGeo = null;
+
+    // Показываем таб Моменты с карточкой загрузки
     switchTab('moments');
-
-    // 3. Рисуем карточку загрузки
+    await new Promise(res => setTimeout(res, 50));
     const container = document.getElementById('full-moments-list');
-    if (container) renderMomentsList(container, momentsCache || []);
+    if (container) {
+        _renderMomentsTab();
+    }
 
-    // 4. Плавный прогресс-бар (симуляция — iOS не даёт реальный XHR прогресс)
+    // Симулируем прогресс (iOS не даёт реальный XHR progress через fetch)
     let pct = 0;
     const timer = setInterval(() => {
-        pct += pct < 30 ? 4 : pct < 60 ? 2 : pct < 80 ? 1 : 0.3;
-        pct = Math.min(pct, 82);
-        _updateUploadProgress(Math.round(pct));
-    }, 300);
+        pct += pct < 30 ? 5 : pct < 60 ? 2.5 : pct < 82 ? 1 : 0.2;
+        _updateUploadProgress(Math.min(Math.round(pct), 82));
+    }, 250);
 
-    // 5. Загружаем
     try {
         const fd = new FormData();
         fd.append('file', file);
@@ -6810,20 +6689,19 @@ async function _publishMomentEditor(ov, file, url) {
         const r = await fetch('/create_moment', { method: 'POST', body: fd, credentials: 'include' });
         clearInterval(timer);
         _updateUploadProgress(100);
-        await new Promise(res => setTimeout(res, 600));
+        await new Promise(res => setTimeout(res, 500));
 
-        // Читаем ответ
         let ok = r.ok;
         try { const d = await r.json(); ok = d.success; } catch(e) {}
         showToast(ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки', ok ? 'success' : 'error');
 
     } catch(e) {
         clearInterval(timer);
-        console.error('publish:', e);
+        console.error('[moment] publish error:', e);
         showToast('Ошибка сети — попробуй ещё раз', 'error');
     }
 
-    // 6. Сбрасываем стейт и перезагружаем список
+    // Сброс + перезагрузка
     _momentUploading = false;
     _momentUploadFile = null;
     if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} _momentUploadPreviewUrl = null; }
@@ -6832,1759 +6710,196 @@ async function _publishMomentEditor(ov, file, url) {
     await loadMoments();
 }
 
+// ── Показать/скрыть moments bar ──────────────────────────
+async function _showMomentsBar() {
+    if (_momentsBarVisible) return;
+    _momentsBarVisible = true;
 
-// ── Просмотр моментов пользователя ──
-function openUserMomentsViewer(userId) {
-    const list = currentMoments.filter(m => m.user_id === userId);
-    if (!list.length) return;
-    if (userId !== currentUser?.id) {
-        _viewedMomentUsers.add(userId);
-        try { localStorage.setItem('wc_viewed_moments', JSON.stringify([..._viewedMomentUsers])); } catch(e) {}
-        const container = document.getElementById('full-moments-list');
-        if (container && momentsCache) renderMomentsList(container, momentsCache);
+    const bar    = document.getElementById('moments-bar');
+    const scroll = document.getElementById('moments-bar-scroll');
+    if (!bar) return;
+
+    bar.style.display = 'block';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        bar.style.maxHeight = '110px';
+        bar.style.opacity   = '1';
+    }));
+
+    // Skeleton пока данные не загружены
+    if (!momentsCache && scroll) {
+        scroll.innerHTML = [0,1,2,3,4].map(() => `
+            <div style="display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0">
+                <div class="wc-skeleton" style="width:64px;height:64px;border-radius:50%"></div>
+                <div class="wc-skeleton" style="width:40px;height:9px;border-radius:5px"></div>
+            </div>`).join('');
+    } else {
+        _renderMomentsBar();
     }
-    _runMomentsViewer(list, 0);
+
+    // Грузим данные (не блокирует показ skeleton)
+    await loadMoments();
 }
 
 
-// Cloudinary: URL постера видео (первый кадр как jpg)
-function _cl_video_poster(videoUrl) {
-    try {
-        // https://res.cloudinary.com/{cloud}/video/upload/.../{id}.mp4
-        // → https://res.cloudinary.com/{cloud}/video/upload/so_0/{id}.jpg
-        const url = videoUrl.replace('/video/upload/', '/video/upload/so_0,q_50,w_400,c_limit/');
-        return url.replace(/\.(mp4|mov|webm|avi)(\?.*)?$/i, '.jpg');
-    } catch(e) { return ''; }
+
+// ── Открыть просмотрщик моментов пользователя ───────────
+function openUserMomentsViewer(targetUid) {
+    const moments = (momentsCache || []).filter(m => m.user_id === targetUid);
+    if (!moments.length) { showToast('Нет активных моментов', 'info'); return; }
+    _markUserViewed(targetUid);
+    _renderMomentsBar(); // обновляем кольцо → серое
+    _renderMomentsTab();
+    _openMomentsOverlay(moments, 0);
 }
 
-function _runMomentsViewer(list, startIdx) {
-    // Пауза музыки на время просмотра момента
-    const _wasMusicPlaying = MP.playing;
-    if (MP.playing && MP.audioEl) {
-        MP.audioEl.pause();
-        MP.playing = false;
-        _mpStopViz();
-        _mpUpdateCard();
-        _mpUpdateMiniPlayer();
-    }
-
+function _openMomentsOverlay(moments, startIdx) {
     let idx = startIdx;
-    let autoTimer = null;
-    let mediaLoaded = false;
-
     const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
 
-    function render() {
-        ov.innerHTML = '';
-        mediaLoaded = false;
-        clearTimeout(autoTimer);
-        const m = list[idx];
-        const isMe = m.user_id === currentUser?.id;
+    const render = () => {
+        const m = moments[idx];
+        if (!m) { ov.remove(); return; }
+        const isVid = m.media_url && /\.(mp4|mov|webm)/i.test(m.media_url);
+        const isImg = m.media_url && !isVid;
+        const isMe  = m.user_id === currentUser?.id;
+        const pct   = Math.round(((idx + 1) / moments.length) * 100);
 
-        // ── Фон ──
-        const bg = document.createElement('div');
-        bg.style.cssText = 'position:absolute;inset:0;background:#000';
+        ov.innerHTML = `
+            <!-- Медиа фон -->
+            <div style="position:absolute;inset:0;overflow:hidden">
+                ${isImg ? `<img src="${m.media_url}" style="width:100%;height:100%;object-fit:cover;filter:blur(30px) brightness(0.4) saturate(1.5)">` : ''}
+                ${isVid ? `<video src="${m.media_url}" style="width:100%;height:100%;object-fit:cover;filter:blur(30px) brightness(0.4)" muted autoplay playsinline loop></video>` : ''}
+            </div>
+            <!-- Основной контент -->
+            <div style="position:absolute;inset:0;display:flex;flex-direction:column">
+                <!-- Прогресс -->
+                <div style="padding:max(env(safe-area-inset-top,44px),44px) 14px 8px;display:flex;gap:4px">
+                    ${moments.map((_, i) => `<div style="flex:1;height:2.5px;border-radius:2px;background:${i <= idx ? '#fff' : 'rgba(255,255,255,0.3)'}"></div>`).join('')}
+                </div>
+                <!-- Хедер -->
+                <div style="display:flex;align-items:center;gap:10px;padding:0 14px 10px">
+                    <div style="width:38px;height:38px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,0.6);flex-shrink:0">
+                        ${getAvatarHtml({id: m.user_id, name: m.user_name, avatar: m.user_avatar}, 'w-full h-full')}
+                    </div>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-weight:700;font-size:14px;color:#fff">${isMe ? 'Вы' : escHtml(m.user_name || '')}</div>
+                        <div style="font-size:11px;color:rgba(255,255,255,0.55)">${m.timestamp || ''}</div>
+                    </div>
+                    ${isMe ? `<button onclick="deleteMoment(${m.id})" style="background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>` : ''}
+                    <button onclick="this.closest('[style*=fixed]').remove()" style="background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+                    </button>
+                </div>
+                <!-- Медиа -->
+                <div style="flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;position:relative">
+                    ${isImg ? `<img src="${m.media_url}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:12px">` : ''}
+                    ${isVid ? `<video src="${m.media_url}" style="max-width:100%;max-height:100%;border-radius:12px" controls autoplay playsinline></video>` : ''}
+                    ${!m.media_url ? `<div style="color:rgba(255,255,255,0.85);font-size:20px;font-weight:600;padding:24px;text-align:center;line-height:1.4">${escHtml(m.text || '')}</div>` : ''}
+                    ${m.text && m.media_url ? `<div style="position:absolute;bottom:20px;left:16px;right:16px;text-align:center;color:#fff;font-size:16px;font-weight:600;text-shadow:0 2px 8px rgba(0,0,0,0.8)">${escHtml(m.text)}</div>` : ''}
+                    <!-- Зоны тапа: влево / вправо -->
+                    <div style="position:absolute;inset:0;display:flex">
+                        <div style="flex:1" onclick="${idx > 0 ? 'void 0' : 'void 0'}"></div>
+                        <div style="flex:1"></div>
+                    </div>
+                </div>
+                <!-- Гео -->
+                ${m.geo_name ? `<div style="padding:8px 16px;display:flex;align-items:center;gap:6px;color:rgba(255,255,255,0.7);font-size:13px">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>
+                    ${escHtml(m.geo_name)}
+                </div>` : ''}
+                <!-- Навигация -->
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px calc(max(env(safe-area-inset-bottom,20px),20px))">
+                    <button onclick="_ovPrev()" style="background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:44px;height:44px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:${idx > 0 ? 1 : 0.3}" ${idx === 0 ? 'disabled' : ''}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                    <span style="color:rgba(255,255,255,0.4);font-size:13px">${idx + 1} / ${moments.length}</span>
+                    <button onclick="_ovNext()" style="background:rgba(255,255,255,0.12);border:none;border-radius:50%;width:44px;height:44px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:${idx < moments.length - 1 ? 1 : 0.3}" ${idx === moments.length - 1 ? 'disabled' : ''}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 18l6-6-6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                    </button>
+                </div>
+            </div>`;
 
-        if (m.media_url) {
-            const isVideo = /\.(mp4|mov|webm)/i.test(m.media_url);
+        // Пометить просмотр на сервере
+        fetch(`/view_moment/${m.id}`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    };
 
-            // Размытый фон — показывается мгновенно
-            const blurBg = document.createElement('div');
-            blurBg.id = 'mb-blur';
-            // Для видео — используем постер как блюр-фон (грузится намного быстрее чем видео)
-            const blurSrc = (isVideo && m.media_url.includes('res.cloudinary.com'))
-                ? _cl_video_poster(m.media_url)
-                : m.media_url;
-            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(blurSrc)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.4s ease';
-            bg.appendChild(blurBg);
+    window._ovPrev = () => { if (idx > 0) { idx--; render(); } };
+    window._ovNext = () => { if (idx < moments.length - 1) { idx++; render(); } else { ov.remove(); } };
 
-            // Спиннер
-            const spin = document.createElement('div');
-            spin.id = 'mb-spin';
-            spin.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;transition:opacity 0.2s';
-            spin.innerHTML = '<div style="width:40px;height:40px;border:2.5px solid rgba(255,255,255,0.1);border-top-color:rgba(255,255,255,0.85);border-radius:50%;animation:spin 0.65s linear infinite"></div>';
-            bg.appendChild(spin);
+    // Свайп: влево → вперёд, вправо → назад
+    let _tx = 0;
+    ov.addEventListener('touchstart', (e) => { _tx = e.touches[0].clientX; }, { passive: true });
+    ov.addEventListener('touchend',   (e) => {
+        const dx = e.changedTouches[0].clientX - _tx;
+        if (Math.abs(dx) < 40) return;
+        if (dx < 0) window._ovNext(); else window._ovPrev();
+    }, { passive: true });
 
-            function onReady() {
-                if (mediaLoaded) return;
-                mediaLoaded = true;
-                const media = bg.querySelector('video,img');
-                if (media) {
-                    media.style.visibility = 'visible';
-                    media.style.opacity = '1';
-                }
-                blurBg.style.opacity = '0';
-                spin.style.display = 'none';
-                const dur = isVideo
-                    ? Math.min((bg.querySelector('video')?.duration||7)*1000, 30000)
-                    : 6000;
-                const fill = document.getElementById('mpf');
-                if (fill) { fill.style.transition='width '+(dur/1000)+'s linear'; fill.style.width='100%'; }
-                autoTimer = setTimeout(() => next(), dur + 200);
-                // Предзагружаем следующее медиа
-                if (list[idx+1]?.media_url) _preloadMedia(list[idx+1].media_url);
-            }
-
-            if (isVideo) {
-                const vid = document.createElement('video');
-                vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
-                vid.preload = 'auto'; // полная загрузка для плавного воспроизведения
-                // opacity:0 + visibility:hidden предотвращает мелькание первого кадра
-                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s;visibility:hidden';
-                // poster = превью от Cloudinary (первый кадр как изображение) — убирает чёрный экран
-                if (m.media_url && m.media_url.includes('res.cloudinary.com')) {
-                    vid.poster = _cl_video_poster(m.media_url);
-                }
-                vid.oncanplaythrough = onReady;
-                vid.oncanplay = onReady;  // fallback
-                vid.onended = () => next();
-                vid.onerror = () => onReady();
-                // Таймаут 3с — быстрый показ постера и продолжение
-                const vidTimeout = setTimeout(() => onReady(), 3000);
-                const _origOnReady = onReady;
-                vid._clearTimeout = () => clearTimeout(vidTimeout);
-                const _patchedOnReady = function() { clearTimeout(vidTimeout); _origOnReady(); };
-                vid.oncanplaythrough = _patchedOnReady;
-                vid.oncanplay = _patchedOnReady;
-                vid.onended = () => next();
-                if (_mediaCache.has(m.media_url)) {
-                    vid.src = _mediaCache.get(m.media_url);
-                    // Уже в кеше — можем показать почти мгновенно
-                    vid.onloadeddata = () => { clearTimeout(vidTimeout); onReady(); };
-                } else {
-                    vid.src = m.media_url;
-                    _getCachedMedia(m.media_url).catch(() => {});
-                }
-                bg.appendChild(vid);
-            } else {
-                const img = document.createElement('img');
-                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
-                img.onload = onReady;
-                img.onerror = onReady;
-                img.src = _mediaCache.get(m.media_url) || m.media_url;
-                bg.appendChild(img);
-            }
-
-            // Текст поверх медиа
-            if (m.text) {
-                const textLayer = document.createElement('div');
-                textLayer.style.cssText = 'position:absolute;bottom:140px;left:0;right:0;z-index:5;display:flex;justify-content:center;padding:0 20px;pointer-events:none';
-                textLayer.innerHTML = '<div style="background:rgba(0,0,0,0.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:18px;padding:10px 18px;font-size:clamp(14px,4vw,20px);font-weight:700;color:#fff;text-align:center;line-height:1.4;max-width:100%">' + escHtml(m.text) + '</div>';
-                bg.appendChild(textLayer);
-            }
-
-        } else {
-            // Только текст
-            bg.style.background = 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)';
-            const txt = document.createElement('div');
-            txt.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;z-index:2';
-            txt.innerHTML = '<div style="font-size:clamp(18px,5vw,28px);font-weight:700;color:#fff;text-align:center;line-height:1.5;text-shadow:0 2px 16px rgba(0,0,0,0.5)">' + escHtml(m.text||'') + '</div>';
-            bg.appendChild(txt);
-            // Для текстовых — стартуем прогресс сразу
-            setTimeout(() => {
-                const fill = document.getElementById('mpf');
-                if (fill) { fill.style.transition='width 5s linear'; fill.style.width='100%'; }
-                autoTimer = setTimeout(() => next(), 5200);
-            }, 50);
-        }
-        ov.appendChild(bg);
-
-        // Трекинг просмотра
-        if (m.user_id !== currentUser?.id) {
-            apiFetch('/view_moment/' + m.id, {method:'POST'}).catch(()=>{});
-        }
-
-        // ── Прогресс-бары сверху ──
-        const bars = document.createElement('div');
-        bars.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:12px;right:12px;z-index:10;display:flex;gap:3px';
-        list.forEach((_,i) => {
-            const bar = document.createElement('div');
-            bar.style.cssText = 'flex:1;height:2.5px;background:rgba(255,255,255,0.25);border-radius:2px;overflow:hidden';
-            const fill = document.createElement('div');
-            fill.style.cssText = 'height:100%;background:white;border-radius:2px;width:'+(i<idx?'100':'0')+'%';
-            if (i===idx) fill.id = 'mpf';
-            bar.appendChild(fill); bars.appendChild(bar);
-        });
-        ov.appendChild(bars);
-
-        // ── Кнопка закрыть ──
-        const xBtn = document.createElement('button');
-        xBtn.style.cssText = 'position:absolute;top:max(calc(env(safe-area-inset-top,0px)+20px),28px);right:14px;z-index:11;background:rgba(0,0,0,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;color:white;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
-        xBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
-        xBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); ov.remove(); };
-        ov.appendChild(xBtn);
-
-        // ── Инфо снизу ──
-        const btmGrad = document.createElement('div');
-        btmGrad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(0,0,0,0.8) 0%,transparent 100%);z-index:4;pointer-events:none';
-        ov.appendChild(btmGrad);
-
-        const btm = document.createElement('div');
-        btm.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;padding:16px 16px max(calc(env(safe-area-inset-bottom,0px)+16px),28px);display:flex;align-items:flex-end;gap:12px';
-        btm.innerHTML = getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-11 h-11');
-        const it = document.createElement('div');
-        it.style.cssText = 'flex:1;min-width:0';
-        it.innerHTML = '<div style="font-weight:700;font-size:15px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.6)">' + escHtml(m.user_name) + '</div>'
-            + '<div style="font-size:12px;color:rgba(255,255,255,0.65);margin-top:2px">' + m.timestamp + (m.geo_name ? ' · 📍' + escHtml(m.geo_name) : '') + '</div>';
-        btm.appendChild(it);
-
-        // Кнопка "Переслать" — для чужих моментов
-        if (!isMe) {
-            const fwdBtn = document.createElement('button');
-            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
-            fwdBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><polyline points="15 17 20 12 15 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12v-2a6 6 0 016-6h10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Переслать';
-            fwdBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _forwardMoment(m); };
-            btm.appendChild(fwdBtn);
-        }
-
-        if (isMe) {
-            const acts = document.createElement('div');
-            acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
-            // Глазок
-            const viewBtn = document.createElement('button');
-            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
-            viewBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.3"/></svg><span id="mv-vcnt-' + m.id + '">' + (m.view_count||0) + '</span>';
-            viewBtn.onpointerdown = () => { viewBtn.style.transform='scale(0.92)'; viewBtn.style.background='rgba(255,255,255,0.24)'; };
-            viewBtn.onpointerup = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
-            viewBtn.onpointercancel = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
-            viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id, ov); };
-            // Ведро
-            const del = document.createElement('button');
-            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
-            del.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-            del.onpointerdown = () => { del.style.transform='scale(0.88)'; del.style.background='rgba(239,68,68,0.38)'; };
-            del.onpointerup = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
-            del.onpointercancel = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
-            del.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _confirmDeleteMoment(m.id, ov); };
-            acts.appendChild(viewBtn); acts.appendChild(del);
-            btm.appendChild(acts);
-        }
-        ov.appendChild(btm);
-
-        // Тап по половинам экрана
-        ov.onclick = e => {
-            if (e.target.closest('button')) return;
-            clearTimeout(autoTimer);
-            if (e.clientX < window.innerWidth/2) prev(); else next();
-        };
-
-        // Свайп (горизонтальный — след/пред момент, вертикальный — закрыть)
-        let _tsX = 0, _tsY = 0, _swipeDx = 0;
-        ov.addEventListener('touchstart', e => {
-            _tsX = e.touches[0].clientX;
-            _tsY = e.touches[0].clientY;
-            _swipeDx = 0;
-        }, {passive:true});
-        ov.addEventListener('touchmove', e => {
-            _swipeDx = e.touches[0].clientX - _tsX;
-            const dy = e.touches[0].clientY - _tsY;
-            // Анимируем слайд
-            if (Math.abs(_swipeDx) > Math.abs(dy) && Math.abs(_swipeDx) > 10) {
-                ov.style.transform = `translateX(${_swipeDx * 0.3}px)`;
-            }
-        }, {passive:true});
-        ov.addEventListener('touchend', e => {
-            ov.style.transform = '';
-            const dy = e.changedTouches[0].clientY - _tsY;
-            if (Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(_swipeDx)) {
-                // Вертикальный свайп вниз — закрыть
-                clearTimeout(autoTimer); ov.remove();
-            } else if (_swipeDx < -60) {
-                clearTimeout(autoTimer); next();
-            } else if (_swipeDx > 60) {
-                clearTimeout(autoTimer); prev();
-            }
-        }, {passive:true});
-    }
-
-    function next() { clearTimeout(autoTimer); if (idx<list.length-1){idx++;render();}else{ov.remove();} }
-    function prev() { clearTimeout(autoTimer); if (idx>0){idx--;render();}else{ render(); } }
-
-    document.body.appendChild(ov);
     render();
-
-    // Следим за удалением оверлея — возобновляем музыку
-    const _momentObserver = new MutationObserver(() => {
-        if (!document.body.contains(ov)) {
-            _momentObserver.disconnect();
-            if (_wasMusicPlaying && MP.audioEl && MP.idx >= 0) {
-                MP.audioEl.play()
-                    .then(() => {
-                        MP.playing = true;
-                        _mpStartViz();
-                        _mpUpdateCard();
-                        _mpUpdateMiniPlayer();
-                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-                    })
-                    .catch(() => {});
-            }
-        }
-    });
-    _momentObserver.observe(document.body, { childList: true });
-}
-
-const _viewersCache = {};
-
-function _renderViewersList(container, viewers) {
-    if (!viewers || !viewers.length) {
-        container.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:44px 0 20px;opacity:0.3">'
-            + '<svg width="38" height="38" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="1.5"/></svg>'
-            + '<div style="font-size:15px;font-weight:500">Ещё никто не смотрел</div>'
-            + '</div>';
-        return;
-    }
-    container.innerHTML = viewers.map((v, i) => {
-        const isLast = i === viewers.length - 1;
-        return '<div style="display:flex;align-items:center;gap:14px;padding:12px 0;' + (isLast ? '' : 'border-bottom:0.5px solid rgba(255,255,255,0.07)') + '">'
-            + getAvatarHtml({id:v.id, name:v.name, avatar:v.avatar}, 'w-11 h-11')
-            + '<div style="flex:1;min-width:0">'
-            + '<div style="font-weight:600;font-size:15px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(v.name) + '</div>'
-            + '<div style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:2px;display:flex;align-items:center;gap:4px">'
-            + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-            + (v.time || '') + '</div>'
-            + '</div>'
-            + '</div>';
-    }).join('');
-}
-
-function _pluralViews(n) {
-    if (n % 10 === 1 && n % 100 !== 11) return 'просмотр';
-    if ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) return 'просмотра';
-    return 'просмотров';
-}
-
-async function _showMomentViewers(momentId, momentOv) {
-    if (!document.getElementById('mv-keyframes')) {
-        const st = document.createElement('style');
-        st.id = 'mv-keyframes';
-        st.textContent = '@keyframes mvFadeIn{from{opacity:0}to{opacity:1}}@keyframes mvSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}';
-        document.head.appendChild(st);
-    }
-    document.getElementById('mv-ov-' + momentId)?.remove();
-    const cached = _viewersCache[momentId];
-
-    const ov = document.createElement('div');
-    ov.id = 'mv-ov-' + momentId;
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;animation:mvFadeIn 0.2s ease';
-
-    const backdrop = document.createElement('div');
-    backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)';
-    backdrop.onclick = () => _closeMvSheet(ov, sh);
-    ov.appendChild(backdrop);
-
-    const sh = document.createElement('div');
-    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 0 max(env(safe-area-inset-bottom),28px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1);max-height:70vh;display:flex;flex-direction:column';
-
-    const handle = document.createElement('div');
-    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 0;flex-shrink:0';
-
-    const header = document.createElement('div');
-    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;flex-shrink:0';
-
-    const titleWrap = document.createElement('div');
-    titleWrap.style.cssText = 'display:flex;align-items:center;gap:10px';
-    titleWrap.innerHTML = '<div style="width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">'
-        + '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.2"/></svg>'
-        + '</div>'
-        + '<div>'
-        + '<div style="font-size:17px;font-weight:700;letter-spacing:-0.3px">\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u044b</div>'
-        + '<div id="mv-sub-' + momentId + '" style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:1px">'
-        + (cached ? (cached.length + '\u00a0' + _pluralViews(cached.length)) : '\u2014')
-        + '</div>'
-        + '</div>';
-
-    const closeBtn = document.createElement('button');
-    closeBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
-    closeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
-    closeBtn.onclick = () => _closeMvSheet(ov, sh);
-
-    header.appendChild(titleWrap);
-    header.appendChild(closeBtn);
-
-    const sep = document.createElement('div');
-    sep.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.07);margin:0 20px;flex-shrink:0';
-
-    const listEl = document.createElement('div');
-    listEl.id = 'mv-list-' + momentId;
-    listEl.style.cssText = 'flex:1;overflow-y:auto;padding:6px 20px 0;-webkit-overflow-scrolling:touch';
-    if (!cached) {
-        listEl.innerHTML = '<div style="text-align:center;padding:40px 0;opacity:0.3;font-size:14px">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...</div>';
-    }
-
-    let _sy = 0, _ty = 0;
-    sh.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; _ty = 0; }, {passive:true});
-    sh.addEventListener('touchmove', e => { _ty = e.touches[0].clientY - _sy; if (_ty > 0) sh.style.transform = 'translateY('+_ty+'px)'; }, {passive:true});
-    sh.addEventListener('touchend', () => { if (_ty > 90) _closeMvSheet(ov, sh); else { sh.style.transition='transform 0.2s'; sh.style.transform=''; setTimeout(()=>sh.style.transition='',200); } }, {passive:true});
-
-    sh.appendChild(handle);
-    sh.appendChild(header);
-    sh.appendChild(sep);
-    sh.appendChild(listEl);
-    ov.appendChild(sh);
-    document.body.appendChild(ov);
-
-    if (cached) { _renderViewersList(listEl, cached); return; }
-
-    try {
-        const r = await apiFetch('/moment_viewers/' + momentId);
-        if (!r || !r.ok) throw new Error('bad');
-        const data = await r.json();
-        const viewers = Array.isArray(data) ? data : (data.viewers || []);
-        _viewersCache[momentId] = viewers;
-        const vcnt = document.getElementById('mv-vcnt-' + momentId);
-        if (vcnt) vcnt.textContent = viewers.length;
-        const sub = document.getElementById('mv-sub-' + momentId);
-        if (sub) sub.textContent = viewers.length + '\u00a0' + _pluralViews(viewers.length);
-        _renderViewersList(listEl, viewers);
-    } catch(e) {
-        listEl.innerHTML = '<div style="text-align:center;padding:40px 0;opacity:0.3;font-size:14px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c</div>';
-    }
-}
-
-function _closeMvSheet(ov, sh) {
-    sh.style.animation = 'mvSlideUp 0.22s cubic-bezier(0.22,1,0.36,1) reverse forwards';
-    ov.style.animation = 'mvFadeIn 0.2s ease reverse forwards';
-    setTimeout(() => ov.remove(), 220);
-}
-
-async function _confirmDeleteMoment(momentId, momentOv) {
-    // Анимации (общие с mv)
-    if (!document.getElementById('mv-keyframes')) {
-        const st = document.createElement('style');
-        st.id = 'mv-keyframes';
-        st.textContent = '@keyframes mvFadeIn{from{opacity:0}to{opacity:1}}@keyframes mvSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}';
-        document.head.appendChild(st);
-    }
-
-    // Оверлей — z-index выше момента
-    const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;animation:mvFadeIn 0.2s ease';
-
-    // Подложка
-    const backdrop = document.createElement('div');
-    backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)';
-    backdrop.onclick = () => _closeDlSheet(ov, sh);
-    ov.appendChild(backdrop);
-
-    // Шторка
-    const sh = document.createElement('div');
-    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 20px max(env(safe-area-inset-bottom),32px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1)';
-
-    // Хэндл
-    const handle = document.createElement('div');
-    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 20px';
-
-    // Иконка ведра
-    const iconWrap = document.createElement('div');
-    iconWrap.style.cssText = 'width:64px;height:64px;border-radius:22px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.2);display:flex;align-items:center;justify-content:center;margin:0 auto 18px';
-    iconWrap.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-
-    // Текст
-    const title = document.createElement('div');
-    title.style.cssText = 'font-size:19px;font-weight:700;letter-spacing:-0.4px;text-align:center;margin-bottom:8px';
-    title.textContent = 'Удалить момент?';
-
-    const sub = document.createElement('div');
-    sub.style.cssText = 'font-size:14px;color:rgba(255,255,255,0.45);text-align:center;margin-bottom:28px;line-height:1.4';
-    sub.textContent = 'Момент исчезнет у всех пользователей. Это действие нельзя отменить.';
-
-    // Кнопка удалить
-    const delBtn = document.createElement('button');
-    delBtn.style.cssText = 'width:100%;padding:16px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.28);border-radius:18px;color:#ef4444;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;transition:background 0.15s,transform 0.1s;margin-bottom:10px';
-    delBtn.textContent = 'Удалить';
-    delBtn.onpointerdown = () => { delBtn.style.transform='scale(0.97)'; delBtn.style.background='rgba(239,68,68,0.28)'; };
-    delBtn.onpointerup   = () => { delBtn.style.transform=''; delBtn.style.background='rgba(239,68,68,0.15)'; };
-    delBtn.onpointercancel = () => { delBtn.style.transform=''; delBtn.style.background='rgba(239,68,68,0.15)'; };
-    delBtn.onclick = async () => {
-        _closeDlSheet(ov, sh);
-        if (momentOv) momentOv.remove();
-        await apiFetch('/delete_moment/' + momentId, {method: 'POST'});
-        momentsCache = null;
-        loadMoments();
-        showToast('Момент удалён', 'success');
-    };
-
-    // Кнопка отмена
-    const cancelBtn = document.createElement('button');
-    cancelBtn.style.cssText = 'width:100%;padding:16px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:18px;color:#fff;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;transition:background 0.15s,transform 0.1s';
-    cancelBtn.textContent = 'Отмена';
-    cancelBtn.onpointerdown = () => { cancelBtn.style.background='rgba(255,255,255,0.13)'; };
-    cancelBtn.onpointerup   = () => { cancelBtn.style.background='rgba(255,255,255,0.07)'; };
-    cancelBtn.onpointercancel = () => { cancelBtn.style.background='rgba(255,255,255,0.07)'; };
-    cancelBtn.onclick = () => _closeDlSheet(ov, sh);
-
-    // Свайп вниз — закрыть
-    let _sy = 0, _ty = 0;
-    sh.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; _ty = 0; }, {passive:true});
-    sh.addEventListener('touchmove',  e => {
-        _ty = e.touches[0].clientY - _sy;
-        if (_ty > 0) sh.style.transform = 'translateY(' + _ty + 'px)';
-    }, {passive:true});
-    sh.addEventListener('touchend', () => {
-        if (_ty > 80) _closeDlSheet(ov, sh);
-        else { sh.style.transition = 'transform 0.2s'; sh.style.transform = ''; setTimeout(() => sh.style.transition = '', 200); }
-    }, {passive:true});
-
-    sh.appendChild(handle);
-    sh.appendChild(iconWrap);
-    sh.appendChild(title);
-    sh.appendChild(sub);
-    sh.appendChild(delBtn);
-    sh.appendChild(cancelBtn);
-    ov.appendChild(sh);
     document.body.appendChild(ov);
 }
 
-function _closeDlSheet(ov, sh) {
-    sh.style.animation = 'mvSlideUp 0.22s cubic-bezier(0.22,1,0.36,1) reverse forwards';
-    ov.style.animation  = 'mvFadeIn 0.2s ease reverse forwards';
-    setTimeout(() => ov.remove(), 220);
+// ── Socket: новый момент от другого пользователя ─────────
+// (вызывается из socket handler)
+function onNewMomentSocket(data) {
+    momentsCache    = null;
+    momentsLastLoad = 0;
+    loadMoments();
+    if (currentTab === 'moments') _renderMomentsTab();
 }
 
-function openTextMoment() {
-    const ov = document.createElement('div');
-    ov.className = 'modal-overlay';
-    ov.onclick = e => { if (e.target===ov) ov.remove(); };
-    const sh = document.createElement('div'); sh.className='modal-sheet';
-    sh.innerHTML = '<div class="modal-handle"></div>'
-        + '<div style="font-size:17px;font-weight:700;margin-bottom:16px;text-align:center">Текстовый момент</div>'
-        + '<textarea id="tm-text" placeholder="Напишите что-нибудь..." style="width:100%;min-height:100px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:16px;color:#fff;padding:14px;font-size:16px;font-family:inherit;resize:none;outline:none;box-sizing:border-box" maxlength="500"></textarea>'
-        + '<div style="text-align:right;font-size:12px;color:var(--text-2);margin:6px 4px 14px" id="tm-cnt">0/500</div>';
-    const btn = document.createElement('button');
-    btn.style.cssText='width:100%;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-    btn.textContent='Опубликовать';
-    btn.onclick = async () => {
-        const txt = document.getElementById('tm-text')?.value?.trim();
-        if (!txt) return;
-        btn.disabled=true; btn.textContent='Публикую...';
-        const fd=new FormData(); fd.append('text',txt);
-        const r=await fetch('/create_moment',{method:'POST',body:fd,credentials:'include'});
-        ov.remove(); momentsCache=null; loadMoments(); showToast('Момент опубликован! 🎉','success');
-    };
-    const ta = sh.querySelector ? sh : sh;
-    sh.appendChild(btn);
-    ov.appendChild(sh); document.body.appendChild(ov);
-    setTimeout(()=>{
-        const ta=document.getElementById('tm-text');
-        if(ta){ta.focus();ta.oninput=()=>{const c=document.getElementById('tm-cnt');if(c)c.textContent=ta.value.length+'/500';}}
-    },100);
-}
+// ── switchTab: грузим моменты при открытии таба ──────────
+// Патч поверх существующего switchTab
+const _origSwitchTab = typeof switchTab === 'function' ? switchTab : null;
+function switchTab(tab) {
+    currentTab = tab;
+    const chSec = document.getElementById('chats-section');
+    const moSec = document.getElementById('moments-section');
 
+    if (chSec) chSec.style.display = tab === 'chats' ? '' : 'none';
+    if (moSec) moSec.style.display = tab === 'moments' ? '' : 'none';
 
-
-// ══════════════════════════════════════════════════════════
-//  WebRTC — УЛУЧШЕННЫЙ: ICE restart, speakerphone, flip, group
-// ══════════════════════════════════════════════════════════
-let _currentFacingMode = 'user';  // для flip
-let _speakerOn         = true;
-
-// ══════════════════════════════════════════════════════════
-//  РАЗРЕШЕНИЯ — единая система запроса и кэша
-// ══════════════════════════════════════════════════════════
-
-const _PERM_KEY = 'wc_permissions'; // localStorage: {mic, camera, notifications}
-
-function _getPerms() {
-    try { return JSON.parse(localStorage.getItem(_PERM_KEY) || '{}'); } catch(e){ return {}; }
-}
-function _savePerm(key, val) {
-    const p = _getPerms(); p[key] = val;
-    localStorage.setItem(_PERM_KEY, JSON.stringify(p));
-}
-
-// Запрашивает разрешение с объяснением (только если ещё не запрашивали)
-// Кэш разрешений для текущей сессии
-const _sessionPerms = {};
-
-// Запросить разрешение на mic/camera — показывает диалог и вызывает getUserMedia
-// ПРЯМО из обработчика кнопки чтобы Safari не блокировал
-function requestPermission(type) {
-    if (type === 'notifications') {
-        return new Promise(async resolve => {
-            if (Notification.permission === 'granted') return resolve('granted');
-            if (Notification.permission === 'denied')  return resolve('denied');
-            const perms = _getPerms();
-            if (!perms.notifications_asked) {
-                _savePerm('notifications_asked', true);
-            }
-            const result = await Notification.requestPermission();
-            resolve(result);
-        });
+    if (tab === 'chats') {
+        const cl = document.getElementById('chat-list');
+        if (!cl?.children.length || (Date.now() - _lastChatsLoad) > 15000) loadChats();
+        else renderChatList(recentChats);
+    } else if (tab === 'moments') {
+        _renderMomentsTab(); // сразу из кэша
+        const stale = !momentsCache || (Date.now() - momentsLastLoad) > 30000;
+        if (stale) loadMoments(); // фоново обновляем
     }
-
-    if (type === 'microphone' || type === 'camera') {
-        // Уже получили в этой сессии
-        if (_sessionPerms[type] === 'granted') return Promise.resolve('granted');
-        if (_sessionPerms[type] === 'denied')  return Promise.resolve('denied');
-
-        const constraints = type === 'camera'
-            ? { audio: true, video: { facingMode: 'user' } }
-            : { audio: true, video: false };
-
-        const perms = _getPerms();
-        const firstTime = !perms[type + '_asked'];
-
-        if (!firstTime) {
-            // Уже видели диалог — сразу пробуем getUserMedia
-            // Пропускаем проверку protocol — Cloudflare туннель HTTPS снаружи
-            const hasMod = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-            const hasLeg = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
-            if (!hasMod && !hasLeg) return Promise.resolve('denied');
-
-            if (hasMod) {
-                return navigator.mediaDevices.getUserMedia(constraints)
-                    .then(stream => {
-                        stream.getTracks().forEach(t => t.stop());
-                        _sessionPerms[type] = 'granted';
-                        return 'granted';
-                    })
-                    .catch(e => {
-                        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                            _sessionPerms[type] = 'denied';
-                            return 'denied';
-                        }
-                        _sessionPerms[type] = 'granted';
-                        return 'granted';
-                    });
-            } else {
-                const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-                return new Promise(res => {
-                    gum.call(navigator, constraints,
-                        stream => { stream.getTracks().forEach(t => t.stop()); _sessionPerms[type] = 'granted'; res('granted'); },
-                        err => { _sessionPerms[type] = 'denied'; res('denied'); }
-                    );
-                });
-            }
-        }
-
-        // Первый раз — показываем наш диалог-объяснение
-        // Кнопка "Разрешить" вызывает getUserMedia СИНХРОННО из onclick (Safari требует)
-        return new Promise(resolve => {
-            const cfg = {
-                microphone: { icon:'MIC', title:'Доступ к микрофону', desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
-                camera:     { icon:'📷', title:'Доступ к камере',    desc:'Нужен для видеозвонков и записи видео',  btn:'Разрешить камеру' },
-            };
-            const c = cfg[type];
-            const ov = document.createElement('div');
-            ov.className   = 'modal-overlay';
-            ov.style.zIndex = '99999';
-            const sh = document.createElement('div');
-            sh.className = 'modal-sheet';
-            sh.innerHTML =
-                '<div class="modal-handle"></div>'
-                + '<div style="text-align:center;padding:10px 0 22px">'
-                + '<div style="display:flex;align-items:center;justify-content:center;width:72px;height:72px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 16px">'+_permIcon(c.icon)+'</div>'
-                + '<div style="font-size:18px;font-weight:700;margin-bottom:10px">'+c.title+'</div>'
-                + '<div style="font-size:14px;color:var(--text-2);line-height:1.55">'+c.desc+'<br><br>'
-                + '<span style="font-size:13px;opacity:.7">Safari покажет системный запрос разрешения</span>'
-                + '</div></div>';
-
-            const allowBtn = document.createElement('button');
-            allowBtn.style.cssText = 'width:100%;padding:15px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit';
-            allowBtn.textContent = c.btn;
-
-            // КРИТИЧНО: getUserMedia вызывается ПРЯМО в onclick — Safari пропускает
-            allowBtn.onclick = () => {
-                ov.remove();
-                _savePerm(type + '_asked', true);
-                // Синхронный вызов из user gesture — Safari требует
-                const hasModernAPI = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-                const hasLegacyAPI = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
-                if (hasModernAPI) {
-                    navigator.mediaDevices.getUserMedia(constraints)
-                        .then(stream => {
-                            stream.getTracks().forEach(t => t.stop());
-                            _sessionPerms[type] = 'granted';
-                            resolve('granted');
-                        })
-                        .catch(e => {
-                            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                                _sessionPerms[type] = 'denied';
-                                resolve('denied');
-                            } else {
-                                _sessionPerms[type] = 'granted';
-                                resolve('granted');
-                            }
-                        });
-                } else if (hasLegacyAPI) {
-                    const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-                    gum.call(navigator, constraints,
-                        stream => { stream.getTracks().forEach(t => t.stop()); _sessionPerms[type] = 'granted'; resolve('granted'); },
-                        err => {
-                            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                                _sessionPerms[type] = 'denied'; resolve('denied');
-                            } else {
-                                _sessionPerms[type] = 'granted'; resolve('granted');
-                            }
-                        }
-                    );
-                } else {
-                    resolve('denied');
-                }
-            };
-
-            const skipBtn = document.createElement('button');
-            skipBtn.style.cssText = 'width:100%;padding:10px;background:none;border:none;color:var(--text-2);font-size:14px;cursor:pointer;font-family:inherit;margin-top:4px';
-            skipBtn.textContent = 'Не сейчас';
-            skipBtn.onclick = () => { ov.remove(); _savePerm(type + '_asked', true); resolve('denied'); };
-
-            sh.appendChild(allowBtn);
-            sh.appendChild(skipBtn);
-            ov.appendChild(sh);
-            document.body.appendChild(ov);
-        });
-    }
-
-    return Promise.resolve('unknown');
 }
 
-// Диалог-объяснение перед запросом
-function _showPermExplainer(type) {
-    return new Promise(resolve => {
-        const cfg = {
-            microphone:    { icon:'MIC', title:'Доступ к микрофону',    desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
-            camera:        { icon:'CAM', title:'Доступ к камере',        desc:'Нужен для видеозвонков и аватара',       btn:'Разрешить камеру' },
-            notifications: { icon:'BELL', title:'Push-уведомления',       desc:'Чтобы получать сообщения когда приложение закрыто', btn:'Разрешить уведомления' },
-        };
-        const c = cfg[type] || { icon:'🔑', title:'Разрешение', desc:'', btn:'Продолжить' };
-
-        const ov = document.createElement('div');
-        ov.className = 'modal-overlay';
-        ov.style.zIndex = '99999';
-        const sh = document.createElement('div'); sh.className='modal-sheet';
-        sh.innerHTML='<div class="modal-handle"></div>'
-            +'<div style="text-align:center;padding:8px 0 20px">'
-            +'<div style="display:flex;align-items:center;justify-content:center;width:68px;height:68px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 14px">'+_permIcon(c.icon)+'</div>'
-            +'<div style="font-size:18px;font-weight:700;margin-bottom:8px">'+c.title+'</div>'
-            +'<div style="font-size:14px;color:var(--text-2);line-height:1.5">'+c.desc+'</div>'
-            +'</div>';
-        const btn=document.createElement('button');
-        btn.style.cssText='width:100%;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-        btn.textContent=c.btn;
-        btn.onclick=()=>{ ov.remove(); resolve(); };
-        sh.appendChild(btn);
-        const skip=document.createElement('button');
-        skip.style.cssText='width:100%;padding:10px;background:none;border:none;color:var(--text-2);font-size:14px;cursor:pointer;font-family:inherit;margin-top:4px';
-        skip.textContent='Не сейчас';
-        skip.onclick=()=>{ ov.remove(); resolve(); };
-        sh.appendChild(skip);
-        ov.appendChild(sh);
-        document.body.appendChild(ov);
-    });
-}
-
-// Показывает инструкцию как разрешить в настройках если заблокировано
-function _showPermDeniedGuide(type) {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-    const cfg = {
-        microphone: { icon:'MIC', name:'Микрофон',
-            ios_safari: 'Настройки iPhone → Safari → Микрофон → Разрешить',
-            ios_pwa:    'Настройки iPhone → Конфиденциальность → Микрофон → включить WayChat',
-            other:      'Нажмите 🔒 в адресной строке браузера → Разрешить микрофон' },
-        camera: { icon:'CAM', name:'Камера',
-            ios_safari: 'Настройки iPhone → Safari → Камера → Разрешить',
-            ios_pwa:    'Настройки iPhone → Конфиденциальность → Камера → включить WayChat',
-            other:      'Нажмите 🔒 в адресной строке браузера → Разрешить камеру' },
-        notifications: { icon:'BELL', name:'Уведомления',
-            ios_safari: 'Нужно добавить WayChat на экран Домой',
-            ios_pwa:    'Настройки iPhone → WayChat → Уведомления → включить',
-            other:      'Нажмите 🔒 в адресной строке браузера → Разрешить уведомления' },
-    };
-    const c = cfg[type] || { icon:'🔑', name:'Доступ', ios_safari:'Настройки', ios_pwa:'Настройки', other:'Настройки браузера' };
-    let guide;
-    if (isIOS && isPWA)      guide = c.ios_pwa;
-    else if (isIOS)          guide = c.ios_safari;
-    else                     guide = c.other;
-
-    const ov = document.createElement('div');
-    ov.className = 'modal-overlay';
-    ov.style.zIndex = '99999';
-    const sh = document.createElement('div'); sh.className='modal-sheet';
-    sh.innerHTML='<div class="modal-handle"></div>'
-        +'<div style="text-align:center;padding:8px 0 20px">'
-        +'<div style="display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 14px">'+_permIcon(c.icon)+'</div>'
-        +'<div style="font-size:17px;font-weight:700;margin-bottom:10px">'+c.name.charAt(0).toUpperCase()+c.name.slice(1)+' заблокирован</div>'
-        +'<div style="font-size:14px;color:var(--text-2);line-height:1.6;text-align:left;background:var(--surface2);border-radius:14px;padding:14px">'
-        +'Чтобы разрешить '+c.name+':<br><br>'
-        +'<b style="color:var(--text)">'+guide+'</b>'
-        +'</div></div>';
-    const btn=document.createElement('button');
-    btn.style.cssText='width:100%;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;color:var(--text);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit';
-    btn.textContent='Понятно'; btn.onclick=()=>ov.remove();
-    sh.appendChild(btn); ov.appendChild(sh); document.body.appendChild(ov);
-}
-
-async function startCall(type) {
-    if (!currentPartnerId) return;
-    currentCallType = type; iceRestartCount = 0;
-    vibrate(50);
-    setupCallScreen(type, false);
-    pendingIce = [];
-    _speakerOn = true;
+// ── Удаление момента ─────────────────────────────────────
+async function deleteMoment(mid) {
     try {
-        callLocalStream = await getLocalStream(type);
-        if (type === 'video') showLocalVideo();
-        peerConnection = createPeerConnection();
-        callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
-        const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type });
-        setTimeout(() => {
-            if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
-                showToast('Абонент не отвечает', 'warning'); endCall(true);
-            }
-        }, 45000);
-    } catch(e) {
-        console.error('startCall:', e); endCall(false);
-        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-            showToast('Разрешите доступ в Настройки → Safari → Камера/Микрофон', 'error', 6000);
-        } else {
-            showToast('Ошибка доступа к медиа: ' + (e.message || e.name), 'error', 4000);
+        const r = await fetch(`/delete_moment/${mid}`, { method: 'POST', credentials: 'include' });
+        if (r.ok) {
+            showToast('Момент удалён', 'info');
+            momentsCache    = null;
+            momentsLastLoad = 0;
+            // Закрываем оверлей
+            document.querySelector('[style*="z-index: 9500"], [style*="z-index:9500"]')?.remove();
+            loadMoments();
         }
-    }
+    } catch(e) { showToast('Ошибка удаления', 'error'); }
 }
 
-async function getLocalStream(type, facingMode) {
-    const fm = facingMode || _currentFacingMode || 'user';
-    const permKey = type === 'video' ? 'camera' : 'microphone';
+// ── openCreateMomentModal ────────────────────────────────
 
-    // Проверяем наличие API — если есть, значит браузер считает контекст безопасным
-    // Не проверяем protocol напрямую — Cloudflare туннель HTTPS снаружи но HTTP внутри
 
-    const hasModern = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-    const hasLegacy = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
-
-    if (!hasModern && !hasLegacy) {
-        const e = new Error('getUserMedia не поддерживается. Проверь разрешения в Настройки → Safari');
-        e.name = 'HTTPSRequired';
-        throw e;
-    }
-
-    // iOS: пробуем сначала простые constraints (строгие часто падают с OverconstrainedError)
-    const constraintsList = [
-        {
-            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-            video: type === 'video' ? { facingMode: fm, width: { ideal: 1280 }, height: { ideal: 720 } } : false
-        },
-        {
-            audio: { echoCancellation: true, noiseSuppression: true },
-            video: type === 'video' ? { facingMode: fm } : false
-        },
-        {
-            audio: true,
-            video: type === 'video' ? { facingMode: fm } : false
-        }
-    ];
-
-    if (hasModern) {
-        let lastError;
-        for (const constraints of constraintsList) {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                _sessionPerms[permKey] = 'granted';
-                return stream;
-            } catch(e) {
-                lastError = e;
-                // NotAllowedError — пользователь отказал, не пробуем дальше
-                if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-                    _sessionPerms[permKey] = 'denied';
-                    throw e;
-                }
-                // Другие ошибки (OverconstrainedError, NotFoundError) — пробуем проще
-            }
-        }
-        throw lastError;
-    } else {
-        // Полифилл для старых iOS (iOS < 14.3)
-        const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
-        return new Promise((resolve, reject) => {
-            const constraints = {
-                audio: { echoCancellation: true, noiseSuppression: true },
-                video: type === 'video' ? { facingMode: fm } : false
-            };
-            gum.call(navigator, constraints,
-                stream => { _sessionPerms[permKey] = 'granted'; resolve(stream); },
-                err => {
-                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                        _sessionPerms[permKey] = 'denied';
-                    }
-                    reject(err);
-                }
-            );
-        });
-    }
+// ── Preload helper ───────────────────────────────────────
+function _preloadMedia(url) {
+    if (!url || _mediaCache.has(url)) return;
+    _mediaCache.add(url);
+    if (/\.(mp4|mov|webm)/i.test(url)) return; // видео не предзагружаем
+    const img = new Image(); img.src = url;
 }
 
-async function flipCamera() {
-    if (!callLocalStream || currentCallType !== 'video') return;
-    _currentFacingMode = _currentFacingMode === 'user' ? 'environment' : 'user';
-    vibrate(10);
-    try {
-        const newStream = await getLocalStream('video', _currentFacingMode);
-        const videoTrack = newStream.getVideoTracks()[0];
-        if (!videoTrack) return;
-        const sender = peerConnection?.getSenders().find(s => s.track?.kind === 'video');
-        if (sender) await sender.replaceTrack(videoTrack);
-        callLocalStream.getVideoTracks().forEach(t => t.stop());
-        const lv = document.getElementById('local-video');
-        if (lv) { lv.srcObject = newStream; }
-        callLocalStream = newStream;
-    } catch(e) { showToast('Не удалось перевернуть камеру', 'error'); }
-}
-
-function setupCallScreen(type, isIncoming) {
-    const screen = document.getElementById('call-screen');
-    if (!screen) return;
-    screen.classList.remove('hidden');
-    const partnerName = document.getElementById('chat-name')?.textContent || 'Звонок';
-    const partnerAva  = chatPartnerAvatarSrc[currentPartnerId]
-        || document.getElementById('chat-ava-header')?.querySelector('img')?.src
-        || '';
-
-    const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
-    const statusText = isIncoming
-        ? (type === 'video' ? '📹 Входящий видеозвонок' : '📞 Входящий звонок')
-        : (type === 'video' ? 'Видеовызов...' : 'Вызов...');
-
-    setEl('call-name',         el => el.textContent = partnerName);
-    setEl('call-status-label', el => el.textContent = statusText);
-    setEl('call-avatar-box',   el => el.innerHTML = getAvatarHtml({id: currentPartnerId, name: partnerName, avatar: partnerAva}, 'w-28 h-28'));
-    setEl('accept-btn',        el => el.style.display = isIncoming ? 'flex' : 'none');
-    setEl('call-timer',        el => el.style.display = 'none');
-    setEl('call-quality-label',el => el.style.display = 'none');
-    setEl('flip-btn',          el => el.style.display = type === 'video' ? 'flex' : 'none');
-    // Показываем кружки дозвона
-    document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'block');
-    acquireWakeLock();
-    // Автоскрытие кнопок через 3с
-    showCallControls();
-    _callCtrlHideTimer = setTimeout(hideCallControls, 3000);
-}
-
-async function acquireWakeLock() { try { if ('wakeLock' in navigator) wakelock = await navigator.wakeLock.request('screen'); } catch(e) {} }
-function releaseWakeLock() { if (wakelock) { wakelock.release().catch(()=>{}); wakelock = null; } }
-
-function showLocalVideo() {
-    const vc = document.getElementById('call-video-container');
-    const lv = document.getElementById('local-video');
-    if (vc) vc.style.display = 'block';
-    if (lv && callLocalStream) {
-        lv.srcObject = callLocalStream;
-        lv.style.display = 'block';
-        lv.play().catch(() => document.addEventListener('touchstart', () => lv.play(), { once: true }));
-    }
-}
-
-function createPeerConnection() {
-    const pc = new RTCPeerConnection(rtcConfig);
-
-    pc.onicecandidate = (e) => {
-        if (e.candidate && currentPartnerId) {
-            socket.emit('ice_candidate', { to: currentPartnerId, candidate: e.candidate });
-        }
-    };
-
-    pc.oniceconnectionstatechange = () => {
-        const state = pc.iceConnectionState;
-        const label = document.getElementById('call-status-label');
-        console.log('ICE state:', state);
-
-        if (state === 'connected' || state === 'completed') {
-            if (label) label.textContent = 'В эфире';
-            startCallTimer();
-            document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'none');
-        } else if (state === 'checking') {
-            if (label) label.textContent = 'Соединение...';
-        } else if (state === 'disconnected') {
-            if (label) label.textContent = 'Переподключение...';
-            // Автоматический ICE restart через 2 сек
-            setTimeout(() => {
-                if (peerConnection?.iceConnectionState === 'disconnected') doIceRestart();
-            }, 2000);
-        } else if (state === 'failed') {
-            if (iceRestartCount < MAX_ICE_RESTARTS) {
-                iceRestartCount++;
-                if (label) label.textContent = `Переподключение ${iceRestartCount}/${MAX_ICE_RESTARTS}...`;
-                doIceRestart();
-            } else {
-                showToast('Не удалось установить соединение', 'error');
-                endCall(true);
-            }
-        }
-    };
-
-    pc.ontrack = (e) => {
-        if (!e.streams[0]) return;
-        const stream = e.streams[0];
-
-        if (e.track.kind === 'video') {
-            const rv = document.getElementById('remote-video');
-            if (rv) {
-                document.getElementById('call-video-container').style.display = 'block';
-                rv.srcObject = stream;
-                rv.style.display = 'block';
-                rv.play().catch(() => document.addEventListener('touchstart', () => rv.play(), { once: true }));
-                const ci = document.getElementById('call-info');
-                if (ci) ci.style.opacity = '0.2';
-            }
-        } else if (e.track.kind === 'audio') {
-            // Отдельный audio элемент для надёжного воспроизведения
-            let callAudio = document.getElementById('call-remote-audio');
-            if (!callAudio) {
-                callAudio = document.createElement('audio');
-                callAudio.id = 'call-remote-audio';
-                callAudio.autoplay = true;
-                callAudio.setAttribute('playsinline', '');
-                document.body.appendChild(callAudio);
-            }
-            callAudio.srcObject = stream;
-            callAudio.play().catch(() => {
-                document.addEventListener('touchstart', () => callAudio.play(), { once: true });
-            });
-        }
-    };
-
-    pc.onsignalingstatechange = () => {
-        console.log('Signaling state:', pc.signalingState);
-    };
-
-    return pc;
-}
-
-let iceRestartTimer = null;
-async function doIceRestart() {
-    if (!peerConnection || !currentPartnerId) return;
-    try {
-        const offer = await peerConnection.createOffer({ iceRestart: true });
-        await peerConnection.setLocalDescription(offer);
-        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, offer, call_type: currentCallType, isRestart: true });
-    } catch(e) { console.error('ICE restart failed:', e); }
-}
-
-function onIncomingCall(data) {
-    incomingCallData = data; pendingIce = [];
-    currentCallType = data.call_type || 'audio';
-    vibrate([400,200,400,200,400]);
-    const screen = document.getElementById('call-screen');
-    screen.classList.remove('hidden');
-    document.getElementById('call-name').textContent = data.from_name || 'Звонок';
-    document.getElementById('call-status-label').textContent = currentCallType === 'video' ? '📹 Видеозвонок' : '📞 Голосовой';
-    document.getElementById('call-avatar-box').innerHTML = getAvatarHtml({id: data.from, name: data.from_name, avatar: data.from_avatar}, 'w-28 h-28');
-    document.getElementById('accept-btn').style.display = 'flex';
-    document.getElementById('call-timer').style.display = 'none';
-    acquireWakeLock();
-    // FIX Task 4c: start ringtone on incoming call
-    _playRingtone();
-    // FIX Task 4b: if user already tapped "Answer" in push notification
-    // (Scenario A/B/C), auto-answer immediately
-    if (window._pendingCallAnswer) {
-        const pending = window._pendingCallAnswer;
-        window._pendingCallAnswer = null;
-        // Small delay to ensure WebRTC is ready
-        setTimeout(function() { answerIncomingCall(); }, 300);
-    }
-}
-
-async function onIceCandidate(data) {
-    if (!data.candidate) return;
-    if (!peerConnection || !peerConnection.remoteDescription?.type) { pendingIce.push(data.candidate); return; }
-    try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) {}
-}
-
-async function flushPendingIce() {
-    const candidates = [...pendingIce]; pendingIce = [];
-    for (const c of candidates) { try { await peerConnection.addIceCandidate(new RTCIceCandidate(c)); } catch(e) {} }
-}
-
-async function answerIncomingCall() {
-    const data = incomingCallData;
-    if (!data) return;
-    document.getElementById('accept-btn').style.display = 'none';
-    document.getElementById('call-status-label').textContent = 'Подключение...';
-    _stopRingtone(); // FIX Task 4c: stop ringtone when answered
-    currentPartnerId = data.from; vibrate(30);
-    try {
-        callLocalStream = await getLocalStream(currentCallType);
-        if (currentCallType === 'video') showLocalVideo();
-        peerConnection = createPeerConnection();
-        callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
-        await flushPendingIce();
-        const answer = await peerConnection.createAnswer();
-        await peerConnection.setLocalDescription(answer);
-        socket.emit('answer_call', { to: data.from, answer });
-    } catch(e) { showToast('Ошибка при ответе', 'error'); endCall(true); }
-}
-
-async function onCallAnswered(data) {
-    if (!peerConnection) return;
-    try {
-        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-        await flushPendingIce();
-        document.getElementById('call-status-label').textContent = 'Соединение...';
-    } catch(e) {}
-}
-
-function startCallTimer() {
-    callStartTime = Date.now();
-    const el = document.getElementById('call-timer');
-    if (el) el.style.display = 'block';
-    clearInterval(callTimerInterval);
-    callTimerInterval = setInterval(() => {
-        if (el) el.textContent = fmtSec(Math.floor((Date.now() - callStartTime) / 1000));
-    }, 1000);
-}
-
-function endCall(notify = true) {
-    _stopRingtone(); // FIX Task 4c: stop ringtone on endCall
-    clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
-
-    // Отправляем сообщение о звонке в чат
-    const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
-    if (currentChatId && currentPartnerId && duration > 0) {
-        const callMsgType = currentCallType === 'video' ? 'call_video' : 'call_audio';
-        socket.emit('send_message', {
-            chat_id:   currentChatId,
-            type_msg:  callMsgType,
-            content:   String(duration),
-            sender_id: currentUser.id,
-        });
-    }
-
-    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId });
-    if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
-    if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
-    // Очищаем remote audio
-    const callAudio = document.getElementById('call-remote-audio');
-    if (callAudio) { callAudio.srcObject = null; callAudio.remove(); }
-    const screen = document.getElementById('call-screen');
-    if (screen) screen.classList.add('hidden');
-    ['remote-video','local-video'].forEach(id => { const el = document.getElementById(id); if (el) { el.srcObject = null; el.style.display = 'none'; } });
-    const vc = document.getElementById('call-video-container');
-    if (vc) vc.style.display = 'none';
-    const ci = document.getElementById('call-info');
-    if (ci) { ci.style.opacity = '1'; ci.style.display = ''; }
-    // Очистка групповых звонков
-    if (GC.active) {
-        socket.emit('leave_group_call', { room: GC.roomId, user_id: currentUser.id, user_name: currentUser.name });
-        Object.values(GC.peers).forEach(p => { try { p.pc.close(); } catch(e) {} });
-        GC.peers = {}; GC.active = false; GC.roomId = null;
-        const grid = document.getElementById('group-call-grid');
-        if (grid) { grid.innerHTML = ''; grid.style.display = 'none'; grid.classList.remove('active'); }
-        document.querySelectorAll('[id^="gc-audio-"]').forEach(el => el.remove());
-        const addRow = document.getElementById('add-participant-row');
-        if (addRow) { addRow.style.opacity = '0'; addRow.style.pointerEvents = 'none'; }
-    }
-    callStartTime = null;
-    incomingCallData = null; pendingIce = []; isMuted = false; isVideoOff = false;
-    clearTimeout(_callCtrlHideTimer);
-    releaseWakeLock(); vibrate(15);
-}
-
-function toggleMute() {
-    isMuted = !isMuted;
-    callLocalStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
-    const btn = document.getElementById('mute-btn');
-    if (btn) {
-        btn.innerHTML = isMuted
-            ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="1" y1="1" x2="23" y2="23" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v3M8 23h8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-            : ICONS.mic.replace('rgba(255,255,255,0.5)','white');
-        btn.classList.toggle('active', isMuted);
-    }
-    vibrate(10);
-}
-
-function toggleVideo() {
-    isVideoOff = !isVideoOff;
-    callLocalStream?.getVideoTracks().forEach(t => t.enabled = !isVideoOff);
-    const btn = document.getElementById('video-btn');
-    if (btn) { btn.classList.toggle('active', isVideoOff); }
-    vibrate(10);
-}
-
-function toggleSpeaker() {
-    const btn = document.getElementById('speaker-btn');
-    btn?.classList.toggle('active');
-    showToast('Громкая связь переключена', 'info', 1500); vibrate(10);
-}
-
-// ══════════════════════════════════════════════════════════
-//  ГРУППОВЫЕ ЗВОНКИ — iOS 26 MESH STYLE (max 5 участников)
-// ══════════════════════════════════════════════════════════
-
-// Состояние группового звонка
-const GC = {
-    active:     false,          // в групповом звонке
-    roomId:     null,           // ID комнаты (строка)
-    peers:      {},             // { userId: { pc, stream, audioEl, videoEl } }
-    type:       'audio',        // audio | video
-    MAX:        5,              // максимум участников
-};
-
-let _callCtrlHideTimer = null;
-
-// Показываем кнопки управления + авто-скрытие через 3с
-function showCallControls() {
-    const ctrl = document.getElementById('call-controls');
-    if (!ctrl) return;
-    ctrl.style.opacity = '1';
-    ctrl.style.transform = 'translateY(0)';
-    ctrl.style.pointerEvents = 'auto';
-    clearTimeout(_callCtrlHideTimer);
-    _callCtrlHideTimer = setTimeout(hideCallControls, 3000);
-}
-
-function hideCallControls() {
-    const ctrl = document.getElementById('call-controls');
-    if (!ctrl) return;
-    ctrl.style.opacity = '0';
-    ctrl.style.transform = 'translateY(40px)';
-    ctrl.style.pointerEvents = 'none';
-}
-
-// Показать кнопку + участника когда звонок активен
-function _showAddParticipantBtn() {
-    const row = document.getElementById('add-participant-row');
-    if (row) { row.style.opacity = '1'; row.style.pointerEvents = 'auto'; }
-}
-
-// ── CSS для group-call-grid ──
-function _injectGroupCallCSS() {
-    if (document.getElementById('gc-style')) return;
-    const st = document.createElement('style');
-    st.id = 'gc-style';
-    st.textContent = `
-        #group-call-grid {
-            position: absolute;
-            inset: 0;
-            padding: max(env(safe-area-inset-top),52px) 10px 190px;
-            display: none;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-            overflow-y: auto;
-            align-content: start;
-            z-index: 10;
-        }
-        #group-call-grid.active { display: grid; }
-        #group-call-grid.single { grid-template-columns: 1fr; }
-        .gc-tile {
-            position: relative;
-            border-radius: 22px;
-            overflow: hidden;
-            background: linear-gradient(145deg, #1a1a2e, #16213e);
-            border: 1.5px solid rgba(255,255,255,0.08);
-            aspect-ratio: 3/4;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            transition: border-color 0.3s, box-shadow 0.3s;
-            animation: gcTileIn 0.35s cubic-bezier(.34,1.56,.64,1);
-        }
-        .gc-tile.speaking {
-            border-color: var(--accent, #10b981);
-            box-shadow: 0 0 0 2px var(--accent, #10b981), 0 8px 30px rgba(16,185,129,0.3);
-        }
-        .gc-tile.muted .gc-mic-icon { opacity: 1; }
-        @keyframes gcTileIn {
-            from { opacity: 0; transform: scale(0.85); }
-            to   { opacity: 1; transform: scale(1); }
-        }
-        .gc-tile video {
-            position: absolute; inset: 0;
-            width: 100%; height: 100%;
-            object-fit: cover;
-        }
-        .gc-tile-overlay {
-            position: absolute; bottom: 0; left: 0; right: 0;
-            background: linear-gradient(transparent, rgba(0,0,0,0.7));
-            padding: 12px 10px 12px;
-            display: flex; align-items: center; justify-content: space-between;
-        }
-        .gc-name {
-            font-size: 13px; font-weight: 700; color: #fff;
-            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .gc-mic-icon { opacity: 0; transition: opacity 0.2s; }
-        .gc-ava-wrap {
-            width: 64px; height: 64px; border-radius: 50%;
-            overflow: hidden; margin-bottom: 10px;
-            border: 3px solid rgba(255,255,255,0.2);
-            background: var(--accent,#10b981);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 26px; font-weight: 800; color: #000;
-            flex-shrink: 0;
-        }
-    `;
-    document.head.appendChild(st);
-}
-
-// ── Создать плитку участника ──
-function _createGCTile(userId, userName, userAvatar, isMe = false) {
-    _injectGroupCallCSS();
-    const tile = document.createElement('div');
-    tile.className = 'gc-tile';
-    tile.id = `gc-tile-${userId}`;
-
-    // Аватар (показывается пока нет видео)
-    const avaWrap = document.createElement('div');
-    avaWrap.className = 'gc-ava-wrap';
-    if (userAvatar && !userAvatar.includes('default') && !userAvatar.startsWith('emoji:')) {
-        const img = document.createElement('img');
-        img.src = userAvatar;
-        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
-        avaWrap.appendChild(img);
-    } else {
-        avaWrap.textContent = (userName || '?')[0].toUpperCase();
-    }
-    tile.appendChild(avaWrap);
-
-    // Видео-элемент
-    const vid = document.createElement('video');
-    vid.autoplay = true; vid.playsInline = true;
-    if (isMe) vid.muted = true;
-    vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none';
-    tile.appendChild(vid);
-
-    // Оверлей снизу
-    const ov = document.createElement('div');
-    ov.className = 'gc-tile-overlay';
-    ov.innerHTML = `
-        <span class="gc-name">${isMe ? 'Вы' : (userName || 'Участник')}</span>
-        <span class="gc-mic-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                <line x1="1" y1="1" x2="23" y2="23" stroke="rgba(255,100,100,0.9)" stroke-width="2.5" stroke-linecap="round"/>
-                <path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" stroke="rgba(255,100,100,0.9)" stroke-width="2" stroke-linecap="round"/>
-            </svg>
-        </span>
-    `;
-    tile.appendChild(ov);
-
-    return tile;
-}
-
-// ── Обновить grid ──
-function _updateGCGrid() {
-    const grid = document.getElementById('group-call-grid');
-    if (!grid) return;
-    const count = grid.querySelectorAll('.gc-tile').length;
-    grid.classList.toggle('single', count === 1);
-}
-
-// ── Начать групповой звонок ──
-async function startGroupCall(type, roomId) {
-    if (GC.active) return;
-    _injectGroupCallCSS();
-    GC.active = true;
-    GC.type   = type || 'audio';
-    GC.roomId = roomId || `gc_${Date.now()}`;
-    GC.peers  = {};
-
-    setupCallScreen(type, false);
-    // Скрываем 1:1 инфо, показываем grid
-    const callInfo = document.getElementById('call-info');
-    if (callInfo) callInfo.style.display = 'none';
-    const grid = document.getElementById('group-call-grid');
-    if (grid) { grid.style.display = 'grid'; grid.classList.add('active'); }
-
-    // Показываем кнопку + участника
-    _showAddParticipantBtn();
-
-    // Инициализируем локальный поток
-    try {
-        callLocalStream = await getLocalStream(type);
-    } catch(e) {
-        showToast('Нет доступа к микрофону', 'error'); endCall(false); return;
-    }
-
-    // Плитка себя
-    const selfTile = _createGCTile(currentUser.id, currentUser.name, currentUser.avatar, true);
-    grid.appendChild(selfTile);
-    if (type === 'video') {
-        const selfVid = selfTile.querySelector('video');
-        if (selfVid) { selfVid.srcObject = callLocalStream; selfVid.style.display = 'block'; }
-    }
-    _updateGCGrid();
-
-    // Уведомляем сервер — войти в комнату
-    socket.emit('join_group_call', { room: GC.roomId, call_type: type, from_name: currentUser.name, from_avatar: currentUser.avatar });
-
-    startCallTimer();
-    showCallControls();
-    _callCtrlHideTimer = setTimeout(hideCallControls, 3000);
-}
-
-// ── Кто-то вошёл в групповой звонок ──
-async function onGroupCallJoin(data) {
-    if (!GC.active) return;
-    const { user_id, user_name, user_avatar } = data;
-    if (+user_id === +currentUser.id) return;
-    if (Object.keys(GC.peers).length >= GC.MAX) {
-        showToast('Максимум участников в звонке', 'warning'); return;
-    }
-
-    // Создаём PC для нового участника
-    const pc = new RTCPeerConnection(rtcConfig);
-    GC.peers[user_id] = { pc, stream: null };
-
-    // Добавляем локальный поток
-    callLocalStream?.getTracks().forEach(t => pc.addTrack(t, callLocalStream));
-
-    // Плитка
-    const grid = document.getElementById('group-call-grid');
-    const tile = _createGCTile(user_id, user_name, user_avatar);
-    grid?.appendChild(tile);
-    _updateGCGrid();
-
-    // ICE
-    pc.onicecandidate = e => {
-        if (e.candidate) socket.emit('gc_ice', { to: user_id, candidate: e.candidate, room: GC.roomId });
-    };
-
-    // Входящий поток
-    pc.ontrack = evt => {
-        const stream = evt.streams[0];
-        GC.peers[user_id].stream = stream;
-        const t = document.getElementById(`gc-tile-${user_id}`);
-        if (t) {
-            const v = t.querySelector('video');
-            if (v) { v.srcObject = stream; v.style.display = 'block'; }
-        }
-        // Аудио для не-видео звонков
-        if (GC.type !== 'video') {
-            let au = document.getElementById(`gc-audio-${user_id}`);
-            if (!au) {
-                au = document.createElement('audio');
-                au.id = `gc-audio-${user_id}`;
-                au.autoplay = true;
-                document.body.appendChild(au);
-            }
-            au.srcObject = stream;
-        }
-        // Детектор голоса — подсветка плитки
-        _setupSpeakingDetector(user_id, stream);
-    };
-
-    // Offer → новый участник
-    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: GC.type === 'video' });
-    await pc.setLocalDescription(offer);
-    socket.emit('gc_offer', { to: user_id, offer, room: GC.roomId });
-}
-
-// ── Входящий offer от участника ──
-async function onGCOffer(data) {
-    if (!GC.active) return;
-    const { from, offer } = data;
-    if (+from === +currentUser.id) return;
-
-    let pc = GC.peers[from]?.pc;
-    if (!pc) {
-        pc = new RTCPeerConnection(rtcConfig);
-        GC.peers[from] = { pc, stream: null };
-        callLocalStream?.getTracks().forEach(t => pc.addTrack(t, callLocalStream));
-
-        pc.onicecandidate = e => {
-            if (e.candidate) socket.emit('gc_ice', { to: from, candidate: e.candidate, room: GC.roomId });
-        };
-        pc.ontrack = evt => {
-            const stream = evt.streams[0];
-            GC.peers[from].stream = stream;
-            const t = document.getElementById(`gc-tile-${from}`);
-            if (t) {
-                const v = t.querySelector('video');
-                if (v && GC.type === 'video') { v.srcObject = stream; v.style.display = 'block'; }
-            }
-            let au = document.getElementById(`gc-audio-${from}`);
-            if (!au) { au = document.createElement('audio'); au.id=`gc-audio-${from}`; au.autoplay=true; document.body.appendChild(au); }
-            au.srcObject = stream;
-            _setupSpeakingDetector(from, stream);
-        };
-    }
-
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    socket.emit('gc_answer', { to: from, answer, room: GC.roomId });
-}
-
-// ── Входящий answer ──
-async function onGCAnswer(data) {
-    const pc = GC.peers[data.from]?.pc;
-    if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-}
-
-// ── ICE кандидат ──
-async function onGCIce(data) {
-    const pc = GC.peers[data.from]?.pc;
-    if (pc && data.candidate) {
-        try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) {}
-    }
-}
-
-// ── Участник вышел ──
-function onGroupCallLeave(data) {
-    const userId = data.user_id;
-    const peer = GC.peers[userId];
-    if (peer) {
-        try { peer.pc.close(); } catch(e) {}
-        delete GC.peers[userId];
-    }
-    const tile = document.getElementById(`gc-tile-${userId}`);
-    if (tile) {
-        tile.style.animation = 'gcTileOut 0.25s ease forwards';
-        setTimeout(() => { tile.remove(); _updateGCGrid(); }, 250);
-    }
-    const au = document.getElementById(`gc-audio-${userId}`);
-    if (au) au.remove();
-    showToast(data.user_name + ' покинул звонок', 'info', 2000);
-}
-
-// ── Детектор речи — подсветка плитки ──
-function _setupSpeakingDetector(userId, stream) {
-    try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const src = ctx.createMediaStreamSource(stream);
-        const analyser = ctx.createAnalyser();
-        analyser.fftSize = 256;
-        src.connect(analyser);
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        const check = () => {
-            if (!GC.active || !GC.peers[userId]) { ctx.close(); return; }
-            analyser.getByteFrequencyData(data);
-            const avg = data.reduce((a, b) => a + b, 0) / data.length;
-            const tile = document.getElementById(`gc-tile-${userId}`);
-            if (tile) tile.classList.toggle('speaking', avg > 18);
-            requestAnimationFrame(check);
-        };
-        requestAnimationFrame(check);
-    } catch(e) {}
-}
-
-// ── Открыть диалог добавления участника в звонок ──
-function openAddParticipant() {
-    if (!GC.active && !callStartTime) return;
-    showCallControls();
-
-    const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
-
-    const sh = document.createElement('div');
-    sh.style.cssText = 'background:var(--surface,#111);border-radius:28px 28px 0 0;padding:8px 20px calc(env(safe-area-inset-bottom)+28px);width:100%;max-width:480px;transform:translateY(100%);transition:transform 0.3s cubic-bezier(.32,.72,0,1)';
-
-    const closeSheet = () => { sh.style.transform='translateY(100%)'; setTimeout(()=>ov.remove(),300); };
-
-    sh.innerHTML = `
-        <div style="width:40px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:10px auto 18px"></div>
-        <div style="font-size:18px;font-weight:800;margin-bottom:4px">Добавить в звонок</div>
-        <div style="font-size:13px;color:var(--text-2);margin-bottom:18px">Выбери контакт из переписок</div>
-        <div id="add-ptc-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto"></div>
-    `;
-
-    const list = sh.querySelector('#add-ptc-list');
-    // Берём из recentChats — только личные чаты
-    const personal = recentChats.filter(ch => !ch.is_group);
-    if (!personal.length) {
-        list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-2)">Нет контактов</div>';
-    }
-    personal.slice(0, 20).forEach(ch => {
-        const row = document.createElement('div');
-        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:12px 14px;background:var(--surface2);border-radius:16px;cursor:pointer';
-        row.innerHTML = getAvatarHtml({id:ch.partner_id,name:ch.partner_name,avatar:ch.partner_avatar||''},'w-10 h-10')
-            + `<div style="flex:1"><div style="font-weight:700">${escHtml(ch.partner_name||'Пользователь')}</div><div style="font-size:12px;color:var(--text-2)">${ch.online?'В сети':'Не в сети'}</div></div>`
-            + `<div style="width:32px;height:32px;border-radius:50%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8 19.79 19.79 0 01.07 2.18 2 2 0 012.07 0h3a2 2 0 012 1.72 12 12 0 00.67 2.68 2 2 0 01-.45 2.11L6.07 7.91a16 16 0 006.02 6.02l1.4-1.22a2 2 0 012.11-.45 12 12 0 002.68.67A2 2 0 0122 16.92z" stroke="black" stroke-width="2" stroke-linecap="round"/></svg></div>`;
-        row.onclick = () => {
-            closeSheet();
-            // Если не в групповом звонке — переводим в групповой
-            if (!GC.active) {
-                const roomId = `gc_${currentUser.id}_${Date.now()}`;
-                GC.active = true; GC.roomId = roomId; GC.type = currentCallType;
-                _injectGroupCallCSS();
-                const grid = document.getElementById('group-call-grid');
-                const callInfo = document.getElementById('call-info');
-                if (callInfo) callInfo.style.display = 'none';
-                if (grid) { grid.style.display = 'grid'; grid.classList.add('active'); }
-                // Перемещаем текущего собеседника в grid
-                const selfTile = _createGCTile(currentUser.id, currentUser.name, currentUser.avatar, true);
-                grid?.appendChild(selfTile);
-                const partnerName = document.getElementById('chat-name')?.textContent || 'Участник';
-                const partnerAva  = chatPartnerAvatarSrc[currentPartnerId] || '';
-                const pTile = _createGCTile(currentPartnerId, partnerName, partnerAva);
-                grid?.appendChild(pTile);
-                _updateGCGrid();
-                socket.emit('join_group_call', { room: roomId, call_type: currentCallType, from_name: currentUser.name, from_avatar: currentUser.avatar });
-            }
-            // Приглашаем нового участника
-            socket.emit('gc_invite', { to: ch.partner_id, room: GC.roomId, call_type: GC.type, from_name: currentUser.name });
-            showToast(`Звонок ${ch.partner_name}...`, 'info', 3000);
-        };
-        list.appendChild(row);
-    });
-
-    ov.appendChild(sh);
-    document.body.appendChild(ov);
-    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
-    ov.onclick = e => { if (e.target === ov) closeSheet(); };
-}
-
-// ── Баннер входящего приглашения в групповой звонок ──
-function _showGCInviteBanner(data) {
-    document.getElementById('gc-invite-banner')?.remove();
-    const banner = document.createElement('div');
-    banner.id = 'gc-invite-banner';
-    banner.style.cssText = `
-        position:fixed;top:max(env(safe-area-inset-top),16px);left:12px;right:12px;
-        z-index:99999;
-        background:rgba(15,15,20,0.92);
-        backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
-        border:1px solid rgba(255,255,255,0.12);
-        border-radius:22px;padding:14px 16px;
-        display:flex;align-items:center;gap:12px;
-        box-shadow:0 8px 40px rgba(0,0,0,0.6);
-        animation:slideDown 0.4s cubic-bezier(.34,1.56,.64,1);
-    `;
-
-    const typeLabel = data.call_type === 'video' ? 'Видеозвонок' : 'Голосовой';
-    banner.innerHTML = `
-        <div style="width:44px;height:44px;border-radius:50%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:pulse 1.5s infinite">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="black" stroke-width="2.5" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="black" stroke-width="2.5"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="black" stroke-width="2" stroke-linecap="round"/></svg>
-        </div>
-        <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:800">${escHtml(data.from_name||'Пользователь')}</div>
-            <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:1px">${typeLabel} · Групповой звонок</div>
-        </div>
-        <div style="display:flex;gap:8px">
-            <button id="gc-inv-decline" style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,0.25);border:1.5px solid rgba(239,68,68,0.4);color:#f87171;cursor:pointer;display:flex;align-items:center;justify-content:center">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
-            </button>
-            <button id="gc-inv-accept" style="width:38px;height:38px;border-radius:50%;background:rgba(16,185,129,0.25);border:1.5px solid rgba(16,185,129,0.4);color:var(--accent,#10b981);cursor:pointer;display:flex;align-items:center;justify-content:center">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12 12 0 00.67 2.68 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12 12 0 002.68.67A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            </button>
-        </div>
-    `;
-
-    document.body.appendChild(banner);
-
-    const close = () => {
-        banner.style.animation = 'slideUp 0.3s ease forwards';
-        setTimeout(() => banner.remove(), 300);
-    };
-
-    banner.querySelector('#gc-inv-decline').onclick = () => close();
-    banner.querySelector('#gc-inv-accept').onclick  = () => {
-        close();
-        startGroupCall(data.call_type, data.room);
-    };
-
-    // Авто-закрытие через 25 сек
-    setTimeout(close, 25000);
-
-    if (!document.getElementById('gc-banner-style')) {
-        const st = document.createElement('style'); st.id='gc-banner-style';
-        st.textContent = `
-            @keyframes slideDown{from{opacity:0;transform:translateY(-120%)}to{opacity:1;transform:translateY(0)}}
-            @keyframes slideUp{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-120%)}}
-            @keyframes gcTileOut{to{opacity:0;transform:scale(0.8)}}
-        `;
-        document.head.appendChild(st);
-    }
-}
-
-// ══════════════════════════════════════════════════════════
-//  СИНХРОНИЗАЦИЯ ПРОФИЛЯ
-// ══════════════════════════════════════════════════════════
-async function syncProfileData() {
-    try {
-        const r = await apiFetch('/get_current_user');
-        if (!r) return;
-        const data = await r.json();
-        if (!data?.id) return;
-
-        // Не затираем avatar если сервер вернул дефолтный а у нас уже есть реальный
-        const serverAvatar = data.avatar || '';
-        const localAvatar  = currentUser.avatar || '';
-        const isServerDefault = serverAvatar.includes('default_avatar');
-        const isLocalReal     = localAvatar && !localAvatar.includes('default_avatar');
-        if (isServerDefault && isLocalReal) {
-            data.avatar = localAvatar; // сохраняем локальный
-        }
-
-        const changed = data.name !== currentUser.name
-                     || data.avatar !== currentUser.avatar
-                     || data.bio !== currentUser.bio;
-        if (changed) {
-            Object.assign(currentUser, data);
-            localStorage.setItem('waychat_user_cache', JSON.stringify(currentUser));
-            invalidateAvatarCache(currentUser.id);
-            updateAllAvatarUI();
-        }
-    } catch(e) {}
-}
-
-// ══════════════════════════════════════════════════════════
-//  ВСПОМОГАТЕЛЬНЫЕ
-// ══════════════════════════════════════════════════════════
-function scrollDown(smooth=true){VirtualList.scrollToBottom(smooth);}
-
-function closeChat() {
-    const chatWin = document.getElementById('chat-window');
-    if(chatWin){
-        chatWin.classList.remove('active');
-        // Сбрасываем всё что мог выставить keyboard handler
-        chatWin.style.height = '';
-        chatWin.style.top    = '';
-        chatWin.style.bottom = '';
-    }
-    document.getElementById('main-content')?.classList.remove('chat-depth');
-    const fabBtn = document.getElementById('fab-btn-el');
-    if(fabBtn) fabBtn.style.display = '';
-    const ib = document.querySelector('.input-bar');
-    if(ib) ib.style.transform = '';
-    if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
-    currentChatId    = null;
-    currentPartnerId = null;
-    currentChatType  = 'private';
-    hideTypingIndicator();
-    loadChats();
-}
-
-function setupGlobalGestures() {
-    let startX = 0, startY = 0;
-
-    // ── Свайп из края экрана → назад из чата ──
-    document.addEventListener('touchstart', (e) => {
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-    }, { passive: true });
-
-    document.addEventListener('touchmove', (e) => {
-        const chatWin = document.getElementById('chat-window');
-        if (!chatWin?.classList.contains('active')) return;
-        const dx = e.touches[0].clientX - startX;
-        const dy = Math.abs(e.touches[0].clientY - startY);
-        if (startX < 30 && dx > 0 && dy < Math.abs(dx)) {
-            const ind = document.getElementById('swipe-indicator');
-            if (ind) ind.style.opacity = Math.min(dx / 120, 1) * 0.8;
-            chatWin.style.transform = `translateX(${Math.min(dx * 0.4, 60)}px)`;
-        }
-    }, { passive: true });
-
-    document.addEventListener('touchend', (e) => {
-        const chatWin = document.getElementById('chat-window');
-        if (!chatWin?.classList.contains('active')) return;
-        const dx = e.changedTouches[0].clientX - startX;
-        chatWin.style.transform = '';
-        const ind = document.getElementById('swipe-indicator');
-        if (ind) ind.style.opacity = '0';
-        if (startX < 40 && dx > 80) closeChat();
-    }, { passive: true });
-
-    // ── Свайп вниз на списке чатов → показать Moments ──
-    _setupMomentsPullDown();
-
-    // ── Свайп по чату в списке (вправо / влево) ──
+// ── Свайп по чату в списке (вправо / влево) ──
     _setupChatListSwipes();
 }
 
@@ -8620,35 +6935,6 @@ function _setupMomentsPullDown() {
 }
 
 // ── Показать/скрыть Moments bar ──
-let _momentsBarVisible = false;
-async function _showMomentsBar() {
-    if (_momentsBarVisible) return;
-    _momentsBarVisible = true;
-    const bar    = document.getElementById('moments-bar');
-    const scroll = document.getElementById('moments-bar-scroll');
-    if (!bar) return;
-
-    bar.style.display = 'block';
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-        bar.style.maxHeight = '120px';
-        bar.style.opacity   = '1';
-    }));
-
-    // FIXED: skeleton пока данные грузятся
-    const stale = !momentsCache || (Date.now() - momentsLastLoad) > 30000;
-    if (stale && scroll && !scroll.children.length) {
-        scroll.innerHTML = Array(5).fill(0).map(() =>
-            `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0">
-                <div class="wc-skeleton" style="width:62px;height:62px;border-radius:50%"></div>
-                <div class="wc-skeleton" style="width:38px;height:9px;border-radius:5px;margin-top:3px"></div>
-            </div>`).join('');
-    }
-    if (stale) {
-        await loadMoments(); // loadMoments сам вызовет _renderMomentsBar внутри
-    } else {
-        _renderMomentsBar();
-    }
-}
 
 function _hideMomentsBar() {
     if (!_momentsBarVisible) return;
@@ -8656,134 +6942,181 @@ function _hideMomentsBar() {
     const bar = document.getElementById('moments-bar');
     if (!bar) return;
     bar.style.maxHeight = '0';
-    bar.style.opacity = '0';
+    bar.style.opacity   = '0';
     setTimeout(() => { bar.style.display = 'none'; }, 300);
+}
+
+function _renderMomentsBarSkeleton(scroll) {
+    if (!scroll) return;
+    scroll.innerHTML = [
+        // "Добавить" кнопка
+        `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0">
+            <div style="width:62px;height:62px;border-radius:50%;border:2px dashed rgba(255,255,255,0.2);background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;cursor:pointer" onclick="openCreateMomentModal()">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <line x1="12" y1="4" x2="12" y2="20" stroke="rgba(255,255,255,0.5)" stroke-width="2.5" stroke-linecap="round"/>
+                    <line x1="4" y1="12" x2="20" y2="12" stroke="rgba(255,255,255,0.5)" stroke-width="2.5" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <span style="font-size:11px;color:rgba(255,255,255,0.4)">Добавить</span>
+        </div>`,
+        // Скелетоны других пользователей
+        ...Array(4).fill(0).map(() =>
+            `<div style="display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0">
+                <div class="wc-skeleton" style="width:62px;height:62px;border-radius:50%"></div>
+                <div class="wc-skeleton" style="width:40px;height:9px;border-radius:5px"></div>
+            </div>`
+        )
+    ].join('');
 }
 
 function _renderMomentsBar() {
     const scroll = document.getElementById('moments-bar-scroll');
     if (!scroll) return;
+
+    const moments = momentsCache || [];
+    const myId    = currentUser?.id;
+    const myMoment = moments.find(m => m.user_id === myId);
+
+    // ── Собираем HTML ──────────────────────────────────────────
     scroll.innerHTML = '';
 
-    const moments = momentsCache || window.currentMoments || []; // FIXED: safe fallback
-    const myMoment = moments.find(m => m.user_id === currentUser?.id);
-
-    // ── Блок "Мой": аватар (если есть момент) + кнопка "+"
-    const myBlock = document.createElement('div');
-    myBlock.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:0;flex-shrink:0';
-
-    // Контейнер аватар+кнопка в одну строку
-    const myRow = document.createElement('div');
-    myRow.style.cssText = 'display:flex;align-items:flex-end;gap:2px;position:relative';
-
-    if (myMoment) {
-        const myView = _buildMomentBarItem(
-            currentUser, true, false, true,
-            () => openUserMomentsViewer(currentUser.id)
-        );
-        // Убираем лейбл из myView — он будет общий
-        myRow.appendChild(myView.firstElementChild);
-    }
-
-    // Кнопка "+" — всегда
-    const plusBtn = document.createElement('div');
-    plusBtn.style.cssText = `
-        width:${myMoment ? '28px' : '62px'};
-        height:${myMoment ? '28px' : '62px'};
-        border-radius:50%;
-        border:2px ${myMoment ? 'solid rgba(255,255,255,0.5)' : 'dashed rgba(255,255,255,0.3)'};
-        background:${myMoment ? 'var(--surface)' : 'rgba(255,255,255,0.04)'};
-        display:flex;align-items:center;justify-content:center;
-        cursor:pointer;flex-shrink:0;
-        ${myMoment ? 'position:absolute;bottom:-2px;right:-2px;z-index:3;' : ''}
-        -webkit-tap-highlight-color:transparent;
-    `;
-    const ps = myMoment ? 12 : 22;
-    const pc = myMoment ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.6)';
-    plusBtn.innerHTML = `<svg width="${ps}" height="${ps}" viewBox="0 0 24 24" fill="none">
-        <line x1="12" y1="4" x2="12" y2="20" stroke="${pc}" stroke-width="2.5" stroke-linecap="round"/>
-        <line x1="4" y1="12" x2="20" y2="12" stroke="${pc}" stroke-width="2.5" stroke-linecap="round"/>
-    </svg>`;
-    plusBtn.onclick = (e) => { e.stopPropagation(); openCreateMomentModal(); };
-    plusBtn.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); openCreateMomentModal(); }, { passive: false });
-
-    const avaWrap = document.createElement('div');
-    avaWrap.style.cssText = 'position:relative;width:62px;height:62px';
-    if (myMoment) {
-        avaWrap.appendChild(myRow);
-        avaWrap.appendChild(plusBtn);
-    } else {
-        avaWrap.appendChild(plusBtn);
-    }
-
-    myBlock.appendChild(avaWrap);
-
-    const myLabel = document.createElement('span');
-    myLabel.style.cssText = 'font-size:11px;color:var(--text-2);text-align:center;margin-top:4px';
-    myLabel.textContent = myMoment ? 'Мой' : 'Добавить';
-    myBlock.appendChild(myLabel);
+    // 1. МОЙ блок — всегда первый
+    const myBlock = _buildMyMomentBlock(myMoment);
     scroll.appendChild(myBlock);
 
-    // Моменты других пользователей
+    // 2. Чужие моменты — по одному на пользователя
     const byUser = new Map();
     moments.forEach(m => {
-        if (m.user_id === currentUser?.id) return;
+        if (m.user_id === myId) return;
         if (!byUser.has(m.user_id)) byUser.set(m.user_id, m);
     });
+
+    if (byUser.size === 0 && !myMoment) {
+        // Нет чужих моментов — показываем заглушку
+        const empty = document.createElement('div');
+        empty.style.cssText = 'display:flex;align-items:center;padding:0 8px;opacity:0.3;font-size:13px;white-space:nowrap;flex-shrink:0';
+        empty.textContent   = 'Пока нет моментов';
+        scroll.appendChild(empty);
+    }
+
     byUser.forEach((m, uid) => {
-        const viewed  = _viewedMomentUsers?.has(uid);
-        const isClose = savedContacts?.slice(0, 3).some(c => c.id === uid);
-        scroll.appendChild(_buildMomentBarItem(
+        const viewed = _viewedMomentUsers?.has(uid);
+        const item   = _buildMomentBarItem(
             { id: uid, name: m.user_name, avatar: m.user_avatar },
-            !viewed, isClose, false,
+            !viewed, false, false,
             () => openUserMomentsViewer(uid)
-        ));
+        );
+        scroll.appendChild(item);
     });
 }
+
+function _buildMyMomentBlock(myMoment) {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0';
+
+    const avaWrap = document.createElement('div');
+    avaWrap.style.cssText = 'position:relative;width:62px;height:62px;cursor:pointer';
+
+    if (myMoment) {
+        // Есть момент — показываем аватар + маленький "+" снизу справа
+        avaWrap.onclick = () => openUserMomentsViewer(currentUser.id);
+        avaWrap.addEventListener('touchend', e => { e.preventDefault(); openUserMomentsViewer(currentUser.id); }, { passive: false });
+
+        const ring = _buildMomentRing(62, true, false);
+        const avaInner = document.createElement('div');
+        avaInner.style.cssText = 'position:absolute;inset:5px;border-radius:50%;overflow:hidden';
+        avaInner.innerHTML = getAvatarHtml(currentUser, 'w-full h-full');
+
+        avaWrap.appendChild(ring);
+        avaWrap.appendChild(avaInner);
+
+        // Маленькая кнопка "+" поверх
+        const miniPlus = document.createElement('div');
+        miniPlus.style.cssText = 'position:absolute;bottom:-2px;right:-2px;width:22px;height:22px;border-radius:50%;background:#10b981;border:2px solid var(--bg,#1d1d1e);display:flex;align-items:center;justify-content:center;z-index:3;cursor:pointer';
+        miniPlus.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none"><line x1="12" y1="4" x2="12" y2="20" stroke="white" stroke-width="3" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="white" stroke-width="3" stroke-linecap="round"/></svg>';
+        miniPlus.onclick = e => { e.stopPropagation(); openCreateMomentModal(); };
+        miniPlus.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); openCreateMomentModal(); }, { passive: false });
+        avaWrap.appendChild(miniPlus);
+    } else {
+        // Нет момента — большая кнопка "+"
+        avaWrap.onclick = () => openCreateMomentModal();
+        avaWrap.addEventListener('touchend', e => { e.preventDefault(); openCreateMomentModal(); }, { passive: false });
+        avaWrap.style.cssText += ';border:2px dashed rgba(255,255,255,0.25);border-radius:50%;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center';
+        avaWrap.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <line x1="12" y1="4" x2="12" y2="20" stroke="rgba(255,255,255,0.6)" stroke-width="2.5" stroke-linecap="round"/>
+            <line x1="4" y1="12" x2="20" y2="12" stroke="rgba(255,255,255,0.6)" stroke-width="2.5" stroke-linecap="round"/>
+        </svg>`;
+    }
+
+    wrap.appendChild(avaWrap);
+
+    const label = document.createElement('span');
+    label.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.45);text-align:center';
+    label.textContent   = myMoment ? 'Мой' : 'Добавить';
+    wrap.appendChild(label);
+    return wrap;
+}
+
+// Строим SVG-кольцо вокруг аватара (как в TG/Instagram)
+function _buildMomentRing(size, isNew, viewed) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('width', size);
+    svg.setAttribute('height', size);
+    svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+    svg.style.cssText = 'position:absolute;inset:0;pointer-events:none;overflow:visible';
+
+    const cx = size/2, cy = size/2, r = size/2 - 3.5;
+    const gid = 'mg_' + Math.random().toString(36).slice(2,8);
+
+    let strokeAttr;
+    if (!isNew || viewed) {
+        strokeAttr = 'stroke="rgba(255,255,255,0.22)" stroke-width="1.5"';
+    } else {
+        // Градиентное кольцо
+        const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+        defs.innerHTML = `<linearGradient id="${gid}" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#10b981"/>
+            <stop offset="50%" stop-color="#06b6d4"/>
+            <stop offset="100%" stop-color="#3b82f6"/>
+        </linearGradient>`;
+        svg.appendChild(defs);
+        strokeAttr = `stroke="url(#${gid})" stroke-width="2"`;
+    }
+
+    svg.innerHTML += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" ${strokeAttr} stroke-linecap="round"/>`;
+    return svg;
+}
+
 
 function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
     const wrap = document.createElement('div');
     wrap.className = 'moment-ava-item';
+    wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent';
     wrap.onclick = onClick;
-    wrap.addEventListener('touchend', function(e) {
-        e.preventDefault(); e.stopPropagation(); onClick && onClick();
-    }, { passive: false });
-    wrap.style.cssText += ';cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;';
+    wrap.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); onClick && onClick(); }, { passive: false });
 
-    const size = 62, cx = 31, cy = 31, r = 28.5;
+    const size = 62;
     const avatarHtml = getAvatarHtml(user, 'w-full h-full');
 
-    // Тонкое градиентное кольцо — как у TG
-    const gid = `gr_${(user.id||'x') + Math.random().toString(36).slice(2,5)}`;
-    let ring = '';
-
-    if (isNew && isClose) {
-        // Близкий друг + новый → пурпурно-розовый градиент
-        ring = `<defs><linearGradient id="${gid}" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#a855f7"/><stop offset="100%" stop-color="#ec4899"/>
-        </linearGradient></defs>
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="url(#${gid})" stroke-width="2" stroke-linecap="round"/>`;
-    } else if (isNew) {
-        // Новый момент → зелёно-голубой градиент (как TG)
-        ring = `<defs><linearGradient id="${gid}" x1="0%" y1="100%" x2="100%" y2="0%">
-            <stop offset="0%" stop-color="#10b981"/><stop offset="50%" stop-color="#06b6d4"/><stop offset="100%" stop-color="#3b82f6"/>
-        </linearGradient></defs>
-        <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="url(#${gid})" stroke-width="2" stroke-linecap="round"/>`;
-    } else {
-        // Просмотренный / свой без момента → серое тонкое
-        ring = `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="1.5"/>`;
-    }
+    // Используем новую _buildMomentRing
+    const ringEl   = _buildMomentRing(size, isNew, !isNew);
+    const ringHtml = ringEl.outerHTML;
 
     const label = isMe ? 'Мой' : escHtml((user.name || '').split(' ')[0]).slice(0, 9);
 
     wrap.innerHTML = `
         <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0;pointer-events:none">
             <div style="position:absolute;inset:5px;border-radius:50%;overflow:hidden">${avatarHtml}</div>
-            <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="position:absolute;inset:0;pointer-events:none;overflow:visible">${ring}</svg>
+            ${ringHtml}
         </div>
         <span style="font-size:11px;color:var(--text-2);max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none">${label}</span>`;
 
     return wrap;
+}
+
+// Алиас для кнопки "+" в moments-bar
+function openCreateMomentModal() {
+    pickMedia('moment');
 }
 
 // ── Свайпы по чатам в списке ──
@@ -10810,6 +9143,1811 @@ function closeMusicPlayer() {
 
 // ══ WAYCHAT GLOBAL API — exposed for SW messages ══════════════════
 // FIX Task 4b/4c/4d: SW can call these from any scenario (A, B, C)
+
+// ══ RESTORED FUNCTIONS FROM ORIGINAL ══
+function _cl_video_poster(videoUrl) {
+    try {
+        // https://res.cloudinary.com/{cloud}/video/upload/.../{id}.mp4
+        // → https://res.cloudinary.com/{cloud}/video/upload/so_0/{id}.jpg
+        const url = videoUrl.replace('/video/upload/', '/video/upload/so_0,q_50,w_400,c_limit/');
+        return url.replace(/\.(mp4|mov|webm|avi)(\?.*)?$/i, '.jpg');
+    } catch(e) { return ''; }
+}
+
+function _closeDlSheet(ov, sh) {
+    sh.style.animation = 'mvSlideUp 0.22s cubic-bezier(0.22,1,0.36,1) reverse forwards';
+    ov.style.animation  = 'mvFadeIn 0.2s ease reverse forwards';
+    setTimeout(() => ov.remove(), 220);
+}
+
+function _closeMvSheet(ov, sh) {
+    sh.style.animation = 'mvSlideUp 0.22s cubic-bezier(0.22,1,0.36,1) reverse forwards';
+    ov.style.animation = 'mvFadeIn 0.2s ease reverse forwards';
+    setTimeout(() => ov.remove(), 220);
+}
+
+async function _confirmDeleteMoment(momentId, momentOv) {
+    // Анимации (общие с mv)
+    if (!document.getElementById('mv-keyframes')) {
+        const st = document.createElement('style');
+        st.id = 'mv-keyframes';
+        st.textContent = '@keyframes mvFadeIn{from{opacity:0}to{opacity:1}}@keyframes mvSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}';
+        document.head.appendChild(st);
+    }
+
+    // Оверлей — z-index выше момента
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;animation:mvFadeIn 0.2s ease';
+
+    // Подложка
+    const backdrop = document.createElement('div');
+    backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)';
+    backdrop.onclick = () => _closeDlSheet(ov, sh);
+    ov.appendChild(backdrop);
+
+    // Шторка
+    const sh = document.createElement('div');
+    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 20px max(env(safe-area-inset-bottom),32px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1)';
+
+    // Хэндл
+    const handle = document.createElement('div');
+    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 20px';
+
+    // Иконка ведра
+    const iconWrap = document.createElement('div');
+    iconWrap.style.cssText = 'width:64px;height:64px;border-radius:22px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.2);display:flex;align-items:center;justify-content:center;margin:0 auto 18px';
+    iconWrap.innerHTML = '<svg width="28" height="28" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    // Текст
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:19px;font-weight:700;letter-spacing:-0.4px;text-align:center;margin-bottom:8px';
+    title.textContent = 'Удалить момент?';
+
+    const sub = document.createElement('div');
+    sub.style.cssText = 'font-size:14px;color:rgba(255,255,255,0.45);text-align:center;margin-bottom:28px;line-height:1.4';
+    sub.textContent = 'Момент исчезнет у всех пользователей. Это действие нельзя отменить.';
+
+    // Кнопка удалить
+    const delBtn = document.createElement('button');
+    delBtn.style.cssText = 'width:100%;padding:16px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.28);border-radius:18px;color:#ef4444;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;transition:background 0.15s,transform 0.1s;margin-bottom:10px';
+    delBtn.textContent = 'Удалить';
+    delBtn.onpointerdown = () => { delBtn.style.transform='scale(0.97)'; delBtn.style.background='rgba(239,68,68,0.28)'; };
+    delBtn.onpointerup   = () => { delBtn.style.transform=''; delBtn.style.background='rgba(239,68,68,0.15)'; };
+    delBtn.onpointercancel = () => { delBtn.style.transform=''; delBtn.style.background='rgba(239,68,68,0.15)'; };
+    delBtn.onclick = async () => {
+        _closeDlSheet(ov, sh);
+        if (momentOv) momentOv.remove();
+        await apiFetch('/delete_moment/' + momentId, {method: 'POST'});
+        momentsCache = null;
+        loadMoments();
+        showToast('Момент удалён', 'success');
+    };
+
+    // Кнопка отмена
+    const cancelBtn = document.createElement('button');
+    cancelBtn.style.cssText = 'width:100%;padding:16px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:18px;color:#fff;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;letter-spacing:-0.2px;transition:background 0.15s,transform 0.1s';
+    cancelBtn.textContent = 'Отмена';
+    cancelBtn.onpointerdown = () => { cancelBtn.style.background='rgba(255,255,255,0.13)'; };
+    cancelBtn.onpointerup   = () => { cancelBtn.style.background='rgba(255,255,255,0.07)'; };
+    cancelBtn.onpointercancel = () => { cancelBtn.style.background='rgba(255,255,255,0.07)'; };
+    cancelBtn.onclick = () => _closeDlSheet(ov, sh);
+
+    // Свайп вниз — закрыть
+    let _sy = 0, _ty = 0;
+    sh.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; _ty = 0; }, {passive:true});
+    sh.addEventListener('touchmove',  e => {
+        _ty = e.touches[0].clientY - _sy;
+        if (_ty > 0) sh.style.transform = 'translateY(' + _ty + 'px)';
+    }, {passive:true});
+    sh.addEventListener('touchend', () => {
+        if (_ty > 80) _closeDlSheet(ov, sh);
+        else { sh.style.transition = 'transform 0.2s'; sh.style.transform = ''; setTimeout(() => sh.style.transition = '', 200); }
+    }, {passive:true});
+
+    sh.appendChild(handle);
+    sh.appendChild(iconWrap);
+    sh.appendChild(title);
+    sh.appendChild(sub);
+    sh.appendChild(delBtn);
+    sh.appendChild(cancelBtn);
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+}
+
+function _createGCTile(userId, userName, userAvatar, isMe = false) {
+    _injectGroupCallCSS();
+    const tile = document.createElement('div');
+    tile.className = 'gc-tile';
+    tile.id = `gc-tile-${userId}`;
+
+    // Аватар (показывается пока нет видео)
+    const avaWrap = document.createElement('div');
+    avaWrap.className = 'gc-ava-wrap';
+    if (userAvatar && !userAvatar.includes('default') && !userAvatar.startsWith('emoji:')) {
+        const img = document.createElement('img');
+        img.src = userAvatar;
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+        avaWrap.appendChild(img);
+    } else {
+        avaWrap.textContent = (userName || '?')[0].toUpperCase();
+    }
+    tile.appendChild(avaWrap);
+
+    // Видео-элемент
+    const vid = document.createElement('video');
+    vid.autoplay = true; vid.playsInline = true;
+    if (isMe) vid.muted = true;
+    vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none';
+    tile.appendChild(vid);
+
+    // Оверлей снизу
+    const ov = document.createElement('div');
+    ov.className = 'gc-tile-overlay';
+    ov.innerHTML = `
+        <span class="gc-name">${isMe ? 'Вы' : (userName || 'Участник')}</span>
+        <span class="gc-mic-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                <line x1="1" y1="1" x2="23" y2="23" stroke="rgba(255,100,100,0.9)" stroke-width="2.5" stroke-linecap="round"/>
+                <path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6" stroke="rgba(255,100,100,0.9)" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </span>
+    `;
+    tile.appendChild(ov);
+
+    return tile;
+}
+
+function _getPerms() {
+    try { return JSON.parse(localStorage.getItem(_PERM_KEY) || '{}'); } catch(e){ return {}; }
+}
+
+function _injectGroupCallCSS() {
+    if (document.getElementById('gc-style')) return;
+    const st = document.createElement('style');
+    st.id = 'gc-style';
+    st.textContent = `
+        #group-call-grid {
+            position: absolute;
+            inset: 0;
+            padding: max(env(safe-area-inset-top),52px) 10px 190px;
+            display: none;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            overflow-y: auto;
+            align-content: start;
+            z-index: 10;
+        }
+        #group-call-grid.active { display: grid; }
+        #group-call-grid.single { grid-template-columns: 1fr; }
+        .gc-tile {
+            position: relative;
+            border-radius: 22px;
+            overflow: hidden;
+            background: linear-gradient(145deg, #1a1a2e, #16213e);
+            border: 1.5px solid rgba(255,255,255,0.08);
+            aspect-ratio: 3/4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            animation: gcTileIn 0.35s cubic-bezier(.34,1.56,.64,1);
+        }
+        .gc-tile.speaking {
+            border-color: var(--accent, #10b981);
+            box-shadow: 0 0 0 2px var(--accent, #10b981), 0 8px 30px rgba(16,185,129,0.3);
+        }
+        .gc-tile.muted .gc-mic-icon { opacity: 1; }
+        @keyframes gcTileIn {
+            from { opacity: 0; transform: scale(0.85); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+        .gc-tile video {
+            position: absolute; inset: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+        }
+        .gc-tile-overlay {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            background: linear-gradient(transparent, rgba(0,0,0,0.7));
+            padding: 12px 10px 12px;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .gc-name {
+            font-size: 13px; font-weight: 700; color: #fff;
+            text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .gc-mic-icon { opacity: 0; transition: opacity 0.2s; }
+        .gc-ava-wrap {
+            width: 64px; height: 64px; border-radius: 50%;
+            overflow: hidden; margin-bottom: 10px;
+            border: 3px solid rgba(255,255,255,0.2);
+            background: var(--accent,#10b981);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 26px; font-weight: 800; color: #000;
+            flex-shrink: 0;
+        }
+    `;
+    document.head.appendChild(st);
+}
+
+function _pluralViews(n) {
+    if (n % 10 === 1 && n % 100 !== 11) return 'просмотр';
+    if ([2,3,4].includes(n % 10) && ![12,13,14].includes(n % 100)) return 'просмотра';
+    return 'просмотров';
+}
+
+function _renderViewersList(container, viewers) {
+    if (!viewers || !viewers.length) {
+        container.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:44px 0 20px;opacity:0.3">'
+            + '<svg width="38" height="38" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="1.5"/></svg>'
+            + '<div style="font-size:15px;font-weight:500">Ещё никто не смотрел</div>'
+            + '</div>';
+        return;
+    }
+    container.innerHTML = viewers.map((v, i) => {
+        const isLast = i === viewers.length - 1;
+        return '<div style="display:flex;align-items:center;gap:14px;padding:12px 0;' + (isLast ? '' : 'border-bottom:0.5px solid rgba(255,255,255,0.07)') + '">'
+            + getAvatarHtml({id:v.id, name:v.name, avatar:v.avatar}, 'w-11 h-11')
+            + '<div style="flex:1;min-width:0">'
+            + '<div style="font-weight:600;font-size:15px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(v.name) + '</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:2px;display:flex;align-items:center;gap:4px">'
+            + '<svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><polyline points="12 6 12 12 16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+            + (v.time || '') + '</div>'
+            + '</div>'
+            + '</div>';
+    }).join('');
+}
+
+function _runMomentsViewer(list, startIdx) {
+    // Пауза музыки на время просмотра момента
+    const _wasMusicPlaying = MP.playing;
+    if (MP.playing && MP.audioEl) {
+        MP.audioEl.pause();
+        MP.playing = false;
+        _mpStopViz();
+        _mpUpdateCard();
+        _mpUpdateMiniPlayer();
+    }
+
+    let idx = startIdx;
+    let autoTimer = null;
+    let mediaLoaded = false;
+
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9000;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
+
+    function render() {
+        ov.innerHTML = '';
+        mediaLoaded = false;
+        clearTimeout(autoTimer);
+        const m = list[idx];
+        const isMe = m.user_id === currentUser?.id;
+
+        // ── Фон ──
+        const bg = document.createElement('div');
+        bg.style.cssText = 'position:absolute;inset:0;background:#000';
+
+        if (m.media_url) {
+            const isVideo = /\.(mp4|mov|webm)/i.test(m.media_url);
+
+            // Размытый фон — показывается мгновенно
+            const blurBg = document.createElement('div');
+            blurBg.id = 'mb-blur';
+            // Для видео — используем постер как блюр-фон (грузится намного быстрее чем видео)
+            const blurSrc = (isVideo && m.media_url.includes('res.cloudinary.com'))
+                ? _cl_video_poster(m.media_url)
+                : m.media_url;
+            blurBg.style.cssText = 'position:absolute;inset:-30px;background-image:url('+JSON.stringify(blurSrc)+');background-size:cover;background-position:center;filter:blur(24px) brightness(0.35);transition:opacity 0.4s ease';
+            bg.appendChild(blurBg);
+
+            // Спиннер
+            const spin = document.createElement('div');
+            spin.id = 'mb-spin';
+            spin.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:3;transition:opacity 0.2s';
+            spin.innerHTML = '<div style="width:40px;height:40px;border:2.5px solid rgba(255,255,255,0.1);border-top-color:rgba(255,255,255,0.85);border-radius:50%;animation:spin 0.65s linear infinite"></div>';
+            bg.appendChild(spin);
+
+            function onReady() {
+                if (mediaLoaded) return;
+                mediaLoaded = true;
+                const media = bg.querySelector('video,img');
+                if (media) {
+                    media.style.visibility = 'visible';
+                    media.style.opacity = '1';
+                }
+                blurBg.style.opacity = '0';
+                spin.style.display = 'none';
+                const dur = isVideo
+                    ? Math.min((bg.querySelector('video')?.duration||7)*1000, 30000)
+                    : 6000;
+                const fill = document.getElementById('mpf');
+                if (fill) { fill.style.transition='width '+(dur/1000)+'s linear'; fill.style.width='100%'; }
+                autoTimer = setTimeout(() => next(), dur + 200);
+                // Предзагружаем следующее медиа
+                if (list[idx+1]?.media_url) _preloadMedia(list[idx+1].media_url);
+            }
+
+            if (isVideo) {
+                const vid = document.createElement('video');
+                vid.autoplay = true; vid.loop = false; vid.playsInline = true; vid.muted = false;
+                vid.preload = 'auto'; // полная загрузка для плавного воспроизведения
+                // opacity:0 + visibility:hidden предотвращает мелькание первого кадра
+                vid.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.35s;visibility:hidden';
+                // poster = превью от Cloudinary (первый кадр как изображение) — убирает чёрный экран
+                if (m.media_url && m.media_url.includes('res.cloudinary.com')) {
+                    vid.poster = _cl_video_poster(m.media_url);
+                }
+                vid.oncanplaythrough = onReady;
+                vid.oncanplay = onReady;  // fallback
+                vid.onended = () => next();
+                vid.onerror = () => onReady();
+                // Таймаут 3с — быстрый показ постера и продолжение
+                const vidTimeout = setTimeout(() => onReady(), 3000);
+                const _origOnReady = onReady;
+                vid._clearTimeout = () => clearTimeout(vidTimeout);
+                const _patchedOnReady = function() { clearTimeout(vidTimeout); _origOnReady(); };
+                vid.oncanplaythrough = _patchedOnReady;
+                vid.oncanplay = _patchedOnReady;
+                vid.onended = () => next();
+                if (_mediaCache.has(m.media_url)) {
+                    vid.src = _mediaCache.get(m.media_url);
+                    // Уже в кеше — можем показать почти мгновенно
+                    vid.onloadeddata = () => { clearTimeout(vidTimeout); onReady(); };
+                } else {
+                    vid.src = m.media_url;
+                    _getCachedMedia(m.media_url).catch(() => {});
+                }
+                bg.appendChild(vid);
+            } else {
+                const img = document.createElement('img');
+                img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 0.3s';
+                img.onload = onReady;
+                img.onerror = onReady;
+                img.src = _mediaCache.get(m.media_url) || m.media_url;
+                bg.appendChild(img);
+            }
+
+            // Текст поверх медиа
+            if (m.text) {
+                const textLayer = document.createElement('div');
+                textLayer.style.cssText = 'position:absolute;bottom:140px;left:0;right:0;z-index:5;display:flex;justify-content:center;padding:0 20px;pointer-events:none';
+                textLayer.innerHTML = '<div style="background:rgba(0,0,0,0.6);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:18px;padding:10px 18px;font-size:clamp(14px,4vw,20px);font-weight:700;color:#fff;text-align:center;line-height:1.4;max-width:100%">' + escHtml(m.text) + '</div>';
+                bg.appendChild(textLayer);
+            }
+
+        } else {
+            // Только текст
+            bg.style.background = 'linear-gradient(135deg,#1a1a2e,#16213e,#0f3460)';
+            const txt = document.createElement('div');
+            txt.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:40px;z-index:2';
+            txt.innerHTML = '<div style="font-size:clamp(18px,5vw,28px);font-weight:700;color:#fff;text-align:center;line-height:1.5;text-shadow:0 2px 16px rgba(0,0,0,0.5)">' + escHtml(m.text||'') + '</div>';
+            bg.appendChild(txt);
+            // Для текстовых — стартуем прогресс сразу
+            setTimeout(() => {
+                const fill = document.getElementById('mpf');
+                if (fill) { fill.style.transition='width 5s linear'; fill.style.width='100%'; }
+                autoTimer = setTimeout(() => next(), 5200);
+            }, 50);
+        }
+        ov.appendChild(bg);
+
+        // Трекинг просмотра
+        if (m.user_id !== currentUser?.id) {
+            apiFetch('/view_moment/' + m.id, {method:'POST'}).catch(()=>{});
+        }
+
+        // ── Прогресс-бары сверху ──
+        const bars = document.createElement('div');
+        bars.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:12px;right:12px;z-index:10;display:flex;gap:3px';
+        list.forEach((_,i) => {
+            const bar = document.createElement('div');
+            bar.style.cssText = 'flex:1;height:2.5px;background:rgba(255,255,255,0.25);border-radius:2px;overflow:hidden';
+            const fill = document.createElement('div');
+            fill.style.cssText = 'height:100%;background:white;border-radius:2px;width:'+(i<idx?'100':'0')+'%';
+            if (i===idx) fill.id = 'mpf';
+            bar.appendChild(fill); bars.appendChild(bar);
+        });
+        ov.appendChild(bars);
+
+        // ── Кнопка закрыть ──
+        const xBtn = document.createElement('button');
+        xBtn.style.cssText = 'position:absolute;top:max(calc(env(safe-area-inset-top,0px)+20px),28px);right:14px;z-index:11;background:rgba(0,0,0,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:none;color:white;width:36px;height:36px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
+        xBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
+        xBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); ov.remove(); };
+        ov.appendChild(xBtn);
+
+        // ── Инфо снизу ──
+        const btmGrad = document.createElement('div');
+        btmGrad.style.cssText = 'position:absolute;bottom:0;left:0;right:0;height:200px;background:linear-gradient(to top,rgba(0,0,0,0.8) 0%,transparent 100%);z-index:4;pointer-events:none';
+        ov.appendChild(btmGrad);
+
+        const btm = document.createElement('div');
+        btm.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;padding:16px 16px max(calc(env(safe-area-inset-bottom,0px)+16px),28px);display:flex;align-items:flex-end;gap:12px';
+        btm.innerHTML = getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-11 h-11');
+        const it = document.createElement('div');
+        it.style.cssText = 'flex:1;min-width:0';
+        it.innerHTML = '<div style="font-weight:700;font-size:15px;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,0.6)">' + escHtml(m.user_name) + '</div>'
+            + '<div style="font-size:12px;color:rgba(255,255,255,0.65);margin-top:2px">' + m.timestamp + (m.geo_name ? ' · 📍' + escHtml(m.geo_name) : '') + '</div>';
+        btm.appendChild(it);
+
+        // Кнопка "Переслать" — для чужих моментов
+        if (!isMe) {
+            const fwdBtn = document.createElement('button');
+            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
+            fwdBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><polyline points="15 17 20 12 15 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12v-2a6 6 0 016-6h10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Переслать';
+            fwdBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _forwardMoment(m); };
+            btm.appendChild(fwdBtn);
+        }
+
+        if (isMe) {
+            const acts = document.createElement('div');
+            acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
+            // Глазок
+            const viewBtn = document.createElement('button');
+            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
+            viewBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.3"/></svg><span id="mv-vcnt-' + m.id + '">' + (m.view_count||0) + '</span>';
+            viewBtn.onpointerdown = () => { viewBtn.style.transform='scale(0.92)'; viewBtn.style.background='rgba(255,255,255,0.24)'; };
+            viewBtn.onpointerup = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
+            viewBtn.onpointercancel = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
+            viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id, ov); };
+            // Ведро
+            const del = document.createElement('button');
+            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
+            del.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+            del.onpointerdown = () => { del.style.transform='scale(0.88)'; del.style.background='rgba(239,68,68,0.38)'; };
+            del.onpointerup = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
+            del.onpointercancel = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
+            del.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _confirmDeleteMoment(m.id, ov); };
+            acts.appendChild(viewBtn); acts.appendChild(del);
+            btm.appendChild(acts);
+        }
+        ov.appendChild(btm);
+
+        // Тап по половинам экрана
+        ov.onclick = e => {
+            if (e.target.closest('button')) return;
+            clearTimeout(autoTimer);
+            if (e.clientX < window.innerWidth/2) prev(); else next();
+        };
+
+        // Свайп (горизонтальный — след/пред момент, вертикальный — закрыть)
+        let _tsX = 0, _tsY = 0, _swipeDx = 0;
+        ov.addEventListener('touchstart', e => {
+            _tsX = e.touches[0].clientX;
+            _tsY = e.touches[0].clientY;
+            _swipeDx = 0;
+        }, {passive:true});
+        ov.addEventListener('touchmove', e => {
+            _swipeDx = e.touches[0].clientX - _tsX;
+            const dy = e.touches[0].clientY - _tsY;
+            // Анимируем слайд
+            if (Math.abs(_swipeDx) > Math.abs(dy) && Math.abs(_swipeDx) > 10) {
+                ov.style.transform = `translateX(${_swipeDx * 0.3}px)`;
+            }
+        }, {passive:true});
+        ov.addEventListener('touchend', e => {
+            ov.style.transform = '';
+            const dy = e.changedTouches[0].clientY - _tsY;
+            if (Math.abs(dy) > 80 && Math.abs(dy) > Math.abs(_swipeDx)) {
+                // Вертикальный свайп вниз — закрыть
+                clearTimeout(autoTimer); ov.remove();
+            } else if (_swipeDx < -60) {
+                clearTimeout(autoTimer); next();
+            } else if (_swipeDx > 60) {
+                clearTimeout(autoTimer); prev();
+            }
+        }, {passive:true});
+    }
+
+    function next() { clearTimeout(autoTimer); if (idx<list.length-1){idx++;render();}else{ov.remove();} }
+    function prev() { clearTimeout(autoTimer); if (idx>0){idx--;render();}else{ render(); } }
+
+    document.body.appendChild(ov);
+    render();
+
+    // Следим за удалением оверлея — возобновляем музыку
+    const _momentObserver = new MutationObserver(() => {
+        if (!document.body.contains(ov)) {
+            _momentObserver.disconnect();
+            if (_wasMusicPlaying && MP.audioEl && MP.idx >= 0) {
+                MP.audioEl.play()
+                    .then(() => {
+                        MP.playing = true;
+                        _mpStartViz();
+                        _mpUpdateCard();
+                        _mpUpdateMiniPlayer();
+                        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+                    })
+                    .catch(() => {});
+            }
+        }
+    });
+    _momentObserver.observe(document.body, { childList: true });
+}
+
+function _savePerm(key, val) {
+    const p = _getPerms(); p[key] = val;
+    localStorage.setItem(_PERM_KEY, JSON.stringify(p));
+}
+
+function _setupSpeakingDetector(userId, stream) {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        const check = () => {
+            if (!GC.active || !GC.peers[userId]) { ctx.close(); return; }
+            analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            const tile = document.getElementById(`gc-tile-${userId}`);
+            if (tile) tile.classList.toggle('speaking', avg > 18);
+            requestAnimationFrame(check);
+        };
+        requestAnimationFrame(check);
+    } catch(e) {}
+}
+
+function _showAddParticipantBtn() {
+    const row = document.getElementById('add-participant-row');
+    if (row) { row.style.opacity = '1'; row.style.pointerEvents = 'auto'; }
+}
+
+function _showGCInviteBanner(data) {
+    document.getElementById('gc-invite-banner')?.remove();
+    const banner = document.createElement('div');
+    banner.id = 'gc-invite-banner';
+    banner.style.cssText = `
+        position:fixed;top:max(env(safe-area-inset-top),16px);left:12px;right:12px;
+        z-index:99999;
+        background:rgba(15,15,20,0.92);
+        backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);
+        border:1px solid rgba(255,255,255,0.12);
+        border-radius:22px;padding:14px 16px;
+        display:flex;align-items:center;gap:12px;
+        box-shadow:0 8px 40px rgba(0,0,0,0.6);
+        animation:slideDown 0.4s cubic-bezier(.34,1.56,.64,1);
+    `;
+
+    const typeLabel = data.call_type === 'video' ? 'Видеозвонок' : 'Голосовой';
+    banner.innerHTML = `
+        <div style="width:44px;height:44px;border-radius:50%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;flex-shrink:0;animation:pulse 1.5s infinite">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="black" stroke-width="2.5" stroke-linecap="round"/><circle cx="9" cy="7" r="4" stroke="black" stroke-width="2.5"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="black" stroke-width="2" stroke-linecap="round"/></svg>
+        </div>
+        <div style="flex:1;min-width:0">
+            <div style="font-size:13px;font-weight:800">${escHtml(data.from_name||'Пользователь')}</div>
+            <div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:1px">${typeLabel} · Групповой звонок</div>
+        </div>
+        <div style="display:flex;gap:8px">
+            <button id="gc-inv-decline" style="width:38px;height:38px;border-radius:50%;background:rgba(239,68,68,0.25);border:1.5px solid rgba(239,68,68,0.4);color:#f87171;cursor:pointer;display:flex;align-items:center;justify-content:center">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            <button id="gc-inv-accept" style="width:38px;height:38px;border-radius:50%;background:rgba(16,185,129,0.25);border:1.5px solid rgba(16,185,129,0.4);color:var(--accent,#10b981);cursor:pointer;display:flex;align-items:center;justify-content:center">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12 12 0 00.67 2.68 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12 12 0 002.68.67A2 2 0 0122 16.92z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+        </div>
+    `;
+
+    document.body.appendChild(banner);
+
+    const close = () => {
+        banner.style.animation = 'slideUp 0.3s ease forwards';
+        setTimeout(() => banner.remove(), 300);
+    };
+
+    banner.querySelector('#gc-inv-decline').onclick = () => close();
+    banner.querySelector('#gc-inv-accept').onclick  = () => {
+        close();
+        startGroupCall(data.call_type, data.room);
+    };
+
+    // Авто-закрытие через 25 сек
+    setTimeout(close, 25000);
+
+    if (!document.getElementById('gc-banner-style')) {
+        const st = document.createElement('style'); st.id='gc-banner-style';
+        st.textContent = `
+            @keyframes slideDown{from{opacity:0;transform:translateY(-120%)}to{opacity:1;transform:translateY(0)}}
+            @keyframes slideUp{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-120%)}}
+            @keyframes gcTileOut{to{opacity:0;transform:scale(0.8)}}
+        `;
+        document.head.appendChild(st);
+    }
+}
+
+async function _showMomentViewers(momentId, momentOv) {
+    if (!document.getElementById('mv-keyframes')) {
+        const st = document.createElement('style');
+        st.id = 'mv-keyframes';
+        st.textContent = '@keyframes mvFadeIn{from{opacity:0}to{opacity:1}}@keyframes mvSlideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}';
+        document.head.appendChild(st);
+    }
+    document.getElementById('mv-ov-' + momentId)?.remove();
+    const cached = _viewersCache[momentId];
+
+    const ov = document.createElement('div');
+    ov.id = 'mv-ov-' + momentId;
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;animation:mvFadeIn 0.2s ease';
+
+    const backdrop = document.createElement('div');
+    backdrop.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.55);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)';
+    backdrop.onclick = () => _closeMvSheet(ov, sh);
+    ov.appendChild(backdrop);
+
+    const sh = document.createElement('div');
+    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 0 max(env(safe-area-inset-bottom),28px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1);max-height:70vh;display:flex;flex-direction:column';
+
+    const handle = document.createElement('div');
+    handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 0;flex-shrink:0';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;flex-shrink:0';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.style.cssText = 'display:flex;align-items:center;gap:10px';
+    titleWrap.innerHTML = '<div style="width:36px;height:36px;border-radius:12px;background:rgba(255,255,255,0.08);display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        + '<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.2"/></svg>'
+        + '</div>'
+        + '<div>'
+        + '<div style="font-size:17px;font-weight:700;letter-spacing:-0.3px">\u041f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\u044b</div>'
+        + '<div id="mv-sub-' + momentId + '" style="font-size:12px;color:rgba(255,255,255,0.42);margin-top:1px">'
+        + (cached ? (cached.length + '\u00a0' + _pluralViews(cached.length)) : '\u2014')
+        + '</div>'
+        + '</div>';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = 'width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
+    closeBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
+    closeBtn.onclick = () => _closeMvSheet(ov, sh);
+
+    header.appendChild(titleWrap);
+    header.appendChild(closeBtn);
+
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height:0.5px;background:rgba(255,255,255,0.07);margin:0 20px;flex-shrink:0';
+
+    const listEl = document.createElement('div');
+    listEl.id = 'mv-list-' + momentId;
+    listEl.style.cssText = 'flex:1;overflow-y:auto;padding:6px 20px 0;-webkit-overflow-scrolling:touch';
+    if (!cached) {
+        listEl.innerHTML = '<div style="text-align:center;padding:40px 0;opacity:0.3;font-size:14px">\u0417\u0430\u0433\u0440\u0443\u0437\u043a\u0430...</div>';
+    }
+
+    let _sy = 0, _ty = 0;
+    sh.addEventListener('touchstart', e => { _sy = e.touches[0].clientY; _ty = 0; }, {passive:true});
+    sh.addEventListener('touchmove', e => { _ty = e.touches[0].clientY - _sy; if (_ty > 0) sh.style.transform = 'translateY('+_ty+'px)'; }, {passive:true});
+    sh.addEventListener('touchend', () => { if (_ty > 90) _closeMvSheet(ov, sh); else { sh.style.transition='transform 0.2s'; sh.style.transform=''; setTimeout(()=>sh.style.transition='',200); } }, {passive:true});
+
+    sh.appendChild(handle);
+    sh.appendChild(header);
+    sh.appendChild(sep);
+    sh.appendChild(listEl);
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+
+    if (cached) { _renderViewersList(listEl, cached); return; }
+
+    try {
+        const r = await apiFetch('/moment_viewers/' + momentId);
+        if (!r || !r.ok) throw new Error('bad');
+        const data = await r.json();
+        const viewers = Array.isArray(data) ? data : (data.viewers || []);
+        _viewersCache[momentId] = viewers;
+        const vcnt = document.getElementById('mv-vcnt-' + momentId);
+        if (vcnt) vcnt.textContent = viewers.length;
+        const sub = document.getElementById('mv-sub-' + momentId);
+        if (sub) sub.textContent = viewers.length + '\u00a0' + _pluralViews(viewers.length);
+        _renderViewersList(listEl, viewers);
+    } catch(e) {
+        listEl.innerHTML = '<div style="text-align:center;padding:40px 0;opacity:0.3;font-size:14px">\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0437\u0430\u0433\u0440\u0443\u0437\u0438\u0442\u044c</div>';
+    }
+}
+
+function _showPermDeniedGuide(type) {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isPWA = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    const cfg = {
+        microphone: { icon:'MIC', name:'Микрофон',
+            ios_safari: 'Настройки iPhone → Safari → Микрофон → Разрешить',
+            ios_pwa:    'Настройки iPhone → Конфиденциальность → Микрофон → включить WayChat',
+            other:      'Нажмите 🔒 в адресной строке браузера → Разрешить микрофон' },
+        camera: { icon:'CAM', name:'Камера',
+            ios_safari: 'Настройки iPhone → Safari → Камера → Разрешить',
+            ios_pwa:    'Настройки iPhone → Конфиденциальность → Камера → включить WayChat',
+            other:      'Нажмите 🔒 в адресной строке браузера → Разрешить камеру' },
+        notifications: { icon:'BELL', name:'Уведомления',
+            ios_safari: 'Нужно добавить WayChat на экран Домой',
+            ios_pwa:    'Настройки iPhone → WayChat → Уведомления → включить',
+            other:      'Нажмите 🔒 в адресной строке браузера → Разрешить уведомления' },
+    };
+    const c = cfg[type] || { icon:'🔑', name:'Доступ', ios_safari:'Настройки', ios_pwa:'Настройки', other:'Настройки браузера' };
+    let guide;
+    if (isIOS && isPWA)      guide = c.ios_pwa;
+    else if (isIOS)          guide = c.ios_safari;
+    else                     guide = c.other;
+
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.style.zIndex = '99999';
+    const sh = document.createElement('div'); sh.className='modal-sheet';
+    sh.innerHTML='<div class="modal-handle"></div>'
+        +'<div style="text-align:center;padding:8px 0 20px">'
+        +'<div style="display:flex;align-items:center;justify-content:center;width:64px;height:64px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 14px">'+_permIcon(c.icon)+'</div>'
+        +'<div style="font-size:17px;font-weight:700;margin-bottom:10px">'+c.name.charAt(0).toUpperCase()+c.name.slice(1)+' заблокирован</div>'
+        +'<div style="font-size:14px;color:var(--text-2);line-height:1.6;text-align:left;background:var(--surface2);border-radius:14px;padding:14px">'
+        +'Чтобы разрешить '+c.name+':<br><br>'
+        +'<b style="color:var(--text)">'+guide+'</b>'
+        +'</div></div>';
+    const btn=document.createElement('button');
+    btn.style.cssText='width:100%;padding:14px;background:var(--surface2);border:1px solid var(--border);border-radius:16px;color:var(--text);font-size:15px;font-weight:600;cursor:pointer;font-family:inherit';
+    btn.textContent='Понятно'; btn.onclick=()=>ov.remove();
+    sh.appendChild(btn); ov.appendChild(sh); document.body.appendChild(ov);
+}
+
+function _showPermExplainer(type) {
+    return new Promise(resolve => {
+        const cfg = {
+            microphone:    { icon:'MIC', title:'Доступ к микрофону',    desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
+            camera:        { icon:'CAM', title:'Доступ к камере',        desc:'Нужен для видеозвонков и аватара',       btn:'Разрешить камеру' },
+            notifications: { icon:'BELL', title:'Push-уведомления',       desc:'Чтобы получать сообщения когда приложение закрыто', btn:'Разрешить уведомления' },
+        };
+        const c = cfg[type] || { icon:'🔑', title:'Разрешение', desc:'', btn:'Продолжить' };
+
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay';
+        ov.style.zIndex = '99999';
+        const sh = document.createElement('div'); sh.className='modal-sheet';
+        sh.innerHTML='<div class="modal-handle"></div>'
+            +'<div style="text-align:center;padding:8px 0 20px">'
+            +'<div style="display:flex;align-items:center;justify-content:center;width:68px;height:68px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 14px">'+_permIcon(c.icon)+'</div>'
+            +'<div style="font-size:18px;font-weight:700;margin-bottom:8px">'+c.title+'</div>'
+            +'<div style="font-size:14px;color:var(--text-2);line-height:1.5">'+c.desc+'</div>'
+            +'</div>';
+        const btn=document.createElement('button');
+        btn.style.cssText='width:100%;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
+        btn.textContent=c.btn;
+        btn.onclick=()=>{ ov.remove(); resolve(); };
+        sh.appendChild(btn);
+        const skip=document.createElement('button');
+        skip.style.cssText='width:100%;padding:10px;background:none;border:none;color:var(--text-2);font-size:14px;cursor:pointer;font-family:inherit;margin-top:4px';
+        skip.textContent='Не сейчас';
+        skip.onclick=()=>{ ov.remove(); resolve(); };
+        sh.appendChild(skip);
+        ov.appendChild(sh);
+        document.body.appendChild(ov);
+    });
+}
+
+function _skeletonMomentRow() {
+    return '<div style="display:flex;align-items:center;gap:14px;padding:11px 2px">'
+        + '<div class="skeleton-shimmer" style="width:62px;height:62px;border-radius:50%;flex-shrink:0"></div>'
+        + '<div style="flex:1">'
+        + '<div class="skeleton-shimmer" style="height:14px;width:130px;border-radius:7px;margin-bottom:9px"></div>'
+        + '<div class="skeleton-shimmer" style="height:11px;width:75px;border-radius:6px"></div>'
+        + '</div></div>';
+}
+
+function _updateGCGrid() {
+    const grid = document.getElementById('group-call-grid');
+    if (!grid) return;
+    const count = grid.querySelectorAll('.gc-tile').length;
+    grid.classList.toggle('single', count === 1);
+}
+
+async function acquireWakeLock() { try { if ('wakeLock' in navigator) wakelock = await navigator.wakeLock.request('screen'); } catch(e) {} }
+
+async function answerIncomingCall() {
+    const data = incomingCallData;
+    if (!data) return;
+    document.getElementById('accept-btn').style.display = 'none';
+    document.getElementById('call-status-label').textContent = 'Подключение...';
+    _stopRingtone(); // FIX Task 4c: stop ringtone when answered
+    currentPartnerId = data.from; vibrate(30);
+    try {
+        callLocalStream = await getLocalStream(currentCallType);
+        if (currentCallType === 'video') showLocalVideo();
+        peerConnection = createPeerConnection();
+        callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await flushPendingIce();
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit('answer_call', { to: data.from, answer });
+    } catch(e) { showToast('Ошибка при ответе', 'error'); endCall(true); }
+}
+
+function closeChat() {
+    const chatWin = document.getElementById('chat-window');
+    if(chatWin){
+        chatWin.classList.remove('active');
+        // Сбрасываем всё что мог выставить keyboard handler
+        chatWin.style.height = '';
+        chatWin.style.top    = '';
+        chatWin.style.bottom = '';
+    }
+    document.getElementById('main-content')?.classList.remove('chat-depth');
+    const fabBtn = document.getElementById('fab-btn-el');
+    if(fabBtn) fabBtn.style.display = '';
+    const ib = document.querySelector('.input-bar');
+    if(ib) ib.style.transform = '';
+    if (currentChatId) socket.emit('leave_chat', { chat_id: currentChatId });
+    currentChatId    = null;
+    currentPartnerId = null;
+    currentChatType  = 'private';
+    hideTypingIndicator();
+    loadChats();
+}
+
+function createPeerConnection() {
+    const pc = new RTCPeerConnection(rtcConfig);
+
+    pc.onicecandidate = (e) => {
+        if (e.candidate && currentPartnerId) {
+            socket.emit('ice_candidate', { to: currentPartnerId, candidate: e.candidate });
+        }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState;
+        const label = document.getElementById('call-status-label');
+        console.log('ICE state:', state);
+
+        if (state === 'connected' || state === 'completed') {
+            if (label) label.textContent = 'В эфире';
+            startCallTimer();
+            document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'none');
+        } else if (state === 'checking') {
+            if (label) label.textContent = 'Соединение...';
+        } else if (state === 'disconnected') {
+            if (label) label.textContent = 'Переподключение...';
+            // Автоматический ICE restart через 2 сек
+            setTimeout(() => {
+                if (peerConnection?.iceConnectionState === 'disconnected') doIceRestart();
+            }, 2000);
+        } else if (state === 'failed') {
+            if (iceRestartCount < MAX_ICE_RESTARTS) {
+                iceRestartCount++;
+                if (label) label.textContent = `Переподключение ${iceRestartCount}/${MAX_ICE_RESTARTS}...`;
+                doIceRestart();
+            } else {
+                showToast('Не удалось установить соединение', 'error');
+                endCall(true);
+            }
+        }
+    };
+
+    pc.ontrack = (e) => {
+        if (!e.streams[0]) return;
+        const stream = e.streams[0];
+
+        if (e.track.kind === 'video') {
+            const rv = document.getElementById('remote-video');
+            if (rv) {
+                document.getElementById('call-video-container').style.display = 'block';
+                rv.srcObject = stream;
+                rv.style.display = 'block';
+                rv.play().catch(() => document.addEventListener('touchstart', () => rv.play(), { once: true }));
+                const ci = document.getElementById('call-info');
+                if (ci) ci.style.opacity = '0.2';
+            }
+        } else if (e.track.kind === 'audio') {
+            // Отдельный audio элемент для надёжного воспроизведения
+            let callAudio = document.getElementById('call-remote-audio');
+            if (!callAudio) {
+                callAudio = document.createElement('audio');
+                callAudio.id = 'call-remote-audio';
+                callAudio.autoplay = true;
+                callAudio.setAttribute('playsinline', '');
+                document.body.appendChild(callAudio);
+            }
+            callAudio.srcObject = stream;
+            callAudio.play().catch(() => {
+                document.addEventListener('touchstart', () => callAudio.play(), { once: true });
+            });
+        }
+    };
+
+    pc.onsignalingstatechange = () => {
+        console.log('Signaling state:', pc.signalingState);
+    };
+
+    return pc;
+}
+
+async function doIceRestart() {
+    if (!peerConnection || !currentPartnerId) return;
+    try {
+        const offer = await peerConnection.createOffer({ iceRestart: true });
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, offer, call_type: currentCallType, isRestart: true });
+    } catch(e) { console.error('ICE restart failed:', e); }
+}
+
+function endCall(notify = true) {
+    _stopRingtone(); // FIX Task 4c: stop ringtone on endCall
+    clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
+
+    // Отправляем сообщение о звонке в чат
+    const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
+    if (currentChatId && currentPartnerId && duration > 0) {
+        const callMsgType = currentCallType === 'video' ? 'call_video' : 'call_audio';
+        socket.emit('send_message', {
+            chat_id:   currentChatId,
+            type_msg:  callMsgType,
+            content:   String(duration),
+            sender_id: currentUser.id,
+        });
+    }
+
+    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId });
+    if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
+    if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
+    // Очищаем remote audio
+    const callAudio = document.getElementById('call-remote-audio');
+    if (callAudio) { callAudio.srcObject = null; callAudio.remove(); }
+    const screen = document.getElementById('call-screen');
+    if (screen) screen.classList.add('hidden');
+    ['remote-video','local-video'].forEach(id => { const el = document.getElementById(id); if (el) { el.srcObject = null; el.style.display = 'none'; } });
+    const vc = document.getElementById('call-video-container');
+    if (vc) vc.style.display = 'none';
+    const ci = document.getElementById('call-info');
+    if (ci) { ci.style.opacity = '1'; ci.style.display = ''; }
+    // Очистка групповых звонков
+    if (GC.active) {
+        socket.emit('leave_group_call', { room: GC.roomId, user_id: currentUser.id, user_name: currentUser.name });
+        Object.values(GC.peers).forEach(p => { try { p.pc.close(); } catch(e) {} });
+        GC.peers = {}; GC.active = false; GC.roomId = null;
+        const grid = document.getElementById('group-call-grid');
+        if (grid) { grid.innerHTML = ''; grid.style.display = 'none'; grid.classList.remove('active'); }
+        document.querySelectorAll('[id^="gc-audio-"]').forEach(el => el.remove());
+        const addRow = document.getElementById('add-participant-row');
+        if (addRow) { addRow.style.opacity = '0'; addRow.style.pointerEvents = 'none'; }
+    }
+    callStartTime = null;
+    incomingCallData = null; pendingIce = []; isMuted = false; isVideoOff = false;
+    clearTimeout(_callCtrlHideTimer);
+    releaseWakeLock(); vibrate(15);
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+async function flipCamera() {
+    if (!callLocalStream || currentCallType !== 'video') return;
+    _currentFacingMode = _currentFacingMode === 'user' ? 'environment' : 'user';
+    vibrate(10);
+    try {
+        const newStream = await getLocalStream('video', _currentFacingMode);
+        const videoTrack = newStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+        const sender = peerConnection?.getSenders().find(s => s.track?.kind === 'video');
+        if (sender) await sender.replaceTrack(videoTrack);
+        callLocalStream.getVideoTracks().forEach(t => t.stop());
+        const lv = document.getElementById('local-video');
+        if (lv) { lv.srcObject = newStream; }
+        callLocalStream = newStream;
+    } catch(e) { showToast('Не удалось перевернуть камеру', 'error'); }
+}
+
+async function flushPendingIce() {
+    const candidates = [...pendingIce]; pendingIce = [];
+    for (const c of candidates) { try { await peerConnection.addIceCandidate(new RTCIceCandidate(c)); } catch(e) {} }
+}
+
+async function getLocalStream(type, facingMode) {
+    const fm = facingMode || _currentFacingMode || 'user';
+    const permKey = type === 'video' ? 'camera' : 'microphone';
+
+    // Проверяем наличие API — если есть, значит браузер считает контекст безопасным
+    // Не проверяем protocol напрямую — Cloudflare туннель HTTPS снаружи но HTTP внутри
+
+    const hasModern = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    const hasLegacy = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+
+    if (!hasModern && !hasLegacy) {
+        const e = new Error('getUserMedia не поддерживается. Проверь разрешения в Настройки → Safari');
+        e.name = 'HTTPSRequired';
+        throw e;
+    }
+
+    // iOS: пробуем сначала простые constraints (строгие часто падают с OverconstrainedError)
+    const constraintsList = [
+        {
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+            video: type === 'video' ? { facingMode: fm, width: { ideal: 1280 }, height: { ideal: 720 } } : false
+        },
+        {
+            audio: { echoCancellation: true, noiseSuppression: true },
+            video: type === 'video' ? { facingMode: fm } : false
+        },
+        {
+            audio: true,
+            video: type === 'video' ? { facingMode: fm } : false
+        }
+    ];
+
+    if (hasModern) {
+        let lastError;
+        for (const constraints of constraintsList) {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                _sessionPerms[permKey] = 'granted';
+                return stream;
+            } catch(e) {
+                lastError = e;
+                // NotAllowedError — пользователь отказал, не пробуем дальше
+                if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                    _sessionPerms[permKey] = 'denied';
+                    throw e;
+                }
+                // Другие ошибки (OverconstrainedError, NotFoundError) — пробуем проще
+            }
+        }
+        throw lastError;
+    } else {
+        // Полифилл для старых iOS (iOS < 14.3)
+        const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+        return new Promise((resolve, reject) => {
+            const constraints = {
+                audio: { echoCancellation: true, noiseSuppression: true },
+                video: type === 'video' ? { facingMode: fm } : false
+            };
+            gum.call(navigator, constraints,
+                stream => { _sessionPerms[permKey] = 'granted'; resolve(stream); },
+                err => {
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                        _sessionPerms[permKey] = 'denied';
+                    }
+                    reject(err);
+                }
+            );
+        });
+    }
+}
+
+function hideCallControls() {
+    const ctrl = document.getElementById('call-controls');
+    if (!ctrl) return;
+    ctrl.style.opacity = '0';
+    ctrl.style.transform = 'translateY(40px)';
+    ctrl.style.pointerEvents = 'none';
+}
+
+async function onCallAnswered(data) {
+    if (!peerConnection) return;
+    try {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+        await flushPendingIce();
+        document.getElementById('call-status-label').textContent = 'Соединение...';
+    } catch(e) {}
+}
+
+async function onGCAnswer(data) {
+    const pc = GC.peers[data.from]?.pc;
+    if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+}
+
+async function onGCIce(data) {
+    const pc = GC.peers[data.from]?.pc;
+    if (pc && data.candidate) {
+        try { await pc.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) {}
+    }
+}
+
+async function onGCOffer(data) {
+    if (!GC.active) return;
+    const { from, offer } = data;
+    if (+from === +currentUser.id) return;
+
+    let pc = GC.peers[from]?.pc;
+    if (!pc) {
+        pc = new RTCPeerConnection(rtcConfig);
+        GC.peers[from] = { pc, stream: null };
+        callLocalStream?.getTracks().forEach(t => pc.addTrack(t, callLocalStream));
+
+        pc.onicecandidate = e => {
+            if (e.candidate) socket.emit('gc_ice', { to: from, candidate: e.candidate, room: GC.roomId });
+        };
+        pc.ontrack = evt => {
+            const stream = evt.streams[0];
+            GC.peers[from].stream = stream;
+            const t = document.getElementById(`gc-tile-${from}`);
+            if (t) {
+                const v = t.querySelector('video');
+                if (v && GC.type === 'video') { v.srcObject = stream; v.style.display = 'block'; }
+            }
+            let au = document.getElementById(`gc-audio-${from}`);
+            if (!au) { au = document.createElement('audio'); au.id=`gc-audio-${from}`; au.autoplay=true; document.body.appendChild(au); }
+            au.srcObject = stream;
+            _setupSpeakingDetector(from, stream);
+        };
+    }
+
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    socket.emit('gc_answer', { to: from, answer, room: GC.roomId });
+}
+
+async function onGroupCallJoin(data) {
+    if (!GC.active) return;
+    const { user_id, user_name, user_avatar } = data;
+    if (+user_id === +currentUser.id) return;
+    if (Object.keys(GC.peers).length >= GC.MAX) {
+        showToast('Максимум участников в звонке', 'warning'); return;
+    }
+
+    // Создаём PC для нового участника
+    const pc = new RTCPeerConnection(rtcConfig);
+    GC.peers[user_id] = { pc, stream: null };
+
+    // Добавляем локальный поток
+    callLocalStream?.getTracks().forEach(t => pc.addTrack(t, callLocalStream));
+
+    // Плитка
+    const grid = document.getElementById('group-call-grid');
+    const tile = _createGCTile(user_id, user_name, user_avatar);
+    grid?.appendChild(tile);
+    _updateGCGrid();
+
+    // ICE
+    pc.onicecandidate = e => {
+        if (e.candidate) socket.emit('gc_ice', { to: user_id, candidate: e.candidate, room: GC.roomId });
+    };
+
+    // Входящий поток
+    pc.ontrack = evt => {
+        const stream = evt.streams[0];
+        GC.peers[user_id].stream = stream;
+        const t = document.getElementById(`gc-tile-${user_id}`);
+        if (t) {
+            const v = t.querySelector('video');
+            if (v) { v.srcObject = stream; v.style.display = 'block'; }
+        }
+        // Аудио для не-видео звонков
+        if (GC.type !== 'video') {
+            let au = document.getElementById(`gc-audio-${user_id}`);
+            if (!au) {
+                au = document.createElement('audio');
+                au.id = `gc-audio-${user_id}`;
+                au.autoplay = true;
+                document.body.appendChild(au);
+            }
+            au.srcObject = stream;
+        }
+        // Детектор голоса — подсветка плитки
+        _setupSpeakingDetector(user_id, stream);
+    };
+
+    // Offer → новый участник
+    const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: GC.type === 'video' });
+    await pc.setLocalDescription(offer);
+    socket.emit('gc_offer', { to: user_id, offer, room: GC.roomId });
+}
+
+function onGroupCallLeave(data) {
+    const userId = data.user_id;
+    const peer = GC.peers[userId];
+    if (peer) {
+        try { peer.pc.close(); } catch(e) {}
+        delete GC.peers[userId];
+    }
+    const tile = document.getElementById(`gc-tile-${userId}`);
+    if (tile) {
+        tile.style.animation = 'gcTileOut 0.25s ease forwards';
+        setTimeout(() => { tile.remove(); _updateGCGrid(); }, 250);
+    }
+    const au = document.getElementById(`gc-audio-${userId}`);
+    if (au) au.remove();
+    showToast(data.user_name + ' покинул звонок', 'info', 2000);
+}
+
+async function onIceCandidate(data) {
+    if (!data.candidate) return;
+    if (!peerConnection || !peerConnection.remoteDescription?.type) { pendingIce.push(data.candidate); return; }
+    try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) {}
+}
+
+function onIncomingCall(data) {
+    incomingCallData = data; pendingIce = [];
+    currentCallType = data.call_type || 'audio';
+    vibrate([400,200,400,200,400]);
+    const screen = document.getElementById('call-screen');
+    screen.classList.remove('hidden');
+    document.getElementById('call-name').textContent = data.from_name || 'Звонок';
+    document.getElementById('call-status-label').textContent = currentCallType === 'video' ? '📹 Видеозвонок' : '📞 Голосовой';
+    document.getElementById('call-avatar-box').innerHTML = getAvatarHtml({id: data.from, name: data.from_name, avatar: data.from_avatar}, 'w-28 h-28');
+    document.getElementById('accept-btn').style.display = 'flex';
+    document.getElementById('call-timer').style.display = 'none';
+    acquireWakeLock();
+    // FIX Task 4c: start ringtone on incoming call
+    _playRingtone();
+    // FIX Task 4b: if user already tapped "Answer" in push notification
+    // (Scenario A/B/C), auto-answer immediately
+    if (window._pendingCallAnswer) {
+        const pending = window._pendingCallAnswer;
+        window._pendingCallAnswer = null;
+        // Small delay to ensure WebRTC is ready
+        setTimeout(function() { answerIncomingCall(); }, 300);
+    }
+}
+
+function openAddParticipant() {
+    if (!GC.active && !callStartTime) return;
+    showCallControls();
+
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
+
+    const sh = document.createElement('div');
+    sh.style.cssText = 'background:var(--surface,#111);border-radius:28px 28px 0 0;padding:8px 20px calc(env(safe-area-inset-bottom)+28px);width:100%;max-width:480px;transform:translateY(100%);transition:transform 0.3s cubic-bezier(.32,.72,0,1)';
+
+    const closeSheet = () => { sh.style.transform='translateY(100%)'; setTimeout(()=>ov.remove(),300); };
+
+    sh.innerHTML = `
+        <div style="width:40px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:10px auto 18px"></div>
+        <div style="font-size:18px;font-weight:800;margin-bottom:4px">Добавить в звонок</div>
+        <div style="font-size:13px;color:var(--text-2);margin-bottom:18px">Выбери контакт из переписок</div>
+        <div id="add-ptc-list" style="display:flex;flex-direction:column;gap:6px;max-height:50vh;overflow-y:auto"></div>
+    `;
+
+    const list = sh.querySelector('#add-ptc-list');
+    // Берём из recentChats — только личные чаты
+    const personal = recentChats.filter(ch => !ch.is_group);
+    if (!personal.length) {
+        list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--text-2)">Нет контактов</div>';
+    }
+    personal.slice(0, 20).forEach(ch => {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:12px 14px;background:var(--surface2);border-radius:16px;cursor:pointer';
+        row.innerHTML = getAvatarHtml({id:ch.partner_id,name:ch.partner_name,avatar:ch.partner_avatar||''},'w-10 h-10')
+            + `<div style="flex:1"><div style="font-weight:700">${escHtml(ch.partner_name||'Пользователь')}</div><div style="font-size:12px;color:var(--text-2)">${ch.online?'В сети':'Не в сети'}</div></div>`
+            + `<div style="width:32px;height:32px;border-radius:50%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 10.8 19.79 19.79 0 01.07 2.18 2 2 0 012.07 0h3a2 2 0 012 1.72 12 12 0 00.67 2.68 2 2 0 01-.45 2.11L6.07 7.91a16 16 0 006.02 6.02l1.4-1.22a2 2 0 012.11-.45 12 12 0 002.68.67A2 2 0 0122 16.92z" stroke="black" stroke-width="2" stroke-linecap="round"/></svg></div>`;
+        row.onclick = () => {
+            closeSheet();
+            // Если не в групповом звонке — переводим в групповой
+            if (!GC.active) {
+                const roomId = `gc_${currentUser.id}_${Date.now()}`;
+                GC.active = true; GC.roomId = roomId; GC.type = currentCallType;
+                _injectGroupCallCSS();
+                const grid = document.getElementById('group-call-grid');
+                const callInfo = document.getElementById('call-info');
+                if (callInfo) callInfo.style.display = 'none';
+                if (grid) { grid.style.display = 'grid'; grid.classList.add('active'); }
+                // Перемещаем текущего собеседника в grid
+                const selfTile = _createGCTile(currentUser.id, currentUser.name, currentUser.avatar, true);
+                grid?.appendChild(selfTile);
+                const partnerName = document.getElementById('chat-name')?.textContent || 'Участник';
+                const partnerAva  = chatPartnerAvatarSrc[currentPartnerId] || '';
+                const pTile = _createGCTile(currentPartnerId, partnerName, partnerAva);
+                grid?.appendChild(pTile);
+                _updateGCGrid();
+                socket.emit('join_group_call', { room: roomId, call_type: currentCallType, from_name: currentUser.name, from_avatar: currentUser.avatar });
+            }
+            // Приглашаем нового участника
+            socket.emit('gc_invite', { to: ch.partner_id, room: GC.roomId, call_type: GC.type, from_name: currentUser.name });
+            showToast(`Звонок ${ch.partner_name}...`, 'info', 3000);
+        };
+        list.appendChild(row);
+    });
+
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
+    ov.onclick = e => { if (e.target === ov) closeSheet(); };
+}
+
+function openTextMoment() {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target===ov) ov.remove(); };
+    const sh = document.createElement('div'); sh.className='modal-sheet';
+    sh.innerHTML = '<div class="modal-handle"></div>'
+        + '<div style="font-size:17px;font-weight:700;margin-bottom:16px;text-align:center">Текстовый момент</div>'
+        + '<textarea id="tm-text" placeholder="Напишите что-нибудь..." style="width:100%;min-height:100px;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:16px;color:#fff;padding:14px;font-size:16px;font-family:inherit;resize:none;outline:none;box-sizing:border-box" maxlength="500"></textarea>'
+        + '<div style="text-align:right;font-size:12px;color:var(--text-2);margin:6px 4px 14px" id="tm-cnt">0/500</div>';
+    const btn = document.createElement('button');
+    btn.style.cssText='width:100%;padding:14px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
+    btn.textContent='Опубликовать';
+    btn.onclick = async () => {
+        const txt = document.getElementById('tm-text')?.value?.trim();
+        if (!txt) return;
+        btn.disabled=true; btn.textContent='Публикую...';
+        const fd=new FormData(); fd.append('text',txt);
+        const r=await fetch('/create_moment',{method:'POST',body:fd,credentials:'include'});
+        ov.remove(); momentsCache=null; loadMoments(); showToast('Момент опубликован! 🎉','success');
+    };
+    const ta = sh.querySelector ? sh : sh;
+    sh.appendChild(btn);
+    ov.appendChild(sh); document.body.appendChild(ov);
+    setTimeout(()=>{
+        const ta=document.getElementById('tm-text');
+        if(ta){ta.focus();ta.oninput=()=>{const c=document.getElementById('tm-cnt');if(c)c.textContent=ta.value.length+'/500';}}
+    },100);
+}
+
+function releaseWakeLock() { if (wakelock) { wakelock.release().catch(()=>{}); wakelock = null; } }
+
+function renderMomentsList(container, moments) {
+    container.innerHTML = '';
+
+    // Карточка загрузки (если есть активная загрузка) — вставляем первой
+    if (_momentUploading && _momentUploadFile) {
+        _renderUploadingCard(container);
+    }
+
+    if (!moments?.length && !_momentUploading) {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'text-align:center;opacity:0.25;padding:48px 20px;font-size:15px';
+        empty.textContent = 'Моментов пока нет';
+        container.appendChild(empty);
+        return;
+    }
+
+    if (!moments?.length) return;
+    currentMoments = moments;
+
+    // Группируем по пользователю
+    const userOrder = [];
+    const byUser = new Map();
+    moments.forEach(m => {
+        if (!byUser.has(m.user_id)) { byUser.set(m.user_id, []); userOrder.push(m.user_id); }
+        byUser.get(m.user_id).push(m);
+    });
+
+    userOrder.forEach(uid => {
+        const list  = byUser.get(uid);
+        const first = list[0];
+        const cnt   = list.length;
+        const isMe  = uid === currentUser?.id;
+        const viewed = !isMe && _viewedMomentUsers.has(uid);
+
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:14px;padding:10px 2px;cursor:pointer;border-radius:18px;margin-bottom:2px;-webkit-tap-highlight-color:transparent;transition:background 0.15s';
+        row.onclick = () => openUserMomentsViewer(uid);
+        row.onpointerdown = () => row.style.background = 'rgba(255,255,255,0.04)';
+        row.onpointerup = () => row.style.background = '';
+        row.onpointercancel = () => row.style.background = '';
+
+        // Аватар с SVG кольцом
+        const avaWrap = document.createElement('div');
+        avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:62px;height:62px';
+
+        const avaInner = document.createElement('div');
+        avaInner.style.cssText = 'position:absolute;inset:4px;border-radius:50%;overflow:hidden';
+        avaInner.innerHTML = getAvatarHtml({id:uid, name:first.user_name, avatar:first.user_avatar}, 'w-full h-full');
+        avaWrap.appendChild(avaInner);
+
+        // SVG кольцо
+        const NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(NS, 'svg');
+        svg.setAttribute('width','62'); svg.setAttribute('height','62'); svg.setAttribute('viewBox','0 0 62 62');
+        svg.style.cssText = 'position:absolute;inset:0;pointer-events:none';
+        const CX=31, CY=31, R=29;
+        const GAP_DEG = cnt > 1 ? 6 : 0;
+        const SEG_DEG = (360 - GAP_DEG * cnt) / cnt;
+        const ringColor = viewed ? 'rgba(255,255,255,0.2)' : 'var(--accent)';
+        for (let i=0; i<cnt; i++) {
+            const s = -90 + i*(SEG_DEG+GAP_DEG), e = s + SEG_DEG;
+            const tr = d => d*Math.PI/180;
+            const x1=CX+R*Math.cos(tr(s)), y1=CY+R*Math.sin(tr(s));
+            const x2=CX+R*Math.cos(tr(e)), y2=CY+R*Math.sin(tr(e));
+            const path = document.createElementNS(NS, 'path');
+            path.setAttribute('d', `M${x1.toFixed(2)} ${y1.toFixed(2)} A${R} ${R} 0 ${SEG_DEG>180?1:0} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}`);
+            path.setAttribute('stroke', ringColor);
+            path.setAttribute('stroke-width', viewed ? '2.5' : '3.5');
+            path.setAttribute('fill','none');
+            path.setAttribute('stroke-linecap','round');
+            svg.appendChild(path);
+        }
+        avaWrap.appendChild(svg);
+        row.appendChild(avaWrap);
+
+        // Инфо справа
+        const info = document.createElement('div');
+        info.style.cssText = 'flex:1;min-width:0';
+        const mediaLabel = first.media_url
+            ? (first.media_url.match(/\.(mp4|mov|webm)/i) ? '🎥 Видео' : '📷 Фото')
+            : '';
+        const preview = first.text || mediaLabel;
+        info.innerHTML = '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+            + '<div style="font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + escHtml(first.user_name) + (isMe?' <span style="font-size:12px;color:var(--text-2);font-weight:500">(Вы)</span>':'') + '</div>'
+            + '<div style="display:flex;align-items:center;gap:6px;flex-shrink:0">'
+            + (cnt>1 ? '<span style="font-size:11px;background:var(--accent);color:black;border-radius:10px;padding:2px 7px;font-weight:800">'+cnt+'</span>' : '')
+            + '<span style="font-size:12px;color:var(--text-2)">'+first.timestamp+'</span>'
+            + '</div></div>'
+            + '<div style="font-size:13px;color:var(--text-2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:'+(viewed?'0.45':'0.8')+'">'+(preview||'')+'</div>';
+        row.appendChild(info);
+        container.appendChild(row);
+    });
+
+    // Предзагрузка первых 5 медиа в фоне
+    moments.slice(0, 5).forEach(m => {
+        if (m.media_url && !m.media_url.match(/\.(mp4|mov|webm)/i)) {
+            // Для фото — предзагружаем через Image
+            if (!_mediaCache.has(m.media_url)) {
+                const img = new Image();
+                img.src = m.media_url;
+            }
+        }
+        // Для видео — только первые 2 (тяжёлые)
+    });
+    if (moments[0]?.media_url) _preloadMedia(moments[0].media_url);
+    if (moments[1]?.media_url) _preloadMedia(moments[1].media_url);
+}
+
+function requestPermission(type) {
+    if (type === 'notifications') {
+        return new Promise(async resolve => {
+            if (Notification.permission === 'granted') return resolve('granted');
+            if (Notification.permission === 'denied')  return resolve('denied');
+            const perms = _getPerms();
+            if (!perms.notifications_asked) {
+                _savePerm('notifications_asked', true);
+            }
+            const result = await Notification.requestPermission();
+            resolve(result);
+        });
+    }
+
+    if (type === 'microphone' || type === 'camera') {
+        // Уже получили в этой сессии
+        if (_sessionPerms[type] === 'granted') return Promise.resolve('granted');
+        if (_sessionPerms[type] === 'denied')  return Promise.resolve('denied');
+
+        const constraints = type === 'camera'
+            ? { audio: true, video: { facingMode: 'user' } }
+            : { audio: true, video: false };
+
+        const perms = _getPerms();
+        const firstTime = !perms[type + '_asked'];
+
+        if (!firstTime) {
+            // Уже видели диалог — сразу пробуем getUserMedia
+            // Пропускаем проверку protocol — Cloudflare туннель HTTPS снаружи
+            const hasMod = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+            const hasLeg = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+            if (!hasMod && !hasLeg) return Promise.resolve('denied');
+
+            if (hasMod) {
+                return navigator.mediaDevices.getUserMedia(constraints)
+                    .then(stream => {
+                        stream.getTracks().forEach(t => t.stop());
+                        _sessionPerms[type] = 'granted';
+                        return 'granted';
+                    })
+                    .catch(e => {
+                        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                            _sessionPerms[type] = 'denied';
+                            return 'denied';
+                        }
+                        _sessionPerms[type] = 'granted';
+                        return 'granted';
+                    });
+            } else {
+                const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+                return new Promise(res => {
+                    gum.call(navigator, constraints,
+                        stream => { stream.getTracks().forEach(t => t.stop()); _sessionPerms[type] = 'granted'; res('granted'); },
+                        err => { _sessionPerms[type] = 'denied'; res('denied'); }
+                    );
+                });
+            }
+        }
+
+        // Первый раз — показываем наш диалог-объяснение
+        // Кнопка "Разрешить" вызывает getUserMedia СИНХРОННО из onclick (Safari требует)
+        return new Promise(resolve => {
+            const cfg = {
+                microphone: { icon:'MIC', title:'Доступ к микрофону', desc:'Нужен для голосовых сообщений и звонков', btn:'Разрешить микрофон' },
+                camera:     { icon:'📷', title:'Доступ к камере',    desc:'Нужен для видеозвонков и записи видео',  btn:'Разрешить камеру' },
+            };
+            const c = cfg[type];
+            const ov = document.createElement('div');
+            ov.className   = 'modal-overlay';
+            ov.style.zIndex = '99999';
+            const sh = document.createElement('div');
+            sh.className = 'modal-sheet';
+            sh.innerHTML =
+                '<div class="modal-handle"></div>'
+                + '<div style="text-align:center;padding:10px 0 22px">'
+                + '<div style="display:flex;align-items:center;justify-content:center;width:72px;height:72px;border-radius:20px;background:rgba(16,185,129,0.15);margin:0 auto 16px">'+_permIcon(c.icon)+'</div>'
+                + '<div style="font-size:18px;font-weight:700;margin-bottom:10px">'+c.title+'</div>'
+                + '<div style="font-size:14px;color:var(--text-2);line-height:1.55">'+c.desc+'<br><br>'
+                + '<span style="font-size:13px;opacity:.7">Safari покажет системный запрос разрешения</span>'
+                + '</div></div>';
+
+            const allowBtn = document.createElement('button');
+            allowBtn.style.cssText = 'width:100%;padding:15px;background:var(--accent);border:none;border-radius:16px;color:#000;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit';
+            allowBtn.textContent = c.btn;
+
+            // КРИТИЧНО: getUserMedia вызывается ПРЯМО в onclick — Safari пропускает
+            allowBtn.onclick = () => {
+                ov.remove();
+                _savePerm(type + '_asked', true);
+                // Синхронный вызов из user gesture — Safari требует
+                const hasModernAPI = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+                const hasLegacyAPI = !!(navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia);
+                if (hasModernAPI) {
+                    navigator.mediaDevices.getUserMedia(constraints)
+                        .then(stream => {
+                            stream.getTracks().forEach(t => t.stop());
+                            _sessionPerms[type] = 'granted';
+                            resolve('granted');
+                        })
+                        .catch(e => {
+                            if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+                                _sessionPerms[type] = 'denied';
+                                resolve('denied');
+                            } else {
+                                _sessionPerms[type] = 'granted';
+                                resolve('granted');
+                            }
+                        });
+                } else if (hasLegacyAPI) {
+                    const gum = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+                    gum.call(navigator, constraints,
+                        stream => { stream.getTracks().forEach(t => t.stop()); _sessionPerms[type] = 'granted'; resolve('granted'); },
+                        err => {
+                            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                                _sessionPerms[type] = 'denied'; resolve('denied');
+                            } else {
+                                _sessionPerms[type] = 'granted'; resolve('granted');
+                            }
+                        }
+                    );
+                } else {
+                    resolve('denied');
+                }
+            };
+
+            const skipBtn = document.createElement('button');
+            skipBtn.style.cssText = 'width:100%;padding:10px;background:none;border:none;color:var(--text-2);font-size:14px;cursor:pointer;font-family:inherit;margin-top:4px';
+            skipBtn.textContent = 'Не сейчас';
+            skipBtn.onclick = () => { ov.remove(); _savePerm(type + '_asked', true); resolve('denied'); };
+
+            sh.appendChild(allowBtn);
+            sh.appendChild(skipBtn);
+            ov.appendChild(sh);
+            document.body.appendChild(ov);
+        });
+    }
+
+    return Promise.resolve('unknown');
+}
+
+function scrollDown(smooth=true){VirtualList.scrollToBottom(smooth);}
+
+function setupCallScreen(type, isIncoming) {
+    const screen = document.getElementById('call-screen');
+    if (!screen) return;
+    screen.classList.remove('hidden');
+    const partnerName = document.getElementById('chat-name')?.textContent || 'Звонок';
+    const partnerAva  = chatPartnerAvatarSrc[currentPartnerId]
+        || document.getElementById('chat-ava-header')?.querySelector('img')?.src
+        || '';
+
+    const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
+    const statusText = isIncoming
+        ? (type === 'video' ? '📹 Входящий видеозвонок' : '📞 Входящий звонок')
+        : (type === 'video' ? 'Видеовызов...' : 'Вызов...');
+
+    setEl('call-name',         el => el.textContent = partnerName);
+    setEl('call-status-label', el => el.textContent = statusText);
+    setEl('call-avatar-box',   el => el.innerHTML = getAvatarHtml({id: currentPartnerId, name: partnerName, avatar: partnerAva}, 'w-28 h-28'));
+    setEl('accept-btn',        el => el.style.display = isIncoming ? 'flex' : 'none');
+    setEl('call-timer',        el => el.style.display = 'none');
+    setEl('call-quality-label',el => el.style.display = 'none');
+    setEl('flip-btn',          el => el.style.display = type === 'video' ? 'flex' : 'none');
+    // Показываем кружки дозвона
+    document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'block');
+    acquireWakeLock();
+    // Автоскрытие кнопок через 3с
+    showCallControls();
+    _callCtrlHideTimer = setTimeout(hideCallControls, 3000);
+}
+
+function setupGlobalGestures() {
+    let startX = 0, startY = 0;
+
+    // ── Свайп из края экрана → назад из чата ──
+    document.addEventListener('touchstart', (e) => {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+        const chatWin = document.getElementById('chat-window');
+        if (!chatWin?.classList.contains('active')) return;
+        const dx = e.touches[0].clientX - startX;
+        const dy = Math.abs(e.touches[0].clientY - startY);
+        if (startX < 30 && dx > 0 && dy < Math.abs(dx)) {
+            const ind = document.getElementById('swipe-indicator');
+            if (ind) ind.style.opacity = Math.min(dx / 120, 1) * 0.8;
+            chatWin.style.transform = `translateX(${Math.min(dx * 0.4, 60)}px)`;
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+        const chatWin = document.getElementById('chat-window');
+        if (!chatWin?.classList.contains('active')) return;
+        const dx = e.changedTouches[0].clientX - startX;
+        chatWin.style.transform = '';
+        const ind = document.getElementById('swipe-indicator');
+        if (ind) ind.style.opacity = '0';
+        if (startX < 40 && dx > 80) closeChat();
+    }, { passive: true });
+
+    // ── Свайп вниз на списке чатов → показать Moments ──
+    _setupMomentsPullDown();
+
+    // ── Свайп по чату в списке (вправо / влево) ──
+    _setupChatListSwipes();
+}
+
+function showCallControls() {
+    const ctrl = document.getElementById('call-controls');
+    if (!ctrl) return;
+    ctrl.style.opacity = '1';
+    ctrl.style.transform = 'translateY(0)';
+    ctrl.style.pointerEvents = 'auto';
+    clearTimeout(_callCtrlHideTimer);
+    _callCtrlHideTimer = setTimeout(hideCallControls, 3000);
+}
+
+function showLocalVideo() {
+    const vc = document.getElementById('call-video-container');
+    const lv = document.getElementById('local-video');
+    if (vc) vc.style.display = 'block';
+    if (lv && callLocalStream) {
+        lv.srcObject = callLocalStream;
+        lv.style.display = 'block';
+        lv.play().catch(() => document.addEventListener('touchstart', () => lv.play(), { once: true }));
+    }
+}
+
+async function startCall(type) {
+    if (!currentPartnerId) return;
+    currentCallType = type; iceRestartCount = 0;
+    vibrate(50);
+    setupCallScreen(type, false);
+    pendingIce = [];
+    _speakerOn = true;
+    try {
+        callLocalStream = await getLocalStream(type);
+        if (type === 'video') showLocalVideo();
+        peerConnection = createPeerConnection();
+        callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
+        const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
+        await peerConnection.setLocalDescription(offer);
+        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type });
+        setTimeout(() => {
+            if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
+                showToast('Абонент не отвечает', 'warning'); endCall(true);
+            }
+        }, 45000);
+    } catch(e) {
+        console.error('startCall:', e); endCall(false);
+        if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
+            showToast('Разрешите доступ в Настройки → Safari → Камера/Микрофон', 'error', 6000);
+        } else {
+            showToast('Ошибка доступа к медиа: ' + (e.message || e.name), 'error', 4000);
+        }
+    }
+}
+
+function startCallTimer() {
+    callStartTime = Date.now();
+    const el = document.getElementById('call-timer');
+    if (el) el.style.display = 'block';
+    clearInterval(callTimerInterval);
+    callTimerInterval = setInterval(() => {
+        if (el) el.textContent = fmtSec(Math.floor((Date.now() - callStartTime) / 1000));
+    }, 1000);
+}
+
+async function startGroupCall(type, roomId) {
+    if (GC.active) return;
+    _injectGroupCallCSS();
+    GC.active = true;
+    GC.type   = type || 'audio';
+    GC.roomId = roomId || `gc_${Date.now()}`;
+    GC.peers  = {};
+
+    setupCallScreen(type, false);
+    // Скрываем 1:1 инфо, показываем grid
+    const callInfo = document.getElementById('call-info');
+    if (callInfo) callInfo.style.display = 'none';
+    const grid = document.getElementById('group-call-grid');
+    if (grid) { grid.style.display = 'grid'; grid.classList.add('active'); }
+
+    // Показываем кнопку + участника
+    _showAddParticipantBtn();
+
+    // Инициализируем локальный поток
+    try {
+        callLocalStream = await getLocalStream(type);
+    } catch(e) {
+        showToast('Нет доступа к микрофону', 'error'); endCall(false); return;
+    }
+
+    // Плитка себя
+    const selfTile = _createGCTile(currentUser.id, currentUser.name, currentUser.avatar, true);
+    grid.appendChild(selfTile);
+    if (type === 'video') {
+        const selfVid = selfTile.querySelector('video');
+        if (selfVid) { selfVid.srcObject = callLocalStream; selfVid.style.display = 'block'; }
+    }
+    _updateGCGrid();
+
+    // Уведомляем сервер — войти в комнату
+    socket.emit('join_group_call', { room: GC.roomId, call_type: type, from_name: currentUser.name, from_avatar: currentUser.avatar });
+
+    startCallTimer();
+    showCallControls();
+    _callCtrlHideTimer = setTimeout(hideCallControls, 3000);
+}
+
+async function syncProfileData() {
+    try {
+        const r = await apiFetch('/get_current_user');
+        if (!r) return;
+        const data = await r.json();
+        if (!data?.id) return;
+
+        // Не затираем avatar если сервер вернул дефолтный а у нас уже есть реальный
+        const serverAvatar = data.avatar || '';
+        const localAvatar  = currentUser.avatar || '';
+        const isServerDefault = serverAvatar.includes('default_avatar');
+        const isLocalReal     = localAvatar && !localAvatar.includes('default_avatar');
+        if (isServerDefault && isLocalReal) {
+            data.avatar = localAvatar; // сохраняем локальный
+        }
+
+        const changed = data.name !== currentUser.name
+                     || data.avatar !== currentUser.avatar
+                     || data.bio !== currentUser.bio;
+        if (changed) {
+            Object.assign(currentUser, data);
+            localStorage.setItem('waychat_user_cache', JSON.stringify(currentUser));
+            invalidateAvatarCache(currentUser.id);
+            updateAllAvatarUI();
+        }
+    } catch(e) {}
+}
+
+function toggleMute() {
+    isMuted = !isMuted;
+    callLocalStream?.getAudioTracks().forEach(t => t.enabled = !isMuted);
+    const btn = document.getElementById('mute-btn');
+    if (btn) {
+        btn.innerHTML = isMuted
+            ? `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><line x1="1" y1="1" x2="23" y2="23" stroke="white" stroke-width="2" stroke-linecap="round"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v3M8 23h8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+            : ICONS.mic.replace('rgba(255,255,255,0.5)','white');
+        btn.classList.toggle('active', isMuted);
+    }
+    vibrate(10);
+}
+
+function toggleSpeaker() {
+    const btn = document.getElementById('speaker-btn');
+    btn?.classList.toggle('active');
+    showToast('Громкая связь переключена', 'info', 1500); vibrate(10);
+}
+
+function toggleVideo() {
+    isVideoOff = !isVideoOff;
+    callLocalStream?.getVideoTracks().forEach(t => t.enabled = !isVideoOff);
+    const btn = document.getElementById('video-btn');
+    if (btn) { btn.classList.toggle('active', isVideoOff); }
+    vibrate(10);
+}
 window.WayChat = {
     version: '8.0.0',
 
