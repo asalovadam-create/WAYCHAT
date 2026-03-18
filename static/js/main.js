@@ -7050,17 +7050,70 @@ function switchTab(tab) {
 
 // ── Удаление момента ─────────────────────────────────────
 async function deleteMoment(mid) {
+    // Подтверждение перед удалением
+    const confirmed = await _confirmDialog('Удалить момент?', 'Момент будет удалён навсегда', 'Удалить', 'Отмена');
+    if (!confirmed) return;
+
     try {
         const r = await fetch(`/delete_moment/${mid}`, { method: 'POST', credentials: 'include' });
         if (r.ok) {
-            showToast('Момент удалён', 'info');
+            showToast('Момент удалён', 'success');
             momentsCache    = null;
             momentsLastLoad = 0;
-            // Закрываем оверлей
-            document.querySelector('[style*="z-index: 9500"], [style*="z-index:9500"]')?.remove();
+            // Закрываем overlay момента (наш новый overlay имеет id moments-overlay)
+            const ov = document.getElementById('moments-overlay');
+            if (ov) ov.remove();
+            // Также закрываем старые оверлеи
+            document.querySelectorAll('[id^="mv-ov-"]').forEach(el => el.remove());
             loadMoments();
+        } else {
+            const err = await r.json().catch(() => ({}));
+            showToast(err.error || 'Ошибка удаления', 'error');
         }
-    } catch(e) { showToast('Ошибка удаления', 'error'); }
+    } catch(e) {
+        console.error('deleteMoment:', e);
+        showToast('Ошибка сети', 'error');
+    }
+}
+
+// Универсальный диалог подтверждения
+function _confirmDialog(title, message, confirmText, cancelText) {
+    return new Promise(resolve => {
+        // Убираем старый
+        document.getElementById('_confirm-dlg')?.remove();
+
+        const ov = document.createElement('div');
+        ov.id = '_confirm-dlg';
+        ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
+
+        const sh = document.createElement('div');
+        sh.style.cssText = 'width:100%;max-width:480px;background:rgba(22,22,28,0.98);border-radius:24px 24px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:20px 20px calc(max(env(safe-area-inset-bottom,20px),20px));transform:translateY(100%);transition:transform 0.28s cubic-bezier(0.32,0.72,0,1)';
+        sh.innerHTML = `
+            <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 18px"></div>
+            <div style="font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:#fff">${title}</div>
+            <div style="font-size:14px;color:rgba(255,255,255,0.5);text-align:center;margin-bottom:22px;line-height:1.5">${message}</div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+                <button id="_confirm-yes" style="width:100%;padding:15px;background:#ef4444;border:none;border-radius:16px;color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">${confirmText}</button>
+                <button id="_confirm-no"  style="width:100%;padding:15px;background:rgba(255,255,255,0.08);border:none;border-radius:16px;color:#fff;font-size:16px;font-weight:500;cursor:pointer;font-family:inherit">${cancelText}</button>
+            </div>`;
+
+        ov.appendChild(sh);
+        document.body.appendChild(ov);
+
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            sh.style.transform = 'translateY(0)';
+        }));
+
+        const close = (result) => {
+            sh.style.transform = 'translateY(100%)';
+            setTimeout(() => ov.remove(), 300);
+            resolve(result);
+        };
+
+        sh.querySelector('#_confirm-yes').onclick = () => close(true);
+        sh.querySelector('#_confirm-no').onclick  = () => close(false);
+        ov.addEventListener('click', (e) => { if (e.target === ov) close(false); });
+    });
 }
 
 // ── openCreateMomentModal ────────────────────────────────
