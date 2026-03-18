@@ -606,7 +606,7 @@ function initSocket() {
     socket.on('group_message', onNewMessage);
     socket.on('group_member_added', (d) => {
         if (+d.group_id === currentChatId) {
-            showToast(`${d.member_name} добавлен в группу`, 'info');
+            // member added — без тоста
         }
     });
     socket.on('group_member_left', (d) => {
@@ -839,26 +839,23 @@ function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
 }
 
 function getInitialAvatar(name, sizeClass, uid = '') {
-    // Hash-based цвет — равномернее распределяет цвета по именам
     const colors = ['#f43f5e','#6366f1','#10b981','#f59e0b','#3b82f6','#8b5cf6','#ec4899','#06b6d4'];
     const n = name || '?';
     let hash = 0;
-    for (let i = 0; i < n.length; i++) {
-        hash = n.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
     const color = colors[Math.abs(hash) % colors.length];
     const char  = n.charAt(0).toUpperCase();
-    // Размер шрифта через inline px — не зависит от Tailwind
-    const fs = sizeClass.includes('w-28') ? '38px'
-        : sizeClass.includes('w-16') ? '28px'
-        : sizeClass.includes('w-14') ? '24px'
-        : sizeClass.includes('w-12') ? '20px'
-        : sizeClass.includes('w-10') ? '18px'
-        : sizeClass.includes('w-9')  ? '17px'
-        : sizeClass.includes('w-8')  ? '15px'
-        : sizeClass.includes('full') ? '40%'
-        : '17px';
-    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35);font-size:${fs};font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center" data-uid="${uid}">${char}</div>`;
+    // Размеры как в TG — буква ~45% от диаметра аватара
+    const fs = sizeClass.includes('w-28') ? '46px'
+        : sizeClass.includes('w-16') ? '32px'
+        : sizeClass.includes('w-14') ? '28px'
+        : sizeClass.includes('w-12') ? '24px'
+        : sizeClass.includes('w-10') ? '22px'
+        : sizeClass.includes('w-9')  ? '20px'
+        : sizeClass.includes('w-8')  ? '18px'
+        : sizeClass.includes('full') ? '44%'
+        : '20px';
+    return `<div class="${sizeClass} rounded-full flex items-center justify-center" style="background:${color};font-size:${fs};font-weight:600;color:#fff;letter-spacing:-0.5px;line-height:1;display:flex;align-items:center;justify-content:center" data-uid="${uid}">${char}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -928,13 +925,40 @@ function getMoscowTime(dateStr) {
     try {
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return dateStr;
+
         const moscowOffset = 3 * 60;
         const localOffset  = d.getTimezoneOffset();
         const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
         const nowMsk = new Date(Date.now() + (moscowOffset + (new Date().getTimezoneOffset())) * 60000);
-        const isToday = moscow.toDateString() === nowMsk.toDateString();
-        if (isToday) return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
-        return moscow.getDate().toString().padStart(2,'0') + '.' + (moscow.getMonth()+1).toString().padStart(2,'0');
+
+        const mDate = moscow.toDateString();
+        const nDate = nowMsk.toDateString();
+
+        // Сегодня — только время
+        if (mDate === nDate) {
+            return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
+        }
+
+        // Вчера
+        const yesterday = new Date(nowMsk);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (mDate === yesterday.toDateString()) return 'Вчера';
+
+        // Эта неделя (до 7 дней) — название дня
+        const diffDays = Math.floor((nowMsk - moscow) / 86400000);
+        if (diffDays < 7) {
+            const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+            return days[moscow.getDay()];
+        }
+
+        // Этот год — день + месяц по-русски (без года)
+        const months = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+        if (moscow.getFullYear() === nowMsk.getFullYear()) {
+            return moscow.getDate() + ' ' + months[moscow.getMonth()];
+        }
+
+        // Старше года — день.месяц.год
+        return moscow.getDate() + ' ' + months[moscow.getMonth()] + ' ' + moscow.getFullYear();
     } catch(e) { return dateStr; }
 }
 
@@ -978,8 +1002,6 @@ html, body {
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--text);
-    /* padding-bottom для home indicator */
-    padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .glass { background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px); }
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
@@ -1013,8 +1035,9 @@ body {
     transition:opacity .18s ease,transform .18s cubic-bezier(.34,1.56,.64,1)
 }
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
-.fab-mi{display:flex;align-items:center;gap:12px;background:var(--surface);border:.5px solid rgba(255,255,255,.08);border-radius:16px;padding:11px 16px;cursor:pointer;box-shadow:0 4px 24px rgba(0,0,0,.45);font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s}
-.fab-mi:active{background:rgba(255,255,255,.08)}
+.fab-mi{display:flex;align-items:center;gap:14px;background:rgba(40,40,42,0.98);border:.5px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 18px;cursor:pointer;box-shadow:0 8px 32px rgba(0,0,0,.6);font-size:15px;font-weight:500;color:rgba(255,255,255,.9);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.fab-mi:active{background:rgba(60,60,62,0.98)}
+.fab-mi-ico{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .fab-bd{position:fixed;inset:0;z-index:899;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .2s ease}
 .fab-bd.open{opacity:1;pointer-events:all}
 .hdr-badge{display:inline-flex;align-items:center;justify-content:center;background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;padding:0 5px;margin-left:6px}
@@ -1038,7 +1061,7 @@ body {
 .fab-plus:active { transform:scale(0.88); }
 
 /* ЧАТЫ — TG минимализм */
-.chat-item{display:flex;align-items:center;gap:12px;padding:10px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
+.chat-item{display:flex;align-items:center;gap:12px;padding:7px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
 .online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 6px var(--accent)}
@@ -1071,7 +1094,13 @@ body {
 /* ЧАТ ОКНО — плавное открытие как в TG */
 .chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform; }
 .chat-view.active { transform:translateX(0); }
-.chat-wallpaper{background:var(--chat-bg);}
+.chat-wallpaper{
+    background-color: #1a1a2e;
+    background-image:
+        radial-gradient(ellipse at 20% 50%, rgba(16,185,129,0.04) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 50%),
+        url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.018'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
 /* Эффект глубины на фоне при открытии чата */
 #main-content{transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94),filter 0.28s ease,opacity 0.28s ease}
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
@@ -1235,7 +1264,7 @@ body {
 
 <div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(env(safe-area-inset-bottom,0px),80px)">
+    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 58px)">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section">
@@ -1414,22 +1443,22 @@ body {
     <div id="fab-bd" class="fab-bd" onclick="closeFabMenu()"></div>
     <div id="fab-menu" class="fab-menu">
         <div class="fab-mi" onclick="closeFabMenu();openNewContactModal()">
-            <div style="width:34px;height:34px;border-radius:10px;background:rgba(16,185,129,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="var(--accent)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/><line x1="16" y1="11" x2="22" y2="11" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/></svg>
+            <div class="fab-mi-ico">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="rgba(255,255,255,.75)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/><line x1="16" y1="11" x2="22" y2="11" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/></svg>
             </div>
-            Новый чат
+            <span>Новый чат</span>
         </div>
         <div class="fab-mi" onclick="closeFabMenu();openCreateGroupModal()">
-            <div style="width:34px;height:34px;border-radius:10px;background:rgba(59,130,246,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="#60a5fa" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="#60a5fa" stroke-width="2" stroke-linecap="round"/></svg>
+            <div class="fab-mi-ico">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9" cy="7" r="4" stroke="rgba(255,255,255,.75)" stroke-width="2"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/></svg>
             </div>
-            Новая группа
+            <span>Новая группа</span>
         </div>
         <div class="fab-mi" onclick="closeFabMenu();pickMedia('moment')">
-            <div style="width:34px;height:34px;border-radius:10px;background:rgba(139,92,246,0.15);display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="#a78bfa" stroke-width="2"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/></svg>
+            <div class="fab-mi-ico">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,.75)" stroke-width="2"/><circle cx="12" cy="12" r="4" stroke="rgba(255,255,255,.75)" stroke-width="2"/><line x1="12" y1="2" x2="12" y2="4" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="20" x2="12" y2="22" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/><line x1="2" y1="12" x2="4" y2="12" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/><line x1="20" y1="12" x2="22" y2="12" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/></svg>
             </div>
-            Создать момент
+            <span>Создать момент</span>
         </div>
     </div>
     <button class="fab-btn" onclick="toggleFabMenu()" id="fab-btn-el" aria-label="Новый чат">
@@ -1638,6 +1667,8 @@ body {
                 <textarea id="msg-input" rows="1"
                     placeholder="Сообщение..."
                     oninput="handleTyping(); autoResize(this); updateSendButton()"
+                    onchange="updateSendButton()"
+                    onkeyup="updateSendButton()"
                     onkeydown="handleInputKeydown(event)"></textarea>
             </div>
             <button id="send-btn-main" onclick="sendText()" class="send-btn" style="display:none">${ICONS.send}</button>
@@ -2267,7 +2298,7 @@ function renderChatList(chats) {
 
             const info = document.createElement('div');
             info.className = 'chat-info';
-            info.style.cssText = 'flex:1;min-width:0;padding-bottom:12px;border-bottom:.5px solid var(--sep)';
+            info.style.cssText = 'flex:1;min-width:0;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,0.08)';
 
             div.appendChild(avaWrap);
             div.appendChild(info);
@@ -3599,19 +3630,34 @@ function _nowMoscow() {
 // ══════════════════════════════════════════════════════════
 //  ОБРАБОТЧИКИ ВХОДЯЩИХ СООБЩЕНИЙ
 // ══════════════════════════════════════════════════════════
+// Глобальный дедупликатор сообщений — предотвращает дубли из chat_ и user_ rooms
+const _seenMsgIds = new Set();
+function _markMsgSeen(id) {
+    _seenMsgIds.add(id);
+    if (_seenMsgIds.size > 500) {
+        // Чистим старые — берём первые 250 и удаляем
+        const iter = _seenMsgIds.values();
+        for (let i = 0; i < 250; i++) _seenMsgIds.delete(iter.next().value);
+    }
+}
+
 function onNewMessage(msg) {
     if (msg.type_msg) msg.type = msg.type_msg;
 
+    // Глобальная защита от дублей (chat_ + user_ rooms шлют одно сообщение)
+    if (msg.id && _seenMsgIds.has(msg.id)) return;
+    if (msg.id) _markMsgSeen(msg.id);
+
     // Проверяем: это сообщение для открытого чата?
     if (+msg.chat_id === currentChatId) {
-        // Удаляем ВСЕ оптимистичные дубликаты с тем же контентом
+        // Удаляем оптимистичные дубликаты с тем же контентом
         if (+msg.sender_id === currentUser.id) {
             const container = document.getElementById('messages');
             container?.querySelectorAll('[data-optimistic="1"]').forEach(el => {
                 if (el.dataset.content === (msg.content || '')) el.remove();
             });
         }
-        // Проверяем: нет ли уже этого сообщения в DOM (защита от дублей)
+        // Защита от дублей в DOM
         if (document.querySelector(`[data-msg-id="${msg.id}"]`)) return;
 
         hideTypingIndicator();
@@ -3619,7 +3665,6 @@ function onNewMessage(msg) {
         socket.emit('mark_read', { chat_id: currentChatId });
         _debouncedLoadChats();
     } else {
-        // Инвалидируем кэш нужного чата
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
         _debouncedLoadChats();
@@ -3638,13 +3683,7 @@ function onNewMessage(msg) {
                 }
             }
         });
-        // Уведомление только если приложение не на экране
         vibrate([10, 30, 10]);
-        const senderName = msg.is_group_msg
-            ? (msg.sender_name || 'Группа')
-            : getContactDisplayName(msg.sender_id, msg.sender_name || 'Новое сообщение');
-        const preview = msg.content ? msg.content.slice(0, 40) : '🎙️';
-        showToast(`${senderName}: ${preview}`, 'info');
         tryBrowserNotification(msg);
     }
 }
@@ -5673,20 +5712,81 @@ async function pickMedia(context) {
         try { document.body.removeChild(input); } catch(e) {}
         if (!file) return;
         if (context === 'moment') { _showMomentEditor(file); return; }
-        // Сообщение — грузим как раньше
-        showToast('Загрузка...', 'info', 15000);
-        const fd = new FormData();
-        fd.append('file', file);
+        if (!currentChatId) return;
+
+        // Показываем TG-стиль превью с прогрессом прямо в списке сообщений
+        const isVid  = file.type.startsWith('video');
+        const previewUrl = URL.createObjectURL(file);
+        const tmpId  = 'media-upload-' + Date.now();
+
+        // Оптимистичный пузырь с прогрессом
+        const tmpRow = document.createElement('div');
+        tmpRow.className = 'msg-row out';
+        tmpRow.id = tmpId;
+        tmpRow.innerHTML = `
+            <div class="bubble" style="padding:4px;background:var(--accent);border-radius:18px 18px 4px 18px;position:relative;overflow:hidden;max-width:240px;min-width:120px;min-height:120px">
+                ${isVid
+                    ? `<video src="${previewUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover" muted playsinline></video>`
+                    : `<img src="${previewUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover">`
+                }
+                <div id="${tmpId}-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.42);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px">
+                    <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
+                        <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+                        <circle id="${tmpId}-ring" cx="26" cy="26" r="20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"
+                            stroke-dasharray="${(2*Math.PI*20).toFixed(1)}" stroke-dashoffset="${(2*Math.PI*20).toFixed(1)}"
+                            style="transition:stroke-dashoffset 0.3s ease"/>
+                    </svg>
+                    <span id="${tmpId}-pct" style="position:absolute;font-size:12px;font-weight:700;color:#fff">0%</span>
+                </div>
+            </div>`;
+
+        const msgsEl = document.getElementById('messages');
+        if (msgsEl) {
+            msgsEl.appendChild(tmpRow);
+            msgsEl.scrollTop = msgsEl.scrollHeight;
+        }
+
+        // Загружаем с XMLHttpRequest для прогресса
         try {
-            // Прямой fetch без таймаута для медиафайлов
-            const r = await fetch('/upload_media', {method:'POST', body:fd, credentials:'include'});
-            if (!r || !r.ok) throw new Error('upload failed');
-            const d = await r.json();
-            if (currentChatId) {
-                socket.emit('send_message', {chat_id:currentChatId, type_msg: d.type||(file.type.startsWith('video')?'video':'image'), file_url:d.url, sender_id:currentUser.id});
-                showToast('Отправлено','success');
-            }
-        } catch(e){ showToast('Ошибка загрузки','error'); }
+            const url_res = await new Promise((resolve, reject) => {
+                const fd  = new FormData();
+                fd.append('file', file);
+                const xhr = new XMLHttpRequest();
+                const C   = 2 * Math.PI * 20;
+                xhr.upload.onprogress = (e) => {
+                    if (!e.lengthComputable) return;
+                    const pct  = e.loaded / e.total * 100;
+                    const ring = document.getElementById(`${tmpId}-ring`);
+                    const pctEl = document.getElementById(`${tmpId}-pct`);
+                    if (ring) ring.style.strokeDashoffset = (C * (1 - pct / 100)).toFixed(1);
+                    if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+                };
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try { resolve(JSON.parse(xhr.responseText)); }
+                        catch(e) { reject(new Error('parse error')); }
+                    } else { reject(new Error('upload failed')); }
+                };
+                xhr.onerror = () => reject(new Error('network error'));
+                xhr.open('POST', '/upload_media');
+                xhr.withCredentials = true;
+                xhr.send(fd);
+            });
+
+            // Убираем превью и отправляем реальное сообщение
+            tmpRow.remove();
+            URL.revokeObjectURL(previewUrl);
+            socket.emit('send_message', {
+                chat_id: currentChatId,
+                type_msg: url_res.type || (isVid ? 'video' : 'image'),
+                file_url: url_res.url,
+                sender_id: currentUser.id
+            });
+        } catch(e) {
+            tmpRow.remove();
+            URL.revokeObjectURL(previewUrl);
+            showToast('Ошибка загрузки', 'error');
+        }
     };
     input.click();
 }
@@ -6086,53 +6186,66 @@ function renderMomentsList(container, moments) {
 function _renderUploadingCard(container) {
     const card = document.createElement('div');
     card.id = 'moment-uploading-card';
-    card.style.cssText = 'display:flex;align-items:center;gap:14px;padding:12px 14px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:18px;margin-bottom:10px';
+    card.style.cssText = `
+        display:flex;align-items:center;gap:16px;
+        padding:14px 16px;
+        background:rgba(16,185,129,0.06);
+        border:1px solid rgba(16,185,129,0.18);
+        border-radius:20px;margin-bottom:10px;
+        animation:fadeIn 0.3s ease;
+    `;
 
-    // Превью (блюр обложка)
+    // Превью с красивым прогресс-кольцом
     const preview = document.createElement('div');
-    preview.style.cssText = 'width:62px;height:62px;border-radius:14px;overflow:hidden;flex-shrink:0;position:relative;background:#111';
+    preview.style.cssText = 'width:68px;height:68px;border-radius:16px;overflow:hidden;flex-shrink:0;position:relative;background:#111';
     if (_momentUploadFile) {
         const isVid = _momentUploadFile.type.startsWith('video');
         const previewUrl = _momentUploadPreviewUrl || '';
-        if (isVid) {
-            const vid = document.createElement('video');
-            vid.muted = true; vid.playsInline = true;
-            vid.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(3px)';
-            vid.src = previewUrl;
-            preview.appendChild(vid);
-        } else {
-            const img = document.createElement('img');
-            img.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(3px)';
-            img.src = previewUrl;
-            preview.appendChild(img);
-        }
-        // Прогресс-кольцо поверх
-        const ring = document.createElement('div');
-        ring.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.45)';
-        ring.innerHTML = '<svg width="32" height="32" viewBox="0 0 32 32"><circle cx="16" cy="16" r="13" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="2.5"/><circle id="upload-ring" cx="16" cy="16" r="13" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="81.68" stroke-dashoffset="81.68" transform="rotate(-90 16 16)" style="transition:stroke-dashoffset 0.3s"/></svg>';
-        preview.appendChild(ring);
+        const media = document.createElement(isVid ? 'video' : 'img');
+        media.style.cssText = 'width:100%;height:100%;object-fit:cover;filter:blur(4px) brightness(0.6)';
+        if (isVid) { media.muted = true; media.playsInline = true; }
+        media.src = previewUrl;
+        preview.appendChild(media);
     }
+    // Кольцо прогресса поверх превью
+    const ringWrap = document.createElement('div');
+    ringWrap.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center';
+    const C = 2 * Math.PI * 22; // circumference r=22
+    ringWrap.innerHTML = `
+        <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
+            <circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+            <circle id="upload-ring" cx="26" cy="26" r="22" fill="none"
+                stroke="#10b981" stroke-width="3" stroke-linecap="round"
+                stroke-dasharray="${C.toFixed(2)}" stroke-dashoffset="${C.toFixed(2)}"
+                style="transition:stroke-dashoffset 0.4s ease"/>
+        </svg>
+        <span id="upload-pct-text" style="position:absolute;font-size:11px;font-weight:700;color:#fff;letter-spacing:-0.3px">0%</span>`;
+    preview.appendChild(ringWrap);
     card.appendChild(preview);
 
-    // Текст + прогресс бар
+    // Текст
     const info = document.createElement('div');
     info.style.cssText = 'flex:1;min-width:0';
-    info.innerHTML = '<div style="font-weight:700;font-size:14px;color:#fff;margin-bottom:6px">Публикация момента...</div>'
-        + '<div style="height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden">'
-        + '<div id="moment-upload-bar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s;border-radius:2px"></div>'
-        + '</div>'
-        + '<div id="moment-upload-pct" style="font-size:11px;color:var(--text-2);margin-top:4px">0%</div>';
+    info.innerHTML = `
+        <div style="font-weight:600;font-size:14px;color:#fff;margin-bottom:5px">Публикация момента</div>
+        <div style="height:3px;background:rgba(255,255,255,0.08);border-radius:2px;overflow:hidden">
+            <div id="moment-upload-bar" style="height:100%;background:linear-gradient(90deg,#10b981,#34d399);width:0%;transition:width 0.4s ease;border-radius:2px"></div>
+        </div>
+        <div id="moment-upload-pct" style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px">Загрузка...</div>`;
     card.appendChild(info);
     container.insertBefore(card, container.firstChild);
 }
 
 function _updateUploadProgress(pct) {
-    const bar = document.getElementById('moment-upload-bar');
-    const pctEl = document.getElementById('moment-upload-pct');
-    const ring = document.getElementById('upload-ring');
+    const bar    = document.getElementById('moment-upload-bar');
+    const pctEl  = document.getElementById('moment-upload-pct');
+    const ring   = document.getElementById('upload-ring');
+    const pctTxt = document.getElementById('upload-pct-text');
+    const C = 2 * Math.PI * 22;
     if (bar) bar.style.width = pct + '%';
-    if (pctEl) pctEl.textContent = pct + '%';
-    if (ring) ring.style.strokeDashoffset = (81.68 * (1 - pct/100)).toFixed(2);
+    if (pctEl) pctEl.textContent = pct < 100 ? `${Math.round(pct)}%` : 'Готово!';
+    if (pctTxt) pctTxt.textContent = pct < 100 ? `${Math.round(pct)}%` : '✓';
+    if (ring) ring.style.strokeDashoffset = (C * (1 - pct / 100)).toFixed(2);
 }
 
 // Публикация момента
