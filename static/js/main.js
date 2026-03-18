@@ -245,6 +245,8 @@ const WCCache = (() => {
         }
     }, { passive: true, capture: true });
 
+})(); // ═══ конец iOS SAFARI FIX IIFE ═══
+
 // ══ MsgDB ════════════════════════════════════════════════════
 const MsgDB=(()=>{
     const DB='wc_m2',V=1,ST='m',TTL=7*864e5;let _db=null;
@@ -639,14 +641,40 @@ function initSocket() {
     socket.on('gc_answer',       data => onGCAnswer(data));
     socket.on('gc_ice',          data => onGCIce(data));
     socket.on('gc_user_left',    onGroupCallLeave);
-    // Входящее приглашение в групповой звонок
     socket.on('gc_invite', data => {
         vibrate([200,100,200]);
         const name = data.from_name || 'Пользователь';
         const typeLabel = data.call_type === 'video' ? 'видеозвонок' : 'звонок';
         showToast(`📞 ${name} приглашает в групповой ${typeLabel}`, 'info', 8000);
-        // Показываем баннер с кнопкой принятия
         _showGCInviteBanner(data);
+    });
+
+    // ── Новый момент ──
+    socket.on('new_moment', (d) => {
+        // Инвалидируем кеш моментов — при следующем открытии загрузятся новые
+        momentsCache = null;
+        momentsLastLoad = 0;
+
+        // Если moments-bar открыт — обновляем его
+        const bar = document.getElementById('moments-bar');
+        if (bar && bar.style.display !== 'none' && bar.style.maxHeight !== '0px') {
+            _renderMomentsBar();
+        }
+
+        // Если открыта вкладка moments — перегружаем список
+        if (currentTab === 'moments') {
+            loadMoments();
+        }
+
+        // Пульсация аватара в списке чатов если есть элемент
+        if (d.user_id) {
+            const chatKey = `p_${d.user_id}`;
+            const chatEl = document.querySelector(`[data-chat-key="${chatKey}"]`);
+            if (chatEl) {
+                chatEl.classList.add('chat-item-animate');
+                setTimeout(() => chatEl.classList.remove('chat-item-animate'), 500);
+            }
+        }
     });
 }
 
@@ -1839,9 +1867,10 @@ function updateSettingsUI() {
 let _lastChatsLoad = 0;
 let _chatsLoading = false;
 
+let _loadChatsRetryCount = 0;
+
 async function loadChats(force = false) {
     const now = Date.now();
-    // _chatsLoading защита — но сбрасываем если завис > 8 сек
     if (_chatsLoading && (now - _lastChatsLoad) < 8000) return;
     if (!force && recentChats.length && (now - _lastChatsLoad) < 8000) {
         renderChatList(recentChats);
@@ -1850,7 +1879,6 @@ async function loadChats(force = false) {
     _chatsLoading = true;
     if (!recentChats.length) showChatSkeleton();
 
-    // Таймаут 10с — не висим вечно
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 10000);
 
@@ -1863,14 +1891,15 @@ async function loadChats(force = false) {
         clearTimeout(tid);
         if (!res || !res.ok) {
             _chatsLoading = false;
-            // Показываем кнопку повтора если список пустой
             if (!recentChats.length) _showChatsError();
+            _scheduleChatsRetry();
             return;
         }
         let chats = await res.json();
         chats = chats.filter(ch => !_deletedChatIds.has(ch.chat_id));
         recentChats = chats;
         _lastChatsLoad = Date.now();
+        _loadChatsRetryCount = 0; // сбрасываем после успеха
         renderChatList(chats);
         updatePageTitle();
         try { localStorage.setItem('waychat_chats_cache', JSON.stringify(chats)); } catch(e) {}
@@ -1885,10 +1914,18 @@ async function loadChats(force = false) {
         clearTimeout(tid);
         console.error('loadChats:', e);
         if (!recentChats.length) _showChatsError();
-        // Авто-retry через 3с если это не принудительный вызов
-        if (!force) setTimeout(() => { if (Date.now() - _lastChatsLoad > 5000) loadChats(true); }, 3000);
+        _scheduleChatsRetry();
     }
     finally { _chatsLoading = false; }
+}
+
+function _scheduleChatsRetry() {
+    // Exponential backoff: 2s, 4s, 8s, 16s, max 30s
+    _loadChatsRetryCount = Math.min(_loadChatsRetryCount + 1, 5);
+    const delay = Math.min(2000 * Math.pow(2, _loadChatsRetryCount - 1), 30000);
+    setTimeout(() => {
+        if (Date.now() - _lastChatsLoad > delay - 500) loadChats(true);
+    }, delay);
 }
 
 function _showChatsError() {
@@ -3660,11 +3697,20 @@ function updateSendButton() {
     }
 }
 
+// Throttle typing — не отправляем чаще раза в 2с (серверный throttle тоже есть)
+let _typingLastEmit = 0;
 function handleTyping() {
     if (!currentChatId) return;
-    socket.emit('typing', { chat_id: currentChatId });
+    const now = Date.now();
+    if (now - _typingLastEmit > 2000) {
+        socket.emit('typing', { chat_id: currentChatId });
+        _typingLastEmit = now;
+    }
     clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => socket.emit('stop_typing', { chat_id: currentChatId }), 2000);
+    typingTimeout = setTimeout(() => {
+        socket.emit('stop_typing', { chat_id: currentChatId });
+        _typingLastEmit = 0;
+    }, 2500);
 }
 
 // ══════════════════════════════════════════════════════════
