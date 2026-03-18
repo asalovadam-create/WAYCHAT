@@ -149,8 +149,8 @@ window.currentUser = {{ {
 
 <!-- Socket.IO client — loaded synchronously before main.js -->
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<!-- PATCH: применяется ДО main.js, исправляет viewport/safe-area/FAB -->
-<script src="/static/js/waychat_patch.js"></script>
+<!-- Patch: viewport/safe-area/FAB/avatars fixes, должен быть ДО main.js -->
+
 <!-- Main application bundle -->
 <script src="/static/js/main.js" defer></script>
 
