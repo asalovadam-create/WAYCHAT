@@ -1,15 +1,14 @@
-# WayChat dependencies
 bidict==0.23.1
 blinker==1.9.0
 cffi==2.0.0
 click==8.3.1
-cloudinary
+cloudinary==1.44.1
 colorama==0.4.6
 cryptography==42.0.8
 dnspython==2.8.0
 eventlet==0.40.4
 Flask==3.0.3
-Flask-Compress
+Flask-Compress==1.23
 Flask-Cors==4.0.1
 Flask-Login==0.6.3
 Flask-SocketIO==5.4.1
@@ -19,10 +18,10 @@ gunicorn==25.1.0
 itsdangerous==2.2.0
 Jinja2==3.1.6
 MarkupSafe==3.0.3
-Pillow
-psycopg[binary]
+Pillow==12.1.1
+psycopg[binary]==3.2.1
 PyJWT==2.8.0
-pywebpush
+pywebpush==2.3.0
 python-engineio==4.13.1
 python-socketio==5.11.1
 requests==2.32.3
