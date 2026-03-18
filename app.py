@@ -1277,16 +1277,113 @@ def vapid_public_key():
 
 
 _INLINE_SW = """
-const CACHE='wc-v3';
-self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/static/main.js']).catch(()=>{})).then(()=>self.skipWaiting()))});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||e.request.url.includes('/socket.io'))return;
-  if(e.request.url.match(/[.](js|css|png|jpg|webp|gif|woff2)$/)){
-    e.respondWith(caches.match(e.request).then(r=>r||(fetch(e.request).then(resp=>{if(resp.ok)caches.open(CACHE).then(c=>c.put(e.request,resp.clone()));return resp}))));
-  }
+// WayChat Service Worker v6
+const CACHE = 'wc-v6';
+const STATIC = ['/static/img/icon-192.png', '/static/logo.png'];
+
+self.addEventListener('install', e => {
+    e.waitUntil(
+        caches.open(CACHE)
+            .then(c => c.addAll(STATIC).catch(() => {}))
+            .then(() => self.skipWaiting())
+    );
 });
-self.addEventListener('push',e=>{if(!e.data)return;try{const d=e.data.json();e.waitUntil(self.registration.showNotification(d.title||'WayChat',{body:d.body||'',icon:d.icon||'/static/icon-192.png',data:d.data||{},vibrate:[200,100,200]}))}catch(err){}});
-self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.openWindow(e.notification.data?.url||'/'))});
+
+self.addEventListener('activate', e => {
+    e.waitUntil(
+        caches.keys()
+            .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+            .then(() => self.clients.claim())
+    );
+    // Сообщаем клиентам что SW обновился
+    self.clients.matchAll({ type: 'window' }).then(clients => {
+        clients.forEach(c => c.postMessage({ type: 'SW_UPDATED' }));
+    });
+});
+
+// Кэшируем только статику (картинки, иконки)
+self.addEventListener('fetch', e => {
+    if (e.request.method !== 'GET') return;
+    const url = e.request.url;
+    // Не кэшируем socket.io, API, HTML страницы
+    if (url.includes('/socket.io') || url.includes('/api/') ||
+        url.includes('/get_') || url.includes('/upload') ||
+        !url.match(/[.](png|jpg|jpeg|webp|gif|ico|woff2|woff|svg)$/)) return;
+
+    e.respondWith(
+        caches.match(e.request).then(cached => {
+            if (cached) return cached;
+            return fetch(e.request).then(resp => {
+                if (resp.ok) {
+                    caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
+                }
+                return resp;
+            }).catch(() => cached);
+        })
+    );
+});
+
+// Push уведомления
+self.addEventListener('push', e => {
+    if (!e.data) return;
+    let data = {};
+    try { data = e.data.json(); } catch(err) { return; }
+
+    const title   = data.title || 'WayChat';
+    const options = {
+        body:    data.body    || '',
+        icon:    data.icon    || '/static/img/icon-192.png',
+        badge:   '/static/img/icon-192.png',
+        tag:     data.tag     || 'wc-msg',
+        data:    { url: data.url || '/', type: data.type, call_id: data.call_id, from_id: data.from_id },
+        vibrate: data.type === 'incoming_call' ? [300, 100, 300, 100, 300] : [200, 100, 200],
+        requireInteraction: data.requireInteraction || false,
+        actions: data.type === 'incoming_call'
+            ? [{ action: 'answer', title: 'Ответить' }, { action: 'decline', title: 'Отклонить' }]
+            : [],
+    };
+    e.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Клик по уведомлению
+self.addEventListener('notificationclick', e => {
+    e.notification.close();
+    const data   = e.notification.data || {};
+    const action = e.action;
+
+    if (action === 'decline') {
+        // Отклонить звонок — сообщаем открытому окну
+        self.clients.matchAll({ type: 'window' }).then(clients => {
+            clients.forEach(c => c.postMessage({
+                type: 'decline_call', call_id: data.call_id, from_id: data.from_id
+            }));
+        });
+        return;
+    }
+
+    const targetUrl = (action === 'answer' && data.call_id)
+        ? '/?sw_action=answer_call&call_id=' + (data.call_id||'') + '&from_id=' + (data.from_id||'')
+        : (data.url || '/');
+
+    e.waitUntil(
+        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+            // Если уже есть открытое окно — фокусируем его и посылаем сообщение
+            for (const client of clients) {
+                if (client.url.includes(self.location.origin)) {
+                    client.focus();
+                    if (action === 'answer') {
+                        client.postMessage({ type: 'answer_call', call_id: data.call_id, from_id: data.from_id });
+                    } else if (data.chat_id) {
+                        client.postMessage({ type: 'open_chat', chat_id: data.chat_id });
+                    }
+                    return;
+                }
+            }
+            // Нет открытого окна — открываем новое
+            return self.clients.openWindow(targetUrl);
+        })
+    );
+});
 """
 
 @app.route('/sw.js')
