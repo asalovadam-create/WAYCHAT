@@ -1,5 +1,7 @@
-import eventlet
-eventlet.monkey_patch()
+# FIXED: используем gevent (сервер запущен с GeventWebSocketWorker)
+# eventlet убран — он не установлен в venv и конфликтовал с gevent
+import gevent.monkey
+gevent.monkey.patch_all()
 
 """
 ╔══════════════════════════════════════════════════════════════╗
@@ -19,8 +21,9 @@ import base64
 import struct
 import hmac as hmac_module
 import random
-import eventlet
-import eventlet.queue
+# eventlet убран — используем gevent
+import gevent
+import gevent.queue
 from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -203,12 +206,12 @@ login_manager.login_view = 'login'
 # threading конфликтовал с monkey_patch → дедлоки при >20 пользователей
 socketio = SocketIO(
     app,
-    async_mode            = 'eventlet',    # FIXED: threading conflicted with monkey_patch
+    async_mode            = 'gevent',      # FIXED: gevent (GeventWebSocketWorker в gunicorn)
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 25,            # FIXED: eventlet uses seconds not ms
-    ping_interval         = 10,            # FIXED: eventlet uses seconds not ms
+    ping_timeout          = 25,            # gevent/eventlet: секунды, не миллисекунды
+    ping_interval         = 10,            # gevent/eventlet: секунды, не миллисекунды
     max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
@@ -930,7 +933,7 @@ def _get_ip():
 @app.before_request
 def _ensure_clean_session():
     """FIXED: убран unconditional rollback — он убивал данные в нормальных запросах.
-    При eventlet SQLAlchemy сам управляет scoped sessions."""
+    При gevent SQLAlchemy сам управляет scoped sessions."""
     pass
 
 
@@ -1030,7 +1033,7 @@ def login():
                 return jsonify({'success': True, 'redirect': url_for('index')})
             return redirect(url_for('index'))
 
-        eventlet.sleep(0.3)
+        gevent.sleep(0.3)
         if request.is_json:
             return jsonify({'success': False, 'error': 'Неправильный номер или пароль'}), 401
         flash('Неправильный номер или пароль', 'error')
@@ -3099,7 +3102,7 @@ def handle_msg(data):
                         emit('new_message', payload, room=f'user_{m.user_id}')
                         if not is_online:
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                            eventlet.spawn(send_push_to_user, m.user_id,
+                            gevent.spawn(send_push_to_user, m.user_id,
                                 f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
         else:
             payload['is_group_msg'] = False
@@ -3116,7 +3119,7 @@ def handle_msg(data):
                         is_online = _online_cache.get(uid_int)
                         if not is_online and push_preview and msg_type not in ('call_audio','call_video'):
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
+                            gevent.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
                     else:
                         # Отправителю тоже шлём в user_ room — для обновления его списка чатов
                         emit('new_message', payload, room=f'user_{uid_str}')
@@ -3319,7 +3322,7 @@ def handle_call(data):
     # Also send push notification for offline recipients
     p_online = _online_cache.get(int(to))
     if not p_online:
-        eventlet.spawn(send_push_to_user, int(to),
+        gevent.spawn(send_push_to_user, int(to),
             f'📞 {uname}',
             f"Входящий {'видео' if call_type == 'video' else 'аудио'}звонок",
             None, uavat,
@@ -3417,7 +3420,7 @@ def handle_end_call(data):
 def background_cleanup():
     _cleanup_cycle = 0
     while True:
-        eventlet.sleep(300)
+        gevent.sleep(300)
         _cleanup_cycle += 1
         try:
             with app.app_context():
@@ -4340,7 +4343,7 @@ if __name__ == '__main__':
         db.create_all()
         run_migrations()
 
-    eventlet.spawn(background_cleanup)
+    gevent.spawn(background_cleanup)
 
     print('╔══════════════════════════════════════════════════════╗')
     print('║         WAYCHAT SERVER v8.0.0 — STARTING            ║')
