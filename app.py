@@ -199,16 +199,16 @@ db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# OPT Task 5a: threading mode — more memory-efficient than eventlet on Railway 512MB
-# eventlet stays imported (monkey_patch already called) but SocketIO uses threading
+# FIXED: используем eventlet (monkey_patch уже применён выше)
+# threading конфликтовал с monkey_patch → дедлоки при >20 пользователей
 socketio = SocketIO(
     app,
-    async_mode            = 'threading',   # OPT: ~30% less RAM than eventlet on Railway free
+    async_mode            = 'eventlet',    # FIXED: threading conflicted with monkey_patch
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 20000,         # OPT: faster dead connection detection
-    ping_interval         = 10000,         # OPT: tighter heartbeat for mobile networks
+    ping_timeout          = 25,            # FIXED: eventlet uses seconds not ms
+    ping_interval         = 10,            # FIXED: eventlet uses seconds not ms
     max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
@@ -929,12 +929,9 @@ def _get_ip():
 
 @app.before_request
 def _ensure_clean_session():
-    """Откатываем зависшую транзакцию перед каждым запросом.
-    Нужно когда миграция падает и оставляет сессию в aborted состоянии."""
-    try:
-        db.session.rollback()
-    except Exception:
-        pass
+    """FIXED: убран unconditional rollback — он убивал данные в нормальных запросах.
+    При eventlet SQLAlchemy сам управляет scoped sessions."""
+    pass
 
 
 @app.before_request
