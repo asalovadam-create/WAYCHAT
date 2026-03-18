@@ -2858,7 +2858,40 @@ def create_moment():
     db.session.add(moment)
     db.session.commit()
     _moments_cache.delete('all')
-    socketio.emit('new_moment', {'user_id': uid, 'user_name': uname})
+
+    moment_payload = {
+        'user_id':    uid,
+        'user_name':  uname,
+        'moment_id':  moment.id,
+        'media_url':  media_url or '',
+        'text':       text_content,
+        'timestamp':  moment.expires_at.strftime('%H:%M') if moment.expires_at else '',
+    }
+    # Broadcast в комнаты всех контактов этого юзера (не глобально)
+    try:
+        contact_rows = db.session.execute(text('''
+            SELECT DISTINCT
+                CASE WHEN c.room_key LIKE :p1 THEN
+                    CAST(SPLIT_PART(REPLACE(c.room_key, :pfx, ''), '_', 2) AS INTEGER)
+                ELSE
+                    CAST(SPLIT_PART(REPLACE(c.room_key, :pfx, ''), '_', 1) AS INTEGER)
+                END AS partner_id
+            FROM chat c
+            WHERE (c.room_key LIKE :p1 OR c.room_key LIKE :p2)
+              AND NOT c.room_key LIKE 'group_%'
+        '''), {
+            'p1': f'chat_{uid}_%',
+            'p2': f'%_{uid}',
+            'pfx': 'chat_'
+        }).fetchall()
+        for row in contact_rows:
+            pid = row.partner_id
+            if pid and pid != uid:
+                socketio.emit('new_moment', moment_payload, room=f'user_{pid}')
+    except Exception as _me:
+        print(f'[moment broadcast] {_me}')
+        socketio.emit('new_moment', moment_payload)  # fallback
+
     return jsonify({'success': True, 'moment_id': moment.id})
 
 # ══════════════════════════════════════════════════════════
@@ -2866,57 +2899,68 @@ def create_moment():
 # ══════════════════════════════════════════════════════════
 @socketio.on('connect')
 def handle_connect():
-    if current_user.is_authenticated:
-        try:
-            uid = current_user.id
-        except Exception:
-            return
-        join_room(f'user_{uid}')
-        u = db.session.get(User, uid)
-        if u:
-            u.is_online = True
-            u.last_seen = datetime.utcnow()
-            db.session.commit()
-            u.invalidate_cache()
-        broadcast_status(uid, True)
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
 
-        memberships = GroupMember.query.filter_by(user_id=uid).all()
-        for m in memberships:
-            group = db.session.get(Group, m.group_id)
-            if group and group.chat_id:
-                join_room(f'chat_{group.chat_id}')
+    join_room(f'user_{uid}')
+
+    # Один UPDATE вместо get() + commit
+    db.session.execute(
+        text('UPDATE "user" SET is_online=TRUE, last_seen=NOW() WHERE id=:uid'),
+        {'uid': uid}
+    )
+    db.session.commit()
+    _user_dict_cache.delete(uid)
+    broadcast_status(uid, True)
+
+    # Один JOIN-запрос вместо N+1 (GroupMember → Group)
+    rows = db.session.execute(text('''
+        SELECT g.chat_id FROM group_member gm
+        JOIN "group" g ON g.id = gm.group_id
+        WHERE gm.user_id = :uid AND g.chat_id IS NOT NULL
+    '''), {'uid': uid}).fetchall()
+    for r in rows:
+        join_room(f'chat_{r.chat_id}')
 
 
 @socketio.on('join')
 def on_join(data):
-    if current_user.is_authenticated:
-        try:
-            uid = current_user.id
-        except Exception:
-            return
-        join_room(f'user_{uid}')
-        u = db.session.get(User, uid)
-        if u:
-            u.is_online = True
-            db.session.commit()
-            u.invalidate_cache()
-        broadcast_status(uid, True)
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    join_room(f'user_{uid}')
+    db.session.execute(
+        text('UPDATE "user" SET is_online=TRUE, last_seen=NOW() WHERE id=:uid'),
+        {'uid': uid}
+    )
+    db.session.commit()
+    _user_dict_cache.delete(uid)
+    broadcast_status(uid, True)
 
 
 @socketio.on('disconnect')
 def on_disconnect():
-    if current_user.is_authenticated:
-        try:
-            uid = current_user.id
-        except Exception:
-            return
-        u = db.session.get(User, uid)
-        if u:
-            u.is_online = False
-            u.last_seen = datetime.utcnow()
-            db.session.commit()
-            u.invalidate_cache()
-        broadcast_status(uid, False)
+    if not current_user.is_authenticated:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    db.session.execute(
+        text('UPDATE "user" SET is_online=FALSE, last_seen=NOW() WHERE id=:uid'),
+        {'uid': uid}
+    )
+    db.session.commit()
+    _user_dict_cache.delete(uid)
+    _online_cache.delete(uid)
+    broadcast_status(uid, False)
 
 
 @socketio.on('enter_chat')
@@ -2945,6 +2989,21 @@ def on_leave_chat(data):
         leave_room(f'chat_{data["chat_id"]}')
 
 
+# In-memory rate limiters for socket events (per user)
+_msg_rate    = defaultdict(list)   # uid → [timestamps]
+_typing_last = {}                   # uid → last_emit_time
+
+def _socket_rate_ok(uid, store, max_calls=20, window_sec=10):
+    """True if user is within rate limit, False if exceeded."""
+    now = time.monotonic()
+    calls = store[uid]
+    calls[:] = [t for t in calls if now - t < window_sec]
+    if len(calls) >= max_calls:
+        return False
+    calls.append(now)
+    return True
+
+
 @socketio.on('send_message')
 def handle_msg(data):
     if not current_user.is_authenticated:
@@ -2958,6 +3017,12 @@ def handle_msg(data):
         uname = current_user.name
     except Exception:
         return
+
+    # Rate limit: 20 сообщений за 10 секунд
+    if not _socket_rate_ok(uid, _msg_rate, max_calls=20, window_sec=10):
+        emit('error', {'msg': 'Слишком много сообщений, подождите'})
+        return
+
     sender_dict = get_cached_user_dict(uid)  # нужен для аватарки в push
 
     msg_type = data.get('type_msg') or data.get('type', 'text')
@@ -3010,34 +3075,37 @@ def handle_msg(data):
                 payload['is_group_msg'] = True
                 payload['group_id']     = group.id
                 members = GroupMember.query.filter_by(group_id=group.id).all()
-                # Эмитим в комнату чата — мгновенно для всех участников внутри чата
+                # Один emit в комнату чата — все участники внутри чата получат
                 emit('new_message', payload, room=f'chat_{chat_id}')
                 for m in members:
                     _chat_cache.delete(m.user_id)
-                    emit('new_message', payload, room=f'user_{m.user_id}')
                     if m.user_id != uid:
                         is_online = _online_cache.get(m.user_id)
+                        # user_ room — только для тех кто НЕ в чате (список чатов)
+                        emit('new_message', payload, room=f'user_{m.user_id}')
                         if not is_online:
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
                             eventlet.spawn(send_push_to_user, m.user_id,
                                 f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
         else:
             payload['is_group_msg'] = False
-            # Эмитим в комнату чата — все кто сделал enter_chat получат мгновенно
+            # Emit в комнату чата — оба участника если в чате
             emit('new_message', payload, room=f'chat_{chat_id}')
             parts = chat.room_key.replace('chat_', '').split('_')
             for uid_str in parts:
                 if uid_str.isdigit():
                     uid_int = int(uid_str)
                     _chat_cache.delete(uid_int)
-                    # Также эмитим в личную комнату (для обновления списка чатов)
-                    emit('new_message', payload, room=f'user_{uid_str}')
                     if uid_int != uid:
+                        # Emit в user_ room — для обновления списка чатов у получателя
+                        emit('new_message', payload, room=f'user_{uid_str}')
                         is_online = _online_cache.get(uid_int)
-                        if not is_online:
-                            if push_preview and msg_type not in ('call_audio','call_video'):
-                                _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                                eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
+                        if not is_online and push_preview and msg_type not in ('call_audio','call_video'):
+                            _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
+                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
+                    else:
+                        # Отправителю тоже шлём в user_ room — для обновления его списка чатов
+                        emit('new_message', payload, room=f'user_{uid_str}')
 
 
 @socketio.on('mark_read')
@@ -3166,6 +3234,14 @@ def handle_typing(data):
         uname = current_user.name
     except Exception:
         return
+
+    # Throttle: не чаще 1 раза в 2 секунды на пользователя
+    now = time.monotonic()
+    last = _typing_last.get(uid, 0)
+    if now - last < 2.0:
+        return
+    _typing_last[uid] = now
+
     chat = db.session.get(Chat, chat_id)
     if not chat:
         return
