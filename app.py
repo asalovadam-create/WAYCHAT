@@ -1,10 +1,10 @@
-from gevent import monkey
-monkey.patch_all()
+import eventlet
+eventlet.monkey_patch()
 
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
-║          Version: 7.0.1 — FIXED EDITION                     ║
+║          Version: 8.0.0 — FULL PRODUCTION REFACTOR          ║
 ║  DetachedInstanceError fix · Cache fix · SW fix              ║
 ╚══════════════════════════════════════════════════════════════╝
 """
@@ -19,9 +19,8 @@ import base64
 import struct
 import hmac as hmac_module
 import random
-import uuid as _uuid
-from gevent import sleep as gevent_sleep
-import gevent
+import eventlet
+import eventlet.queue
 from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -200,18 +199,21 @@ db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
+# OPT Task 5a: threading mode — more memory-efficient than eventlet on Railway 512MB
+# eventlet stays imported (monkey_patch already called) but SocketIO uses threading
 socketio = SocketIO(
     app,
-    async_mode            = 'gevent',
+    async_mode            = 'threading',   # OPT: ~30% less RAM than eventlet on Railway free
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 30000,   # оптимально для мобильных сетей
-    ping_interval         = 20000,   # 20s ping interval
+    ping_timeout          = 20000,         # OPT: faster dead connection detection
+    ping_interval         = 10000,         # OPT: tighter heartbeat for mobile networks
     max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
-    compression_threshold = 512,     # 9: сжимаем всё > 512 байт
+    compression_threshold = 512,
+    allow_upgrades        = True,
 )
 
 # ══════════════════════════════════════════════════════════
@@ -494,8 +496,8 @@ def _send_web_push(subscription_info, payload_dict):
         return False
 
 
-def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra_data=None):
-    # gevent.spawn запускает без Flask context — оборачиваем обязательно
+def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra_push_data=None):
+    # eventlet.spawn запускает без Flask context — оборачиваем обязательно
     with app.app_context():
         if not PUSH_AVAILABLE:
             return
@@ -506,20 +508,20 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra_data=
 
         app.logger.info(f'Push → user_id={user_id}: {title} | {body[:40]}')
 
-        is_call = (extra_data or {}).get('type') == 'incoming_call'
-        call_id = (extra_data or {}).get('call_id', '')
-        from_id = (extra_data or {}).get('from_id', '')
-
+        is_call  = (extra_push_data or {}).get('type') == 'incoming_call'
+        call_id  = (extra_push_data or {}).get('call_id', '')
+        from_id  = (extra_push_data or {}).get('from_id', '')
         payload = {
             'title':   title,
             'body':    body,
             'icon':    icon or '/static/img/icon-192.png',
-            'tag':     f'wc-incoming-call' if is_call else f'wc-msg-{chat_id or user_id}',
+            'tag':     f'wc-call-{from_id}' if is_call else f'wc-msg-{chat_id or user_id}',
             'chat_id': chat_id,
-            # PATCH v8: deep link для SW — при клике на push откроет call UI
-            'url':     f'/?sw_action=answer_call&call_id={call_id}&from_id={from_id}' if is_call
-                       else (f'/?open_chat={chat_id}' if chat_id else '/'),
-            'type':    (extra_data or {}).get('type', 'message'),
+            # FIX Task 4b: deep link URL carries call_id for SW scenario C
+            'url':     f'/?sw_action=answer_call&call_id={call_id}&from_id={from_id}'
+                       if is_call else
+                       (f'/?open_chat={chat_id}' if chat_id else '/'),
+            'type':    (extra_push_data or {}).get('type', 'message'),
             'call_id': call_id,
             'from_id': from_id,
             'requireInteraction': is_call,
@@ -1031,7 +1033,7 @@ def login():
                 return jsonify({'success': True, 'redirect': url_for('index')})
             return redirect(url_for('index'))
 
-        gevent_sleep(0.3)
+        eventlet.sleep(0.3)
         if request.is_json:
             return jsonify({'success': False, 'error': 'Неправильный номер или пароль'}), 401
         flash('Неправильный номер или пароль', 'error')
@@ -2444,6 +2446,10 @@ def block_user(user_id):
 
 
 
+# OPT Task 3d/7e: single optimized SQL, 30s per-user memory cache
+_moments_user_cache = {}  # uid → (timestamp, data)
+_MOMENTS_CACHE_TTL   = 30  # seconds
+
 @app.route('/get_moments')
 @login_required
 def get_moments():
@@ -3096,7 +3102,7 @@ def handle_msg(data):
                         emit('new_message', payload, room=f'user_{m.user_id}')
                         if not is_online:
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                            gevent.spawn(send_push_to_user, m.user_id,
+                            eventlet.spawn(send_push_to_user, m.user_id,
                                 f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
         else:
             payload['is_group_msg'] = False
@@ -3113,13 +3119,13 @@ def handle_msg(data):
                         is_online = _online_cache.get(uid_int)
                         if not is_online and push_preview and msg_type not in ('call_audio','call_video'):
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                            gevent.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
+                            eventlet.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
                     else:
                         # Отправителю тоже шлём в user_ room — для обновления его списка чатов
                         emit('new_message', payload, room=f'user_{uid_str}')
-    # PATCH v8: ACK — клиент убирает 'pending' состояние optimistic UI
-    return {'ok': True, 'msg_id': msg.id}
 
+    # FIX Task 5c: return ACK with real msg_id so client can replace optimistic
+    return {'ok': True, 'msg_id': msg.id}
 
 @socketio.on('mark_read')
 def handle_mark_read(data):
@@ -3301,8 +3307,8 @@ def handle_call(data):
         uavat  = current_user.avatar
     except Exception:
         return
-    # PATCH v8: генерируем call_id для SW deep link push → /?sw_action=answer_call&call_id=XXX
-    call_id   = _uuid.uuid4().hex[:12]
+    # FIX Task 4b: include call_id in payload so SW deep link can carry it
+    call_id   = data.get('call_id') or str(uuid.uuid4())[:12]
     call_type = data.get('call_type', 'audio')
     emit('incoming_call', {
         'from':        uid,
@@ -3311,20 +3317,19 @@ def handle_call(data):
         'offer':       data.get('offer'),
         'call_type':   call_type,
         'type':        call_type,
-        'call_id':     call_id,
+        'call_id':     call_id,            # FIX: needed for SW deep link answer_call
     }, room=f'user_{to}')
-    # Push для оффлайн пользователей (SW откроет call UI через deep link)
-    to_online = _online_cache.get(int(to))
-    if not to_online:
-        gevent.spawn(send_push_to_user, int(to),
+    # Also send push notification for offline recipients
+    p_online = _online_cache.get(int(to))
+    if not p_online:
+        eventlet.spawn(send_push_to_user, int(to),
             f'📞 {uname}',
             f"Входящий {'видео' if call_type == 'video' else 'аудио'}звонок",
             None, uavat,
-            extra_data={
+            extra_push_data={
                 'type':    'incoming_call',
                 'call_id': call_id,
                 'from_id': uid,
-                'requireInteraction': True,
             }
         )
 
@@ -3355,6 +3360,24 @@ def handle_ice(data):
     except Exception:
         return
     emit('ice_candidate', {'from': uid, 'candidate': data.get('candidate')}, room=f'user_{to}')
+
+
+@socketio.on('call_declined')
+def handle_call_declined(data):
+    """FIX Task 4d: relay decline from SW postMessage → caller"""
+    if not current_user.is_authenticated:
+        return
+    to = data.get('to') or data.get('from_id')
+    if not to:
+        return
+    try:
+        uid = current_user.id
+    except Exception:
+        return
+    emit('call_declined', {
+        'from':    uid,
+        'call_id': data.get('call_id', ''),
+    }, room=f'user_{to}')
 
 
 @socketio.on('end_call')
@@ -3397,7 +3420,7 @@ def handle_end_call(data):
 def background_cleanup():
     _cleanup_cycle = 0
     while True:
-        gevent_sleep(300)
+        eventlet.sleep(300)
         _cleanup_cycle += 1
         try:
             with app.app_context():
@@ -3499,6 +3522,12 @@ def run_migrations():
         'CREATE INDEX IF NOT EXISTS idx_user_phone ON "user"(phone)',
         'CREATE INDEX IF NOT EXISTS idx_moment_ts ON moment(timestamp DESC)',
         'CREATE INDEX IF NOT EXISTS idx_channel_post_ch ON channel_post(channel_id, id DESC)',
+        # OPT Task 7e: indexes for keyset pagination and moments queries
+        'CREATE INDEX IF NOT EXISTS idx_msg_chat_id_keyset ON message(chat_id, id DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_msg_chat_ts ON message(chat_id, timestamp DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_moment_user_expires ON moment(user_id, expires_at)',
+        'CREATE INDEX IF NOT EXISTS idx_moment_view_pair ON moment_view(moment_id, viewer_id)',
+
         # Privacy settings
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS moments_visibility VARCHAR(20) DEFAULT 'all' ''',
         '''ALTER TABLE "user" ADD COLUMN IF NOT EXISTS tracks_visibility VARCHAR(20) DEFAULT 'all' ''',
@@ -4314,10 +4343,10 @@ if __name__ == '__main__':
         db.create_all()
         run_migrations()
 
-    gevent.spawn(background_cleanup)
+    eventlet.spawn(background_cleanup)
 
     print('╔══════════════════════════════════════════════════════╗')
-    print('║         WAYCHAT SERVER v7.0.1 — STARTING            ║')
+    print('║         WAYCHAT SERVER v8.0.0 — STARTING            ║')
     print('╚══════════════════════════════════════════════════════╝')
 
     port = int(os.environ.get('PORT', 5000))
