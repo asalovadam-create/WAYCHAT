@@ -1389,16 +1389,11 @@ self.addEventListener('notificationclick', e => {
 @app.route('/sw.js')
 def service_worker():
     from flask import Response
-    # 10: Сначала пробуем файл, затем встроенный SW
-    sw_path = os.path.join(BASE_DIR, 'sw.js')
-    try:
-        with open(sw_path, 'r', encoding='utf-8') as f:
-            sw_content = f.read()
-    except FileNotFoundError:
-        sw_content = _INLINE_SW
-    resp = Response(sw_content, mimetype='application/javascript')
+    # FIXED: всегда отдаём встроенный SW (файл sw.js на диске мог быть старым)
+    resp = Response(_INLINE_SW, mimetype='application/javascript')
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Service-Worker-Allowed'] = '/'
+    resp.headers['X-Content-Type-Options'] = 'nosniff'
     return resp
 
 
