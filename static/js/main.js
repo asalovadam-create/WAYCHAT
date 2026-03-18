@@ -6459,7 +6459,7 @@ let _momentUploadPreviewUrl= null;
 let _momentUploadCaption   = '';
 let _momentUploadGeo       = null;
 let _momentsBarVisible     = false;
-let _mediaCache            = new Set();
+// _mediaCache уже объявлен выше как Map
 
 // ── Viewed tracking ──────────────────────────────────────
 function _getViewedUsers() {
@@ -6894,14 +6894,11 @@ async function deleteMoment(mid) {
 // ── Preload helper ───────────────────────────────────────
 function _preloadMedia(url) {
     if (!url || _mediaCache.has(url)) return;
-    _mediaCache.add(url);
-    if (/\.(mp4|mov|webm)/i.test(url)) return; // видео не предзагружаем
+    _mediaCache.set(url, url); // Map: key=url, value=url
+    if (/\.(mp4|mov|webm)/i.test(url)) return;
     const img = new Image(); img.src = url;
 }
 
-// ── Свайп по чату в списке (вправо / влево) ──
-    _setupChatListSwipes();
-}
 
 // ── Moments pull-down ──
 function _setupMomentsPullDown() {
