@@ -1721,7 +1721,7 @@ body {
 
 <div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
-    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:calc(env(safe-area-inset-bottom,0px) + 58px)">
+    <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:env(safe-area-inset-bottom,0px)">
 
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section">
@@ -6531,8 +6531,26 @@ let _momentUploadGeo = null;
 
 async function loadMoments() {
     const container = document.getElementById('full-moments-list');
+    // FIXED: не выходим если контейнер не найден —
+    // moments-bar грузится независимо от tab
+    // Просто не рендерим список если контейнер не открыт
+
     if (!container) {
-        // Если таб ещё не открыт — повторим когда откроют
+        // Нет таба — только грузим данные в кэш для moments-bar
+        try {
+            const r = await fetch('/get_moments', {
+                credentials: 'include',
+                headers: {'Accept-Encoding': 'gzip, deflate'},
+            });
+            if (!r.ok) return;
+            const moments = await r.json();
+            if (!Array.isArray(moments)) return;
+            momentsCache    = moments;
+            momentsLastLoad = Date.now();
+            window.currentMoments = moments;
+            // Обновляем bar если открыт
+            _renderMomentsBar();
+        } catch(e) { console.error('loadMoments (bar):', e); }
         return;
     }
 
