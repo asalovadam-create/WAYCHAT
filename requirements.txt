@@ -30,4 +30,4 @@ simple-websocket==1.1.0
 SQLAlchemy==2.0.46
 Werkzeug==3.0.1
 gevent==24.2.1
-geventwebsocket==0.10.1
+gevent-websocket==0.10.1
