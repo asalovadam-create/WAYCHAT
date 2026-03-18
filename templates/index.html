@@ -18,91 +18,123 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" as="style" onload="this.onload=null;this.rel='stylesheet'">
+    <link rel="preload" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap" as="style"
+          onload="this.onload=null;this.rel='stylesheet'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Pacifico&display=swap"></noscript>
 
     <style>
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+        /* ── RESET ── */
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0; padding: 0;
+            -webkit-tap-highlight-color: transparent;
+        }
 
         /*
-            position:fixed на html+body — метод TG/WhatsApp для Safari.
-            Убивает «резиновый скролл», мерцание панелей, серые полосы
-            при перезагрузке и при переходе между экранами.
-        */
+         * ИСПРАВЛЕНИЕ iOS Safari / PWA:
+         * НЕ используем position:fixed на html/body — это ломает scroll и создаёт серые полосы.
+         * Вместо этого используем height: 100dvh (dynamic viewport height) + overflow:hidden на #root.
+         * dvh автоматически учитывает адресную строку Safari.
+         */
         html {
-            background: #1d1d1e;
             height: 100%;
-            position: fixed;
-            width: 100%;
+            background: #1d1d1e;
             overscroll-behavior: none;
-            touch-action: manipulation;
         }
 
         body {
-            width: 100%;
             height: 100%;
             background: #1d1d1e;
-            overflow: hidden;
             overscroll-behavior: none;
-            position: fixed;
-            /*
-                НЕТ padding-bottom здесь — серая полоса PWA исчезает.
-                safe-area управляется внутри #app (main.js).
-                position:fixed убивает Safari bounce + полосы при перезагрузке.
-            */
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
             -webkit-text-size-adjust: 100%;
             text-size-adjust: 100%;
             -webkit-font-smoothing: antialiased;
             touch-action: manipulation;
+            /* НЕТ overflow:hidden и position:fixed здесь */
         }
 
-        /* #root — flex-колонка, высота через JS (--vh) */
+        /* #root занимает весь экран, overflow:hidden для предотвращения bounce */
         #root {
             width: 100%;
-            height: 100%;
+            /* dvh = dynamic viewport height, учитывает Safari UI */
+            height: 100dvh;
+            /* Fallback для старых браузеров */
+            height: calc(var(--app-height, 100vh));
             background: #1d1d1e;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
+            position: relative;
         }
 
+        /* ── SPLASH SCREEN ── */
         #splash {
-            position: fixed; inset: 0; z-index: 999999;
+            position: fixed;
+            inset: 0;
+            z-index: 999999;
             background: #1d1d1e;
-            display: flex; flex-direction: column;
-            align-items: center; justify-content: center;
-            will-change: opacity; transform: translateZ(0);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            will-change: opacity;
+            transform: translateZ(0);
         }
-        #splash-logo-wrap { position: relative; width: 110px; height: 110px; }
+
+        #splash-logo-wrap {
+            position: relative;
+            width: 110px;
+            height: 110px;
+        }
+
         #splash-logo {
-            width: 110px; height: 110px; border-radius: 26px; display: block;
+            width: 110px;
+            height: 110px;
+            border-radius: 26px;
+            display: block;
             box-shadow: 0 0 0 1px rgba(16,185,129,.25), 0 12px 48px rgba(16,185,129,.2);
             animation: splashPop .5s cubic-bezier(.34,1.56,.64,1) both;
         }
+
         #splash-ring {
-            position: absolute; inset: -8px; border-radius: 34px;
+            position: absolute;
+            inset: -8px;
+            border-radius: 34px;
             border: 1.5px solid rgba(16,185,129,.35);
             animation: ringPulse 1.8s ease-in-out infinite;
         }
+
         #splash-name {
             position: absolute;
             bottom: max(env(safe-area-inset-bottom, 0px), 52px);
-            left: 0; right: 0; text-align: center;
+            left: 0; right: 0;
+            text-align: center;
             font-family: "Pacifico", cursive;
-            font-size: 34px; font-weight: 400; letter-spacing: .5px;
+            font-size: 34px;
+            font-weight: 400;
+            letter-spacing: .5px;
             background: linear-gradient(135deg, #fff 0%, #10b981 100%);
-            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             animation: splashTextIn .6s .15s ease both;
         }
+
         @keyframes splashPop    { from{opacity:0;transform:scale(.7)} to{opacity:1;transform:scale(1)} }
         @keyframes splashTextIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
         @keyframes ringPulse    { 0%,100%{opacity:.4;transform:scale(1)} 50%{opacity:.8;transform:scale(1.06)} }
         @keyframes slideUpBanner{ from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes fadeIn       { from{opacity:0} to{opacity:1} }
+        @keyframes slideInRight { from{opacity:0;transform:translateX(20px)} to{opacity:1;transform:translateX(0)} }
+        @keyframes slideInUp    { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes bounce       { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
     </style>
 </head>
 <body>
 
+<!-- Splash -->
 <div id="splash">
     <div id="splash-logo-wrap">
         <img id="splash-logo" src="/static/logo.png" alt="WayChat" onerror="this.style.display='none'">
@@ -111,37 +143,59 @@
     <div id="splash-name">WayChat</div>
 </div>
 
+<!-- App Root -->
 <div id="root"></div>
 
+<!-- Current User Data (injected by Flask/Jinja2) -->
 <script>
 window.currentUser = {{ {
-    "id": current_user.id,
-    "name": current_user.name,
-    "username": current_user.username,
-    "avatar": current_user.avatar or "",
-    "phone": current_user.phone or "",
-    "bio": current_user.bio or "",
-    "is_verified": current_user.is_verified or false,
+    "id":            current_user.id,
+    "name":          current_user.name,
+    "username":      current_user.username,
+    "avatar":        current_user.avatar or "",
+    "phone":         current_user.phone or "",
+    "bio":           current_user.bio or "",
+    "is_verified":   current_user.is_verified or false,
     "verified_type": current_user.verified_type or ""
 } | tojson | safe }};
 </script>
 
+<!-- Socket.IO -->
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<!-- Main App -->
 <script src="/static/js/main.js"></script>
 
 <script>
 (function () {
+    'use strict';
 
-    /* Tailwind */
+    /* ── Dynamic viewport height fix (iOS Safari) ──
+     * Решает проблему: при появлении/скрытии адресной строки высота экрана меняется.
+     * Используем CSS переменную --app-height которую обновляем через ResizeObserver.
+     */
+    function setAppHeight() {
+        var h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--app-height', h + 'px');
+    }
+    setAppHeight();
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', setAppHeight);
+        window.visualViewport.addEventListener('scroll', setAppHeight);
+    } else {
+        window.addEventListener('resize', setAppHeight);
+    }
+
+    /* ── Tailwind CSS ── */
     var tw = document.createElement('script');
     tw.src = 'https://cdn.tailwindcss.com';
     tw.async = true;
     document.head.appendChild(tw);
 
-    /* Сплэш */
-    var done = false;
+    /* ── Splash hide ── */
+    var splashDone = false;
     function hideSplash() {
-        if (done) return; done = true;
+        if (splashDone) return;
+        splashDone = true;
         var s = document.getElementById('splash');
         if (!s) return;
         s.style.transition = 'opacity .22s ease';
@@ -149,46 +203,88 @@ window.currentUser = {{ {
         s.style.pointerEvents = 'none';
         setTimeout(function () { if (s && s.parentNode) s.parentNode.removeChild(s); }, 240);
     }
-    var n = 0, timer = setInterval(function () {
+    var checkCount = 0;
+    var splashTimer = setInterval(function () {
         var r = document.getElementById('root');
-        if ((r && r.children.length > 0) || ++n > 60) { clearInterval(timer); hideSplash(); }
-    }, 30);
+        if ((r && r.children.length > 0) || ++checkCount > 80) {
+            clearInterval(splashTimer);
+            hideSplash();
+        }
+    }, 25);
 
-    /* Service Worker */
+    /* ── Service Worker ── */
     if ('serviceWorker' in navigator) {
         window.addEventListener('load', function () {
             navigator.serviceWorker
                 .register('/sw.js', { scope: '/', updateViaCache: 'none' })
-                .then(function (r) {
-                    r.update().catch(function () {});
-                    setInterval(function () { r.update().catch(function () {}); }, 30 * 60 * 1000);
+                .then(function (reg) {
+                    reg.update().catch(function () {});
+                    setInterval(function () { reg.update().catch(function () {}); }, 30 * 60 * 1000);
+
+                    /* ИСПРАВЛЕНИЕ: обработка push → открытие call UI.
+                     * При загрузке страницы проверяем URL параметры — мог прийти deep link из SW */
+                    var urlParams = new URLSearchParams(window.location.search);
+                    var swAction = urlParams.get('sw_action');
+                    if (swAction === 'answer_call') {
+                        // Ждём пока приложение загрузится, затем открываем call UI
+                        var callTimer = setInterval(function () {
+                            if (window.WayChat && window.WayChat.handleCallAction) {
+                                clearInterval(callTimer);
+                                window.WayChat.handleCallAction('answer');
+                            }
+                        }, 100);
+                        setTimeout(function () { clearInterval(callTimer); }, 5000);
+                    }
                 })
                 .catch(function (e) { console.warn('[SW]', e); });
         });
+
+        /* Обработка сообщений от SW (decline/answer call, open chat) */
+        navigator.serviceWorker.addEventListener('message', function (event) {
+            var msg = event.data;
+            if (!msg || !msg.type) return;
+            if (msg.type === 'answer_call' && window.WayChat) {
+                window.WayChat.handleCallAction && window.WayChat.handleCallAction('answer');
+            } else if (msg.type === 'decline_call' && window.WayChat) {
+                window.WayChat.handleCallAction && window.WayChat.handleCallAction('decline', msg.from_id);
+            } else if (msg.type === 'open_chat' && window.WayChat) {
+                window.WayChat.openChat && window.WayChat.openChat(msg.chat_id);
+            }
+        });
     }
 
-    /* iOS hint */
+    /* ── iOS "Add to Home Screen" hint (один раз) ── */
     if (/iphone|ipad|ipod/i.test(navigator.userAgent)
         && !window.navigator.standalone
-        && !localStorage.getItem('wc_ios_hint_v4')) {
+        && !localStorage.getItem('wc_ios_hint_v5')) {
         setTimeout(function () {
-            localStorage.setItem('wc_ios_hint_v4', '1');
+            localStorage.setItem('wc_ios_hint_v5', '1');
             var d = document.createElement('div');
-            d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99989;background:rgba(29,29,30,.98);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px));border-top:.5px solid rgba(255,255,255,.1);color:white;font-family:-apple-system,sans-serif;animation:slideUpBanner .4s ease forwards';
-            var title = document.createElement('div');
-            title.style.cssText = 'font-size:15px;font-weight:700;margin-bottom:6px';
-            title.textContent = 'Добавить WayChat на экран';
-            var sub = document.createElement('div');
-            sub.style.cssText = 'font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px';
-            sub.textContent = 'Нажми Поделиться → На экран «Домой»';
-            var btn = document.createElement('button');
-            btn.style.cssText = 'width:100%;padding:12px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit';
-            btn.textContent = 'Понял, спасибо!';
-            btn.onclick = function () { d.remove(); };
-            d.appendChild(title); d.appendChild(sub); d.appendChild(btn);
+            d.style.cssText = [
+                'position:fixed',
+                'bottom:0',
+                'left:0',
+                'right:0',
+                'z-index:99989',
+                'background:rgba(29,29,30,.98)',
+                'backdrop-filter:blur(28px)',
+                '-webkit-backdrop-filter:blur(28px)',
+                'padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px))',
+                'border-top:.5px solid rgba(255,255,255,.1)',
+                'color:white',
+                'font-family:-apple-system,sans-serif',
+                'animation:slideUpBanner .4s ease forwards'
+            ].join(';');
+
+            d.innerHTML = [
+                '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Добавить WayChat на экран</div>',
+                '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">Нажми Поделиться → «На экран "Домой"»</div>',
+                '<button onclick="this.parentNode.remove()" style="width:100%;padding:12px;background:#10b981;border:none;border-radius:14px;color:#000;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">Понял, спасибо!</button>'
+            ].join('');
+
             document.body.appendChild(d);
             setTimeout(function () { if (d.parentNode) d.remove(); }, 14000);
-        }, 4500);
+        }, 5000);
     }
 
 })();
