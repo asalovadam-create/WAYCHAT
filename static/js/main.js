@@ -64,87 +64,186 @@ const WCCache = (() => {
 
     return { get, set, del };
 })();
-// ══ iOS SAFARI FIX v8 ═══════════════════════════════════════
+// ══ iOS SAFARI FIX v9 — метод Telegram/WhatsApp ══════════════
 (function(){
-    const sv=()=>{const h=(window.visualViewport||window).height;document.documentElement.style.setProperty('--dvh',(h*.01)+'px');};
-    const vv=window.visualViewport;
-    if(vv){vv.addEventListener('resize',sv,{passive:true});vv.addEventListener('scroll',sv,{passive:true});}
-    window.addEventListener('resize',sv,{passive:true});
-    window.addEventListener('orientationchange',sv,{passive:true});
-    sv();
-    const st=document.createElement('style');st.id='wc-ios8';
-    st.textContent=`
-        #app,.chat-view{height:calc(var(--dvh,1svh)*100)!important;max-height:calc(var(--dvh,1svh)*100)!important}
-        /* input-bar: flex внизу, без transform */
-        .input-bar{flex-shrink:0!important;transform:none!important;position:relative!important}
-        #messages,#main-content{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scroll-behavior:auto}
-        .chat-view{transform:translateZ(0);will-change:transform;display:flex!important;flex-direction:column!important;background:var(--chat-bg,#1d1d1e)!important}
-        #messages{flex:1!important;overflow-y:auto!important;-webkit-overflow-scrolling:touch}
-        *,button,a,[onclick],[data-msg-id]{-webkit-tap-highlight-color:transparent}
-        body{-webkit-text-size-adjust:100%;text-size-adjust:100%}
-        input,textarea,select{font-size:16px!important;-webkit-text-size-adjust:100%;text-size-adjust:100%}
-        #app,#main-content,.chat-view,.prof-sheet-inner{touch-action:pan-x pan-y;-ms-touch-action:pan-x pan-y}
-        .vl-ph{flex-shrink:0;width:100%;pointer-events:none}
-        /* Серые полосы Safari — chat-header и input-bar закрашиваем фоном */
-        #chat-header{background:var(--hdr,rgba(29,29,30,0.97))!important}
-        .input-bar{background:var(--hdr,rgba(29,29,30,0.97))!important}
-        /* safe-area у app — фон совпадает */
-        #app{background:#1d1d1e!important}
-        /* Sticky search - работает в overflow-y:auto родителе */
-        #chat-search-bar{position:sticky!important;top:0!important;z-index:100!important;background:var(--bg,#1d1d1e)!important}
-        #wc-off{position:fixed;top:max(env(safe-area-inset-top,0px),0px);left:0;right:0;z-index:99997;background:rgba(239,68,68,.97);color:#fff;padding:8px 16px;text-align:center;font-size:13px;font-weight:700;transform:translateY(-100%);transition:transform .3s ease}
-        #wc-off.v{transform:translateY(0)}
-    `;
-    document.head.appendChild(st);
-    if(vv){
-        let ph=vv.height;
-        vv.addEventListener('resize',()=>{
-            const kbHeight=Math.max(0,window.innerHeight-vv.height);
-            const chatWin=document.getElementById('chat-window');
-            const isChat=chatWin?.classList.contains('active');
+    // ── 1. --vh через visualViewport (ключевой fix как в TG) ──
+    function setVH() {
+        const h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        document.documentElement.style.setProperty('--vh', h + 'px');
+        // Старая переменная для совместимости
+        document.documentElement.style.setProperty('--dvh', (h * 0.01) + 'px');
+    }
 
-            if(isChat){
-                // Двигаем весь chat-view вверх на высоту клавиатуры
-                // Это правильно — input-bar прилипает к низу chat-view
-                if(kbHeight>60){
-                    chatWin.style.bottom=kbHeight+'px';
-                    chatWin.style.height='calc(100% - '+kbHeight+'px)';
-                    // Скроллим сообщения вниз
-                    const m=document.getElementById('messages');
-                    if(m)requestAnimationFrame(()=>{m.scrollTop=m.scrollHeight;});
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', setVH, { passive: true });
+        window.visualViewport.addEventListener('scroll', setVH, { passive: true });
+    }
+    window.addEventListener('resize', setVH, { passive: true });
+    window.addEventListener('orientationchange', () => setTimeout(setVH, 100), { passive: true });
+    setVH();
+
+    // ── 2. Keyboard handler — двигаем chat-view ──
+    if (window.visualViewport) {
+        let prevH = window.visualViewport.height;
+        window.visualViewport.addEventListener('resize', () => {
+            const vv = window.visualViewport;
+            const kbHeight = Math.max(0, window.innerHeight - vv.height);
+            const chatWin = document.getElementById('chat-window');
+            const isChat = chatWin?.classList.contains('active');
+
+            setVH(); // обновляем --vh при каждом resize
+
+            if (isChat) {
+                if (kbHeight > 60) {
+                    // Сжимаем chat-view сверху — input-bar остаётся снизу
+                    chatWin.style.height = vv.height + 'px';
+                    chatWin.style.top = '0';
+                    chatWin.style.bottom = 'auto';
+                    const m = document.getElementById('messages');
+                    if (m) requestAnimationFrame(() => { m.scrollTop = m.scrollHeight; });
                 } else {
-                    chatWin.style.bottom='';
-                    chatWin.style.height='';
+                    chatWin.style.height = '';
+                    chatWin.style.top = '';
+                    chatWin.style.bottom = '';
                 }
             }
-            // Сбрасываем transform на input-bar — больше не трогаем его
-            const b=document.querySelector('.input-bar');
-            if(b)b.style.transform='';
-            ph=vv.height;
-        },{passive:true});
+            prevH = vv.height;
+        }, { passive: true });
     }
-    const ob=()=>{let e=document.getElementById('wc-off');if(!e){e=document.createElement('div');e.id='wc-off';e.textContent='📡 Нет подключения';document.body.appendChild(e);}return e;};
-    window.addEventListener('offline',()=>ob().classList.add('v'));
-    window.addEventListener('online',()=>ob().classList.remove('v'));
-    if(!navigator.onLine)setTimeout(()=>ob().classList.add('v'),600);
-    if('serviceWorker'in navigator){navigator.serviceWorker.addEventListener('message',e=>{if(e.data?.type!=='SW_UPDATED')return;if(!document.getElementById('chat-window')?.classList.contains('active')){setTimeout(()=>location.reload(),400);return;}let p=document.getElementById('wc-sw-pill');if(!p){p=document.createElement('div');p.id='wc-sw-pill';p.style.cssText='position:fixed;top:max(env(safe-area-inset-top,10px),10px);left:50%;transform:translateX(-50%) translateY(-60px);z-index:99999;background:rgba(16,185,129,.97);color:#000;padding:10px 22px;border-radius:24px;font-size:14px;font-weight:800;box-shadow:0 4px 24px rgba(0,0,0,.4);cursor:pointer;white-space:nowrap;transition:transform .35s cubic-bezier(.34,1.56,.64,1)';p.textContent='🆕 Обновление — нажмите';p.onclick=()=>location.reload();document.body.appendChild(p);}requestAnimationFrame(()=>{p.style.transform='translateX(-50%) translateY(0)';});setTimeout(()=>{p.style.transform='translateX(-50%) translateY(-60px)';},12000);});navigator.serviceWorker.addEventListener('controllerchange',()=>{if(document.hidden)window._swr=true;});document.addEventListener('visibilitychange',()=>{if(!document.hidden&&window._swr){window._swr=false;location.reload();}});}
-    window.addEventListener('error',e=>console.error('[WC]',e.message));
-    window.addEventListener('unhandledrejection',e=>{console.warn('[WC]',e.reason);e.preventDefault();});
-    // Блокируем zoom при фокусе на любой input — сбрасываем viewport
-    function _fixViewport(){
-        const m=document.querySelector('meta[name=viewport]');
-        if(m)m.content='width=device-width,initial-scale=1.0,maximum-scale=1.0,viewport-fit=cover,interactive-widget=resizes-content';
-    }
-    document.addEventListener('focusin', _fixViewport, {passive:true});
-    document.addEventListener('blur', ()=>{
-        // После blur сбрасываем transform на input-bar если чат не открыт
-        const chatWin=document.getElementById('chat-window');
-        if(!chatWin?.classList.contains('active')){
-            const ib=document.querySelector('.input-bar');
-            if(ib)ib.style.transform='';
+
+    // ── 3. CSS fixes ──
+    const st = document.createElement('style');
+    st.id = 'wc-ios9';
+    st.textContent = `
+        /* Высота через --vh (как TG/WhatsApp) */
+        #app {
+            height: var(--vh, 100dvh) !important;
+            max-height: var(--vh, 100dvh) !important;
+            background: #1d1d1e !important;
         }
-    }, {passive:true, capture:true});
-})();
+        /* chat-view: flex-колонка, высота через JS */
+        .chat-view {
+            position: fixed !important;
+            top: 0 !important; left: 0 !important; right: 0 !important;
+            bottom: 0 !important;
+            display: flex !important;
+            flex-direction: column !important;
+            background: var(--chat-bg, #1d1d1e) !important;
+            transform: translateZ(0);
+            will-change: transform;
+            transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94) !important;
+        }
+        .chat-view.active { transform: translateX(0) !important; }
+        /* messages: flex-1, скроллится */
+        #messages {
+            flex: 1 !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain;
+        }
+        /* input-bar: прибит к низу flex-колонки */
+        .input-bar {
+            flex-shrink: 0 !important;
+            position: relative !important;
+            transform: none !important;
+            background: var(--hdr, rgba(29,29,30,0.97)) !important;
+            /* padding-bottom учитывает home indicator */
+            padding-bottom: max(calc(env(safe-area-inset-bottom, 0px) + 6px), 8px) !important;
+        }
+        /* main-content */
+        #main-content {
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            scroll-behavior: auto;
+        }
+        /* Sticky search */
+        #chat-search-bar {
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 100 !important;
+            background: var(--bg, #1d1d1e) !important;
+        }
+        /* chat-header */
+        #chat-header {
+            background: var(--hdr, rgba(29,29,30,0.97)) !important;
+            flex-shrink: 0 !important;
+        }
+        /* iOS anti-zoom */
+        input, textarea, select {
+            font-size: 16px !important;
+            -webkit-text-size-adjust: 100%;
+            text-size-adjust: 100%;
+        }
+        body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+        *, button, a, [onclick], [data-msg-id] { -webkit-tap-highlight-color: transparent; }
+        .vl-ph { flex-shrink: 0; width: 100%; pointer-events: none; }
+        #app, #main-content, .prof-sheet-inner { touch-action: pan-x pan-y; }
+        #wc-off {
+            position: fixed; top: max(env(safe-area-inset-top,0px),0px);
+            left: 0; right: 0; z-index: 99997;
+            background: rgba(239,68,68,.97); color: #fff;
+            padding: 8px 16px; text-align: center;
+            font-size: 13px; font-weight: 700;
+            transform: translateY(-100%); transition: transform .3s ease;
+        }
+        #wc-off.v { transform: translateY(0); }
+    `;
+    document.head.appendChild(st);
+
+    // ── 4. Offline banner ──
+    const ob = () => {
+        let e = document.getElementById('wc-off');
+        if (!e) {
+            e = document.createElement('div');
+            e.id = 'wc-off';
+            e.textContent = '📡 Нет подключения';
+            document.body.appendChild(e);
+        }
+        return e;
+    };
+    window.addEventListener('offline', () => ob().classList.add('v'));
+    window.addEventListener('online',  () => ob().classList.remove('v'));
+    if (!navigator.onLine) setTimeout(() => ob().classList.add('v'), 600);
+
+    // ── 5. Service Worker update pill ──
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.addEventListener('message', e => {
+            if (e.data?.type !== 'SW_UPDATED') return;
+            if (!document.getElementById('chat-window')?.classList.contains('active')) {
+                setTimeout(() => location.reload(), 400); return;
+            }
+            let p = document.getElementById('wc-sw-pill');
+            if (!p) {
+                p = document.createElement('div');
+                p.id = 'wc-sw-pill';
+                p.style.cssText = 'position:fixed;top:max(env(safe-area-inset-top,10px),10px);left:50%;transform:translateX(-50%) translateY(-60px);z-index:99999;background:rgba(16,185,129,.97);color:#000;padding:10px 22px;border-radius:24px;font-size:14px;font-weight:800;box-shadow:0 4px 24px rgba(0,0,0,.4);cursor:pointer;white-space:nowrap;transition:transform .35s cubic-bezier(.34,1.56,.64,1)';
+                p.textContent = '🆕 Обновление — нажмите';
+                p.onclick = () => location.reload();
+                document.body.appendChild(p);
+            }
+            requestAnimationFrame(() => { p.style.transform = 'translateX(-50%) translateY(0)'; });
+            setTimeout(() => { p.style.transform = 'translateX(-50%) translateY(-60px)'; }, 12000);
+        });
+        navigator.serviceWorker.addEventListener('controllerchange', () => { if (document.hidden) window._swr = true; });
+        document.addEventListener('visibilitychange', () => { if (!document.hidden && window._swr) { window._swr = false; location.reload(); } });
+    }
+
+    window.addEventListener('error', e => console.error('[WC]', e.message));
+    window.addEventListener('unhandledrejection', e => { console.warn('[WC]', e.reason); e.preventDefault(); });
+
+    // ── 6. Anti-zoom viewport reset on focus ──
+    function _fixViewport() {
+        const m = document.querySelector('meta[name=viewport]');
+        if (m) m.content = 'width=device-width,initial-scale=1.0,maximum-scale=1.0,viewport-fit=cover,interactive-widget=resizes-content';
+    }
+    document.addEventListener('focusin', _fixViewport, { passive: true });
+    document.addEventListener('blur', () => {
+        const chatWin = document.getElementById('chat-window');
+        if (!chatWin?.classList.contains('active')) {
+            const ib = document.querySelector('.input-bar');
+            if (ib) ib.style.transform = '';
+        }
+    }, { passive: true, capture: true });
 
 // ══ MsgDB ════════════════════════════════════════════════════
 const MsgDB=(()=>{
@@ -712,20 +811,26 @@ function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
 }
 
 function getInitialAvatar(name, sizeClass, uid = '') {
-    const colors = ['#ef4444','#3b82f6','#10b981','#f97316','#8b5cf6','#ec4899','#06b6d4','#84cc16'];
-    const char  = (name || '?').charAt(0).toUpperCase();
-    const color = colors[char.charCodeAt(0) % colors.length];
+    // Hash-based цвет — равномернее распределяет цвета по именам
+    const colors = ['#f43f5e','#6366f1','#10b981','#f59e0b','#3b82f6','#8b5cf6','#ec4899','#06b6d4'];
+    const n = name || '?';
+    let hash = 0;
+    for (let i = 0; i < n.length; i++) {
+        hash = n.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const color = colors[Math.abs(hash) % colors.length];
+    const char  = n.charAt(0).toUpperCase();
     // Размер шрифта через inline px — не зависит от Tailwind
     const fs = sizeClass.includes('w-28') ? '38px'
         : sizeClass.includes('w-16') ? '28px'
         : sizeClass.includes('w-14') ? '24px'
         : sizeClass.includes('w-12') ? '20px'
         : sizeClass.includes('w-10') ? '18px'
-        : sizeClass.includes('w-9')  ? '16px'
+        : sizeClass.includes('w-9')  ? '17px'
         : sizeClass.includes('w-8')  ? '15px'
         : sizeClass.includes('full') ? '40%'
-        : '16px';
-    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white font-bold" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35);font-size:${fs};font-weight:800;line-height:1" data-uid="${uid}">${char}</div>`;
+        : '17px';
+    return `<div class="${sizeClass} rounded-full flex items-center justify-center text-white" style="background:${color};box-shadow:0 2px 10px rgba(0,0,0,0.35);font-size:${fs};font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center" data-uid="${uid}">${char}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -832,13 +937,21 @@ function renderApp() {
     --item-hover: rgba(255,255,255,0.05);
 }
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+    height: 100%;
+    overflow: hidden;
+    margin: 0;
+    /* position:fixed убирает "резиновый скролл" Safari — панели не мерцают */
+    position: fixed;
+    width: 100%;
+    -webkit-text-size-adjust: 100%;
+    -webkit-font-smoothing: antialiased;
+}
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--text);
-    overflow: hidden; margin: 0;
-    height: 100vh; height: 100dvh; min-height: -webkit-fill-available;
-    -webkit-font-smoothing: antialiased;
-    -webkit-text-size-adjust: 100%;
+    /* padding-bottom для home indicator */
+    padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 .glass { background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px); }
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
@@ -1092,7 +1205,7 @@ body {
 .animate-up  { animation:slideUp 0.3s ease; }
 </style>
 
-<div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:100vh;height:100dvh;height:calc(var(--dvh,1svh)*100)">
+<div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
     <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:max(env(safe-area-inset-bottom,0px),80px)">
 
@@ -7725,9 +7838,10 @@ function closeChat() {
     const chatWin = document.getElementById('chat-window');
     if(chatWin){
         chatWin.classList.remove('active');
-        // Сбрасываем keyboard offset
-        chatWin.style.bottom = '';
+        // Сбрасываем всё что мог выставить keyboard handler
         chatWin.style.height = '';
+        chatWin.style.top    = '';
+        chatWin.style.bottom = '';
     }
     document.getElementById('main-content')?.classList.remove('chat-depth');
     const fabBtn = document.getElementById('fab-btn-el');
