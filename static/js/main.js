@@ -254,10 +254,22 @@ const VirtualList=(()=>{
     function calc(){if(!el||!ms.length)return;const st=el.scrollTop,ch=el.clientHeight;let cum=0,vs=0,ve=ms.length;for(let i=0;i<ms.length;i++){const h=gh(i);if(cum+h>st&&vs===0)vs=i;if(cum>st+ch){ve=i;break;}cum+=h;}win(Math.max(0,vs-OV),Math.min(ms.length,ve+OV),true);}
     function onsc(){if(el.scrollTop<140&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages&&typeof loadMessages==='function')loadMessages(false);if(rf)cancelAnimationFrame(rf);rf=requestAnimationFrame(calc);}
     function mount(el2){if(el)destroy();el=el2;ms=[];hc.clear();s=0;e=0;el.style.overflowY='auto';el.style.WebkitOverflowScrolling='touch';el.style.overscrollBehavior='contain';ts=document.createElement('div');ts.style.cssText='height:1px;flex-shrink:0';tp=document.createElement('div');tp.className='vl-ph';tp.style.height='0';bp=document.createElement('div');bp.className='vl-ph';bp.style.height='0';bs=document.createElement('div');bs.style.cssText='height:1px;flex-shrink:0';el.appendChild(ts);el.appendChild(tp);el.appendChild(bp);el.appendChild(bs);el.addEventListener('scroll',onsc,{passive:true});}
-    function setMessages(arr){if(!el)return;ms=arr.slice();hc.clear();s=0;e=0;el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());phs();if(!arr.length){el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';return;}if(!el.contains(ts)){el.innerHTML='';mount(el);}win(Math.max(0,arr.length-BA),arr.length,false);requestAnimationFrame(function(){requestAnimationFrame(function(){
-            el.scrollTop=el.scrollHeight;_scrollAtBottom=true;_scrollUnread=0;
-            _updateScrollBtn(el);_ensureScrollBtn();_attachScrollListener(el);
-        });});}
+    function setMessages(arr){if(!el)return;ms=arr.slice();hc.clear();s=0;e=0;el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());phs();if(!arr.length){el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';return;}if(!el.contains(ts)){el.innerHTML='';mount(el);}win(Math.max(0,arr.length-BA),arr.length,false);
+        // FIXED: triple rAF + fallback timer — гарантирует что DOM отрисован
+        function _scrollAfterRender(attempt) {
+            if (attempt > 5) return;
+            requestAnimationFrame(function() {
+                if (!el) return;
+                if (el.scrollHeight > el.clientHeight + 10) {
+                    el.scrollTop = el.scrollHeight;
+                    _scrollAtBottom = true; _scrollUnread = 0;
+                    _updateScrollBtn(el); _ensureScrollBtn(); _attachScrollListener(el);
+                } else {
+                    _scrollAfterRender(attempt + 1);
+                }
+            });
+        }
+        _scrollAfterRender(0);}
     function append(msg){if(!el)return;ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120; // FIX Task 2a: 120px threshold
     if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
         if(ab){
@@ -332,9 +344,12 @@ function _onMessagesScroll(el) {
 }
 
 function _attachScrollListener(el) {
-    if (!el || _scrollListenerAttached) return;
+    if (!el) return;
+    // FIXED: всегда снимаем старый и вешаем новый — иначе теряется при переходе между чатами
+    el.removeEventListener('scroll', el._wcScrollHandler);
+    el._wcScrollHandler = function() { _onMessagesScroll(el); };
+    el.addEventListener('scroll', el._wcScrollHandler, { passive: true });
     _scrollListenerAttached = true;
-    el.addEventListener('scroll', function() { _onMessagesScroll(el); }, { passive: true });
 }
 
 // ── Scroll-to-bottom button (Task 2b) ───────────────────────────────
@@ -3284,10 +3299,18 @@ async function openChat(id, name, avatar) {
         if (_chatOpenId !== _myOpenId) return;
 
         setupVoiceRecording();
-        _ensureScrollBtn();
-        _attachScrollListener(msgs);
-        scrollToBottom(msgs, true);
-        setTimeout(_initScrollDownBtn, 100);
+        // FIXED: _attachScrollListener и скролл уже делает VirtualList.setMessages
+        // Просто убеждаемся что кнопка вниз есть
+        setTimeout(() => {
+            if (_chatOpenId === _myOpenId) {
+                _ensureScrollBtn();
+                _initScrollDownBtn();
+                // Дополнительный принудительный скролл если VirtualList ещё грузится
+                if (msgs && msgs.scrollHeight > msgs.clientHeight) {
+                    msgs.scrollTop = msgs.scrollHeight;
+                }
+            }
+        }, 200);
 
     } catch(e) {
         if (_chatOpenId !== _myOpenId) return;
@@ -3373,10 +3396,18 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
         if (_chatOpenId !== _myOpenId) return;
 
         setupVoiceRecording();
-        _ensureScrollBtn();
-        _attachScrollListener(msgs);
-        scrollToBottom(msgs, true);
-        setTimeout(_initScrollDownBtn, 100);
+        // FIXED: _attachScrollListener и скролл уже делает VirtualList.setMessages
+        // Просто убеждаемся что кнопка вниз есть
+        setTimeout(() => {
+            if (_chatOpenId === _myOpenId) {
+                _ensureScrollBtn();
+                _initScrollDownBtn();
+                // Дополнительный принудительный скролл если VirtualList ещё грузится
+                if (msgs && msgs.scrollHeight > msgs.clientHeight) {
+                    msgs.scrollTop = msgs.scrollHeight;
+                }
+            }
+        }, 200);
 
     } catch(e) {
         if (_chatOpenId !== _myOpenId) return;
@@ -3504,9 +3535,12 @@ async function loadMessages(initial = false, retryCount = 0) {
 
 
 function renderMessagesFromCache(msgs) {
-    const c = document.getElementById('messages');
-    if (!c) return;
-    VirtualList.mount(c);
+    const container = document.getElementById('messages');
+    if (!container) return;
+    // mount пересоздаёт структуру — нужно до setMessages
+    if (!container.querySelector('.vl-ph')) {
+        VirtualList.mount(container);
+    }
     VirtualList.setMessages(msgs);
 }
 
@@ -10561,7 +10595,6 @@ function closeChat() {
     const chatWin = document.getElementById('chat-window');
     if(chatWin){
         chatWin.classList.remove('active');
-        // Сбрасываем всё что мог выставить keyboard handler
         chatWin.style.height = '';
         chatWin.style.top    = '';
         chatWin.style.bottom = '';
@@ -10576,6 +10609,11 @@ function closeChat() {
     currentPartnerId = null;
     currentChatType  = 'private';
     hideTypingIndicator();
+    // FIXED: сбрасываем scroll state чтобы следующий чат начинался чисто
+    _scrollListenerAttached = false;
+    _scrollAtBottom         = true;
+    _scrollUnread           = 0;
+    VirtualList.destroy();
     loadChats();
 }
 
