@@ -152,7 +152,7 @@ window.currentUser = {{ {
 <!-- Patch: viewport/safe-area/FAB/avatars fixes, должен быть ДО main.js -->
 
 <!-- Main application bundle -->
-<script src="/static/js/main.js?v=1773877190" defer></script>
+<script src="/static/js/main.js?v=1773922393" defer></script>
 
 <script>
 (function () {
@@ -217,8 +217,13 @@ window.currentUser = {{ {
             navigator.serviceWorker
                 .register('/sw.js', { scope: '/', updateViaCache: 'none' })
                 .then(function(reg) {
-                    // Check for updates every 30 minutes
-                    reg.update().catch(function() {});
+                    // FIXED: принудительно активируем новый SW немедленно
+                    reg.update().then(function() {
+                        if (reg.waiting) {
+                            // Новый SW ждёт — активируем его сразу
+                            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+                        }
+                    }).catch(function() {});
                     var swUpdateInterval = setInterval(function() {
                         reg.update().catch(function() {});
                     }, 30 * 60 * 1000);
