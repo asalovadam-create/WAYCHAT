@@ -572,23 +572,6 @@ let _viewedMomentUsers = (() => {
 
 // ── Кеш медиа в памяти ──
 const _mediaCache = new Map();
-async function _getCachedMedia(url) {
-    if (!url) return url;
-    if (_mediaCache.has(url)) return _mediaCache.get(url);
-    try {
-        const r = await fetch(url);
-        if (!r.ok) return url;
-        const blob = await r.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        _mediaCache.set(url, blobUrl);
-        if (_mediaCache.size > 15) {
-            const k = _mediaCache.keys().next().value;
-            try { URL.revokeObjectURL(_mediaCache.get(k)); } catch(e) {}
-            _mediaCache.delete(k);
-        }
-        return blobUrl;
-    } catch(e) { return url; }
-
 // ══ RESTORED GLOBAL VARS ══
 const MsgDB=(()=>{
     const DB='wc_m2',V=1,ST='m',TTL=7*864e5;let _db=null;
@@ -612,6 +595,24 @@ const GC = {
 };
 let _callCtrlHideTimer = null;
 
+
+
+async function _getCachedMedia(url) {
+    if (!url) return url;
+    if (_mediaCache.has(url)) return _mediaCache.get(url);
+    try {
+        const r = await fetch(url);
+        if (!r.ok) return url;
+        const blob = await r.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        _mediaCache.set(url, blobUrl);
+        if (_mediaCache.size > 15) {
+            const k = _mediaCache.keys().next().value;
+            try { URL.revokeObjectURL(_mediaCache.get(k)); } catch(e) {}
+            _mediaCache.delete(k);
+        }
+        return blobUrl;
+    } catch(e) { return url; }
 
 }
 
@@ -2679,6 +2680,7 @@ function renderChatList(chats) {
     }
 
     _renderingChats = true;
+    try {
 
     const makeKey = (chat) => chat.is_group ? `g_${chat.group_id}` : `p_${chat.partner_id}`;
 
@@ -2818,7 +2820,7 @@ function renderChatList(chats) {
     container.appendChild(frag);
 
     updateUnreadBadge(totalUnread);
-    _renderingChats = false;
+    } finally { _renderingChats = false; }
 }
 
 function getContactDisplayName(userId, defaultName) {
@@ -3159,13 +3161,267 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 // ══════════════════════════════════════════════════════════
 //  ЗАГРУЗКА СООБЩЕНИЙ — КЭШ + ПАГИНАЦИЯ (30-40 за раз)
 // ══════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════════
+//  CHAT ENGINE v2 — быстрый, надёжный, без race conditions
+//  Единственный источник истины: сервер → messagesByChatCache → UI
+// ══════════════════════════════════════════════════════════════════
+
+// Защита от одновременного открытия нескольких чатов
+let _chatOpenId = 0;
+
+async function openChat(id, name, avatar) {
+    const _myOpenId = ++_chatOpenId;  // уникальный ID этого вызова
+
+    // ── 1. Сброс состояния ──────────────────────────────────────
+    currentPartnerId = id;
+    currentChatId    = null;
+    currentChatType  = 'private';
+    loadingMessages  = false;
+    hasMoreMessages  = true;
+
+    // ── 2. Показываем окно чата мгновенно ───────────────────────
+    const win  = document.getElementById('chat-window');
+    const msgs = document.getElementById('messages');
+    if (!win || !msgs) return;
+
+    win.classList.add('active');
+    closeFabMenu();
+    const fabBtn = document.getElementById('fab-btn-el');
+    if (fabBtn) fabBtn.style.display = 'none';
+    document.getElementById('main-content')?.classList.add('chat-depth');
+
+    // ── 3. Заголовок ────────────────────────────────────────────
+    const displayName = getContactDisplayName(id, name);
+    const elName   = document.getElementById('chat-name');
+    const elStatus = document.getElementById('chat-status');
+    const elDot    = document.getElementById('chat-online-dot');
+    if (elName)   elName.textContent   = displayName;
+    if (elStatus) elStatus.textContent = '...';
+    if (elDot)    elDot.style.display  = 'none';
+
+    // ── 4. Аватар ───────────────────────────────────────────────
+    const headerBox = document.getElementById('chat-ava-header');
+    if (headerBox) {
+        const cachedSrc = chatPartnerAvatarSrc[id];
+        headerBox.innerHTML = cachedSrc
+            ? `<img src="${cachedSrc}" class="w-10 h-10 rounded-full object-cover" data-uid="${id}" style="flex-shrink:0">`
+            : getAvatarHtml({id, name, avatar}, 'w-10 h-10');
+        if (avatar && !avatar.includes('default') && !cachedSrc) {
+            AvatarCache.getOrFetch(avatar, id).then(src => {
+                if (src) {
+                    chatPartnerAvatarSrc[id] = src;
+                    document.querySelectorAll(`[data-uid="${id}"]`).forEach(el => {
+                        if (el.tagName === 'IMG') el.src = src;
+                    });
+                }
+            }).catch(() => {});
+        }
+    }
+
+    // ── 5. Мгновенно показываем кэш (если есть) ─────────────────
+    VirtualList.destroy();
+    msgs.innerHTML = '';
+    const cacheKey = `p_${id}`;
+    const cached   = messagesByChatCache[cacheKey];
+
+    if (cached?.messages?.length) {
+        // Есть в памяти — рендерим мгновенно
+        renderMessagesFromCache(cached.messages);
+        scrollDown(false);
+        if (elStatus) elStatus.textContent = 'обновление...';
+    } else {
+        // Пробуем IndexedDB
+        _showChatSkeleton(msgs);
+        MsgDB.load(cacheKey).then(idb => {
+            if (_chatOpenId !== _myOpenId) return; // чат уже сменился
+            if (idb?.length) {
+                messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
+                msgs.innerHTML = '';
+                renderMessagesFromCache(idb);
+                scrollDown(false);
+                if (elStatus) elStatus.textContent = 'обновление...';
+            }
+        }).catch(() => {});
+    }
+
+    // ── 6. Получаем chat_id и грузим свежие сообщения ───────────
+    try {
+        const res = await apiFetch(`/get_chat_id/${id}`);
+        if (_chatOpenId !== _myOpenId) return; // чат сменился пока грузились
+
+        if (!res || !res.ok) {
+            if (elStatus) elStatus.textContent = 'ошибка соединения';
+            _showChatError(msgs, () => openChat(id, name, avatar));
+            return;
+        }
+
+        const data = await res.json();
+        if (_chatOpenId !== _myOpenId) return;
+
+        if (!data.chat_id) {
+            // Чата нет — создаём новый
+            if (elStatus) elStatus.textContent = 'новый чат';
+            msgs.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2">
+                <div style="font-size:40px;margin-bottom:10px">👋</div>
+                <p>Начните переписку!</p>
+            </div>`;
+            currentChatId = null;
+            setupVoiceRecording();
+            return;
+        }
+
+        currentChatId = data.chat_id;
+        socket.emit('enter_chat', { chat_id: currentChatId });
+
+        // Статус онлайн
+        const isOnline = data.partner_online;
+        if (elStatus) elStatus.textContent = isOnline ? 'в сети' : 'был(а) недавно';
+        if (elDot)    elDot.style.display  = isOnline ? 'block' : 'none';
+
+        // Грузим сообщения с сервера
+        await loadMessages(true);
+        if (_chatOpenId !== _myOpenId) return;
+
+        setupVoiceRecording();
+        _ensureScrollBtn();
+        _attachScrollListener(msgs);
+        scrollToBottom(msgs, true);
+        setTimeout(_initScrollDownBtn, 100);
+
+    } catch(e) {
+        if (_chatOpenId !== _myOpenId) return;
+        console.error('[openChat]', e);
+        if (elStatus) elStatus.textContent = 'ошибка';
+        _showChatError(msgs, () => openChat(id, name, avatar));
+    }
+}
+
+async function openGroupChat(groupId, groupName, groupAvatar) {
+    const _myOpenId = ++_chatOpenId;
+
+    currentPartnerId = groupId;
+    currentChatId    = null;
+    currentChatType  = 'group';
+    loadingMessages  = false;
+    hasMoreMessages  = true;
+
+    const win  = document.getElementById('chat-window');
+    const msgs = document.getElementById('messages');
+    if (!win || !msgs) return;
+
+    win.classList.add('active');
+    closeFabMenu();
+    const fabBtn = document.getElementById('fab-btn-el');
+    if (fabBtn) fabBtn.style.display = 'none';
+    document.getElementById('main-content')?.classList.add('chat-depth');
+
+    const elName   = document.getElementById('chat-name');
+    const elStatus = document.getElementById('chat-status');
+    const elDot    = document.getElementById('chat-online-dot');
+    if (elName)   elName.textContent   = groupName;
+    if (elStatus) elStatus.textContent = 'группа';
+    if (elDot)    elDot.style.display  = 'none';
+
+    const headerBox = document.getElementById('chat-ava-header');
+    if (headerBox) headerBox.innerHTML = getAvatarHtml({id:groupId, name:groupName, avatar:groupAvatar}, 'w-10 h-10');
+
+    VirtualList.destroy();
+    msgs.innerHTML = '';
+    const cacheKey = `g_${groupId}`;
+    const cached   = messagesByChatCache[cacheKey];
+
+    if (cached?.messages?.length) {
+        renderMessagesFromCache(cached.messages);
+        scrollDown(false);
+        if (elStatus) elStatus.textContent = 'обновление...';
+    } else {
+        _showChatSkeleton(msgs);
+        MsgDB.load(cacheKey).then(idb => {
+            if (_chatOpenId !== _myOpenId) return;
+            if (idb?.length) {
+                messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
+                msgs.innerHTML = '';
+                renderMessagesFromCache(idb);
+                scrollDown(false);
+            }
+        }).catch(() => {});
+    }
+
+    try {
+        const res = await apiFetch(`/get_group_chat_id/${groupId}`);
+        if (_chatOpenId !== _myOpenId) return;
+        if (!res || !res.ok) {
+            _showChatError(msgs, () => openGroupChat(groupId, groupName, groupAvatar));
+            return;
+        }
+
+        const data = await res.json();
+        if (_chatOpenId !== _myOpenId) return;
+        if (!data.chat_id) return;
+
+        currentChatId = data.chat_id;
+        socket.emit('enter_chat', { chat_id: currentChatId });
+
+        if (elStatus) elStatus.textContent = `${data.member_count || 0} участников`;
+        if (data.group_avatar && headerBox) {
+            headerBox.innerHTML = getAvatarHtml({id:groupId, name:groupName, avatar:data.group_avatar}, 'w-10 h-10');
+            chatPartnerAvatarSrc[groupId] = data.group_avatar;
+        }
+
+        await loadMessages(true);
+        if (_chatOpenId !== _myOpenId) return;
+
+        setupVoiceRecording();
+        _ensureScrollBtn();
+        _attachScrollListener(msgs);
+        scrollToBottom(msgs, true);
+        setTimeout(_initScrollDownBtn, 100);
+
+    } catch(e) {
+        if (_chatOpenId !== _myOpenId) return;
+        console.error('[openGroupChat]', e);
+        _showChatError(msgs, () => openGroupChat(groupId, groupName, groupAvatar));
+    }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────
+
+function _showChatSkeleton(container) {
+    if (!container) return;
+    container.innerHTML = [0,1,2,3,4].map((_, i) => {
+        const isOut = i % 3 === 0;
+        const w     = [62,80,55,72,45][i];
+        return `<div class="msg-row ${isOut?'out':'in'}" style="pointer-events:none">
+            <div style="max-width:${w}%;height:38px;border-radius:18px;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.4s ease-in-out infinite;animation-delay:${i*0.1}s"></div>
+        </div>`;
+    }).join('');
+}
+
+function _showChatError(container, retryFn) {
+    if (!container) return;
+    if (container.querySelector('[data-msg-id]')) return; // уже есть сообщения
+    container.innerHTML = `<div style="padding:60px 20px;text-align:center;opacity:0.7">
+        <div style="font-size:36px;margin-bottom:12px">📡</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:6px">Нет соединения</div>
+        <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-bottom:18px">Проверьте подключение к интернету</div>
+        <button onclick="(${retryFn.toString()})()" style="padding:11px 28px;background:var(--accent,#10b981);border:none;border-radius:14px;color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Повторить</button>
+    </div>`;
+}
+
 const MESSAGES_PER_PAGE = 35;
 
 async function loadMessages(initial = false, retryCount = 0) {
-    if (!currentChatId || loadingMessages || (!initial && !hasMoreMessages)) return;
+    if (!currentChatId) return;
+    if (loadingMessages && !initial) return;
+    if (!initial && !hasMoreMessages) return;
+
     loadingMessages = true;
-    const container = document.getElementById('messages');
-    const cacheKey  = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
+    const _savedChatId = currentChatId; // защита от смены чата во время загрузки
+    const container    = document.getElementById('messages');
+    const cacheKey     = currentChatType === 'group'
+        ? `g_${currentPartnerId}`
+        : `p_${currentPartnerId}`;
 
     try {
         let beforeId = null;
@@ -3174,66 +3430,78 @@ async function loadMessages(initial = false, retryCount = 0) {
             if (firstMsg) beforeId = +firstMsg.dataset.msgId;
         }
 
-        const url = beforeId
-            ? `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}&before_id=${beforeId}`
-            : `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}`;
+        const url = `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}${beforeId ? `&before_id=${beforeId}` : ''}`;
+        const res  = await apiFetch(url);
 
-        const res = await apiFetch(url);
+        // Проверяем что чат не сменился пока грузили
+        if (currentChatId !== _savedChatId) return;
 
-        // Retry при сетевой ошибке (не при 4xx)
-        if (!res) {
+        if (!res || !res.ok) {
             if (retryCount < 3) {
-                const delay = 1000 * Math.pow(2, retryCount);
-                console.warn(`[msg] retry ${retryCount+1}/3 через ${delay}ms`);
                 loadingMessages = false;
-                setTimeout(() => loadMessages(initial, retryCount + 1), delay);
-            } else {
-                if (container && initial && !container.querySelector('[data-msg-id]')) {
-                    container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.4">
-                        <div style="font-size:32px;margin-bottom:10px">📡</div>
-                        <p style="font-size:14px;margin-bottom:16px">Нет соединения</p>
-                        <button onclick="loadMessages(true)" style="padding:10px 24px;background:var(--accent);border:none;border-radius:14px;color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Повторить</button>
-                    </div>`;
-                }
+                setTimeout(() => {
+                    if (currentChatId === _savedChatId) loadMessages(initial, retryCount + 1);
+                }, 800 * Math.pow(2, retryCount));
+                return;
+            }
+            if (initial && container && !container.querySelector('[data-msg-id]')) {
+                _showChatError(container, () => loadMessages(true));
             }
             return;
         }
 
         const msgs = await res.json();
-        if (!Array.isArray(msgs)) { console.error('[msg] not array:', msgs); return; }
+        if (!Array.isArray(msgs)) { console.error('[loadMessages] not array'); return; }
+        if (currentChatId !== _savedChatId) return; // чат сменился
+
         if (msgs.length < MESSAGES_PER_PAGE) hasMoreMessages = false;
 
         if (initial) {
-            if (!messagesByChatCache[cacheKey])
-                messagesByChatCache[cacheKey] = { messages: [], loadedAll: false };
-            messagesByChatCache[cacheKey].messages = msgs;
-            messagesByChatCache[cacheKey].lastFetch = Date.now();
-
+            // Единственный источник истины — сервер
+            messagesByChatCache[cacheKey] = {
+                messages:  msgs,
+                lastFetch: Date.now(),
+            };
             if (container) container.innerHTML = '';
 
             if (!msgs.length) {
-                if (container) container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>`;
+                if (container) container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2">
+                    <div style="font-size:40px;margin-bottom:10px">👋</div>
+                    <p>Начните переписку!</p>
+                </div>`;
                 return;
             }
             renderMessagesFromCache(msgs);
             scrollDown(false);
-            MsgDB.save(cacheKey, msgs);
+            MsgDB.save(cacheKey, msgs).catch(() => {});
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
-            if (!messagesByChatCache[cacheKey]) messagesByChatCache[cacheKey] = { messages: [] };
-            messagesByChatCache[cacheKey].messages = [...msgs, ...messagesByChatCache[cacheKey].messages];
+            // Пагинация — добавляем в начало
+            const existing = messagesByChatCache[cacheKey]?.messages || [];
+            messagesByChatCache[cacheKey] = {
+                messages:  [...msgs, ...existing],
+                lastFetch: messagesByChatCache[cacheKey]?.lastFetch || 0,
+            };
             VirtualList.prependMessages(msgs);
         }
         currentPage++;
+
     } catch(e) {
-        console.error('[msg] loadMessages error:', e);
+        if (currentChatId !== _savedChatId) return;
+        console.error('[loadMessages]', e);
         if (retryCount < 2) {
             loadingMessages = false;
-            setTimeout(() => loadMessages(initial, retryCount + 1), 1500);
+            setTimeout(() => {
+                if (currentChatId === _savedChatId) loadMessages(initial, retryCount + 1);
+            }, 1000);
             return;
         }
-    } finally { loadingMessages = false; }
+    } finally {
+        loadingMessages = false;
+    }
 }
+
+
 
 function renderMessagesFromCache(msgs) {
     const c = document.getElementById('messages');
@@ -5298,6 +5566,47 @@ function removeContactById(id) {
 // ══════════════════════════════════════════════════════════
 //  КОНТАКТЫ
 // ══════════════════════════════════════════════════════════
+
+// ── createBottomSheet — утилита для bottom sheet модалок ────────────────
+function createBottomSheet(htmlContent, opts = {}) {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:8000;display:flex;align-items:flex-end;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
+
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.style.cssText = [
+        'width:100%', 'max-width:480px', 'margin:0 auto',
+        'background:rgba(22,22,28,0.98)',
+        'backdrop-filter:blur(40px)', '-webkit-backdrop-filter:blur(40px)',
+        'border-radius:24px 24px 0 0',
+        'border-top:0.5px solid rgba(255,255,255,0.1)',
+        'padding:16px 20px calc(max(env(safe-area-inset-bottom,20px),20px))',
+        'transform:translateY(100%)',
+        'transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)',
+        'max-height:90dvh', 'overflow-y:auto',
+        '-webkit-overflow-scrolling:touch',
+    ].join(';');
+    sh.innerHTML = htmlContent;
+
+    ov.appendChild(sh);
+
+    // Закрытие по клику на backdrop
+    ov.addEventListener('click', (e) => {
+        if (e.target === ov) {
+            sh.style.transform = 'translateY(100%)';
+            setTimeout(() => ov.remove(), 300);
+        }
+    });
+
+    // Анимация открытия
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        sh.style.transform = 'translateY(0)';
+    }));
+
+    return ov;
+}
+
 function openContactsModal() {
     document.body.appendChild(createBottomSheet(`
         <div class="modal-handle"></div>
