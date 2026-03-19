@@ -3177,179 +3177,12 @@ function handleSearch() {
 // ══════════════════════════════════════════════════════════
 //  ОТКРЫТИЕ ЧАТА — С КЭШЕМ СООБЩЕНИЙ
 // ══════════════════════════════════════════════════════════
-async function openChat(id, name, avatar) {
-    const win  = document.getElementById('chat-window');
-    const msgs = document.getElementById('messages');
-    currentPartnerId = id;
-    currentChatId    = null;
-    currentChatType  = 'private';
-    loadingMessages  = false;
-    hasMoreMessages  = true;
 
-    win.classList.add('active');
-    // FIXED: инициализируем кнопку "вниз" при открытии чата
-    setTimeout(_initScrollDownBtn, 150);
-    // Скрываем FAB и закрываем меню при открытии чата
-    closeFabMenu();
-    const fabBtn=document.getElementById('fab-btn-el');
-    if(fabBtn)fabBtn.style.display='none';
-    // Эффект глубины — фон слегка уменьшается и размывается
-    // На desktop эффект глубины не нужен
-    if (!window.matchMedia('(min-width:768px)').matches) {
-        document.getElementById('main-content')?.classList.add('chat-depth');
-    }
-    const displayName = getContactDisplayName(id, name);
-    document.getElementById('chat-name').textContent = displayName;
-    document.getElementById('chat-status').textContent = 'загрузка...';
-    document.getElementById('chat-online-dot').style.display = 'none';
-
-    // Аватар — сначала из памяти, затем из IndexedDB (мгновенно)
-    const headerBox = document.getElementById('chat-ava-header');
-    const cachedSrc = chatPartnerAvatarSrc[id];
-    if (headerBox) {
-        if (cachedSrc) {
-            headerBox.innerHTML = `<img src="${cachedSrc}" class="w-10 h-10 rounded-full object-cover border border-white/10" data-uid="${id}" style="flex-shrink:0" loading="lazy">`;
-        } else {
-            headerBox.innerHTML = getAvatarHtml({id, name, avatar}, 'w-10 h-10');
-            if (avatar && !avatar.includes('default')) {
-                // Загружаем через кэш
-                AvatarCache.getOrFetch(avatar, id).then(src => {
-                    chatPartnerAvatarSrc[id] = src;
-                    document.querySelectorAll(`[data-uid="${id}"]`).forEach(el => {
-                        if (el.tagName === 'IMG') el.src = src;
-                    });
-                });
-            }
-        }
-    }
-
-    VirtualList.destroy();
-    msgs.innerHTML = '';
-    const _ck = `p_${id}`;
-    const _mm = messagesByChatCache[_ck];
-    if (_mm?.messages.length) {
-        renderMessagesFromCache(_mm.messages);
-        document.getElementById('chat-status').textContent = 'обновление...';
-    } else {
-        MsgDB.load(_ck).then(idb => {
-            if (idb?.length && !messagesByChatCache[_ck]?.messages.length) {
-                messagesByChatCache[_ck] = { messages: idb, lastFetch: 0 };
-                renderMessagesFromCache(idb);
-                document.getElementById('chat-status').textContent = 'обновление...';
-            }
-        });
-        // Skeleton loader пока грузятся сообщения
-        msgs.innerHTML = [1,2,3,4,5].map((_, i) => {
-            const isOut = i % 3 === 0;
-            const w = [60,80,55,70,45][i] + '%';
-            return `<div class="msg-row ${isOut?'out':'in'}" style="opacity:0.5">
-                <div style="max-width:${w};padding:10px 14px;border-radius:18px;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;height:36px"></div>
-            </div>`;
-        }).join('');
-    }
-
-    try {
-        const res  = await apiFetch(`/get_chat_id/${id}`);
-        if (!res) return;
-        const data = await res.json();
-        if (data.chat_id) {
-            currentChatId = data.chat_id;
-            socket.emit('enter_chat', { chat_id: currentChatId });
-            const isOnline = data.partner_online;
-            document.getElementById('chat-status').textContent = isOnline ? 'в сети' : 'был(а) недавно';
-            document.getElementById('chat-online-dot').style.display = isOnline ? 'block' : 'none';
-            await loadMessages(true);
-            setupVoiceRecording();
-            setupScrollPagination();
-            // FIX Task 2a/2b: inject scroll button + instant scroll on open
-            _ensureScrollBtn();
-            _attachScrollListener(msgs);
-            scrollToBottom(msgs, true);
-        }
-    } catch(e) {
-        console.error('openChat:', e);
-        msgs.innerHTML = `<div style="padding:60px 0;text-align:center;color:#ef4444;font-size:14px">Ошибка соединения</div>`;
-    }
-}
 
 // ══════════════════════════════════════════════════════════
 //  ОТКРЫТИЕ ГРУППОВОГО ЧАТА
 // ══════════════════════════════════════════════════════════
-async function openGroupChat(groupId, groupName, groupAvatar) {
-    const win  = document.getElementById('chat-window');
-    const msgs = document.getElementById('messages');
-    currentPartnerId = groupId;
-    currentChatId    = null;
-    currentChatType  = 'group';
-    loadingMessages  = false;
-    hasMoreMessages  = true;
 
-    win.classList.add('active');
-    closeFabMenu();
-    const fabBtn2=document.getElementById('fab-btn-el');
-    if(fabBtn2)fabBtn2.style.display='none';
-    // На desktop эффект глубины не нужен
-    if (!window.matchMedia('(min-width:768px)').matches) {
-        document.getElementById('main-content')?.classList.add('chat-depth');
-    }
-    document.getElementById('chat-name').textContent = groupName;
-    document.getElementById('chat-status').textContent = 'группа';
-    document.getElementById('chat-online-dot').style.display = 'none';
-
-    // Используем переданный avatar (из кэша списка чатов)
-    const headerBox = document.getElementById('chat-ava-header');
-    if (headerBox) headerBox.innerHTML = getAvatarHtml({id: groupId, name: groupName, avatar: groupAvatar}, 'w-10 h-10');
-
-    VirtualList.destroy();
-    msgs.innerHTML = '';
-    const _gck = `g_${groupId}`;
-    const _gm = messagesByChatCache[_gck];
-    if (_gm?.messages.length) {
-        renderMessagesFromCache(_gm.messages);
-        document.getElementById('chat-status').textContent = 'обновление...';
-    } else {
-        MsgDB.load(_gck).then(idb => {
-            if (idb?.length && !messagesByChatCache[_gck]?.messages.length) {
-                messagesByChatCache[_gck] = { messages: idb, lastFetch: 0 };
-                renderMessagesFromCache(idb);
-            }
-        });
-        // Skeleton loader пока грузятся сообщения
-        msgs.innerHTML = [1,2,3,4,5].map((_, i) => {
-            const isOut = i % 3 === 0;
-            const w = [60,80,55,70,45][i] + '%';
-            return `<div class="msg-row ${isOut?'out':'in'}" style="opacity:0.5">
-                <div style="max-width:${w};padding:10px 14px;border-radius:18px;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;height:36px"></div>
-            </div>`;
-        }).join('');
-    }
-
-    try {
-        const res  = await apiFetch(`/get_group_chat_id/${groupId}`);
-        if (!res) return;
-        const data = await res.json();
-        if (data.chat_id) {
-            currentChatId = data.chat_id;
-            socket.emit('enter_chat', { chat_id: currentChatId });
-            const members = data.member_count || 0;
-            document.getElementById('chat-status').textContent = `${members} участников`;
-            // Обновляем аватар если API вернул актуальный
-            if (data.group_avatar && data.group_avatar !== groupAvatar) {
-                if (headerBox) headerBox.innerHTML = getAvatarHtml({id: groupId, name: groupName, avatar: data.group_avatar}, 'w-10 h-10');
-                chatPartnerAvatarSrc[groupId] = data.group_avatar;
-            }
-            await loadMessages(true);
-            setupVoiceRecording();
-            setupScrollPagination();
-            // FIX Task 2a/2b: scroll button + instant scroll on group open
-            _ensureScrollBtn();
-            _attachScrollListener(msgs);
-            scrollToBottom(msgs, true);
-        }
-    } catch(e) {
-        console.error('openGroupChat:', e);
-    }
-}
 
 // ══════════════════════════════════════════════════════════
 //  ЗАГРУЗКА СООБЩЕНИЙ — КЭШ + ПАГИНАЦИЯ (30-40 за раз)
@@ -3379,6 +3212,9 @@ async function openChat(id, name, avatar) {
     if (!win || !msgs) return;
 
     win.classList.add('active');
+    // Скрываем пустой экран
+    const emptyState = document.getElementById('chat-empty-state');
+    if (emptyState) emptyState.style.display = 'none';
     closeFabMenu();
     const fabBtn = document.getElementById('fab-btn-el');
     if (fabBtn && !window.matchMedia('(min-width:768px)').matches) fabBtn.style.display = 'none';
@@ -3515,6 +3351,9 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     if (!win || !msgs) return;
 
     win.classList.add('active');
+    // Скрываем пустой экран
+    const emptyState2 = document.getElementById('chat-empty-state');
+    if (emptyState2) emptyState2.style.display = 'none';
     closeFabMenu();
     const fabBtn = document.getElementById('fab-btn-el');
     if (fabBtn && !window.matchMedia('(min-width:768px)').matches) fabBtn.style.display = 'none';
@@ -11023,9 +10862,15 @@ async function answerIncomingCall() {
 }
 
 function closeChat() {
-    // На desktop чат не закрывается — просто снимаем фокус
+    // На desktop — показываем пустой экран вместо закрытия
     if (window.matchMedia('(min-width:768px)').matches) {
         document.getElementById('main-content')?.classList.remove('chat-depth');
+        const chatWin = document.getElementById('chat-window');
+        if (chatWin) chatWin.classList.remove('active');
+        const emptyState = document.getElementById('chat-empty-state');
+        if (emptyState) emptyState.style.display = 'flex';
+        currentChatId = null;
+        currentPartnerId = null;
         return;
     }
     const chatWin = document.getElementById('chat-window');
