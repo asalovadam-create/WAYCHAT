@@ -1735,6 +1735,133 @@ body {
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
 .animate-msg { animation:msgIn 0.25s cubic-bezier(0.22,1,0.36,1); }
 .animate-up  { animation:slideUp 0.3s ease; }
+
+/* ════════════════════════════════════════════════════════
+   DESKTOP LAYOUT — компактный двухколоночный (≥768px)
+   Левая колонка: список чатов | Правая: открытый чат
+   ════════════════════════════════════════════════════════ */
+@media (min-width: 768px) {
+
+    /* Скрываем мобильные артефакты */
+    body { cursor: default; }
+
+    /* Основной контейнер — flex row */
+    #app {
+        flex-direction: row !important;
+        overflow: hidden !important;
+    }
+
+    /* Левая колонка — список чатов */
+    #main-content {
+        width: 320px !important;
+        min-width: 260px !important;
+        max-width: 360px !important;
+        flex-shrink: 0 !important;
+        flex-grow: 0 !important;
+        border-right: .5px solid rgba(255,255,255,0.07) !important;
+        height: 100% !important;
+        overflow-y: auto !important;
+        padding-bottom: 0 !important;
+    }
+
+    /* Chat-window — правая колонка, всегда видна */
+    .chat-view {
+        position: relative !important;
+        flex: 1 1 0% !important;
+        transform: none !important;
+        height: 100% !important;
+        border-radius: 0 !important;
+    }
+
+    /* Chat-window без анимации slideIn на desktop */
+    .chat-view.active {
+        transform: none !important;
+    }
+
+    /* Эффект глубины отключаем на desktop */
+    #main-content.chat-depth {
+        transform: none !important;
+        filter: none !important;
+        opacity: 1 !important;
+        pointer-events: all !important;
+    }
+
+    /* Кнопка назад в заголовке чата — скрываем на desktop */
+    #chat-back-btn { display: none !important; }
+
+    /* FAB — убираем на desktop (есть клавиатурные шорткаты) */
+    .fab-btn { display: none !important; }
+
+    /* Чуть компактнее элементы списка */
+    .chat-item { padding: 6px 14px !important; }
+
+    /* Скрываем кружки дозвона (только мобайл анимация) */
+    .call-ring-1, .call-ring-2, .call-ring-3 {
+        width: 160px !important; height: 160px !important;
+    }
+
+    /* Компактнее шапка чата */
+    #chat-header {
+        padding-top: max(env(safe-area-inset-top,0px), 8px) !important;
+    }
+
+    /* Input bar — убираем safe-area снизу (нет home indicator) */
+    .input-bar {
+        padding-bottom: 8px !important;
+    }
+
+    /* Hover на пунктах списка чатов */
+    .chat-item { transition: background .1s !important; }
+    .chat-item:hover { background: rgba(255,255,255,0.05) !important; }
+
+    /* Скроллбар в списке чатов */
+    #main-content::-webkit-scrollbar { width: 4px; }
+    #main-content::-webkit-scrollbar-track { background: transparent; }
+    #main-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+    #main-content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+
+    /* Скроллбар в сообщениях */
+    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar-track { background: transparent; }
+    #messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+    /* Пустой экран чата если ни один не открыт */
+    #chat-window:not(.active) {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        background: var(--bg, #1d1d1e) !important;
+        transform: none !important;
+    }
+    #chat-window:not(.active)::after {
+        content: "Выберите чат";
+        color: rgba(255,255,255,0.18);
+        font-size: 16px;
+        font-weight: 500;
+    }
+
+    /* Немного уже бабблы на ПК */
+    .bubble { max-width: 66% !important; }
+    .msg-row.out .bubble { margin-left: 60px !important; }
+    .msg-row.in  .bubble { margin-right: 60px !important; }
+
+    /* Курсор pointer на интерактивных элементах */
+    .chat-item,
+    .msg-row,
+    button,
+    [onclick] { cursor: pointer; }
+
+    /* Tooltip для реакций */
+    .msg-row:hover .msg-reactions { opacity: 1 !important; }
+}
+
+/* Очень широкие экраны */
+@media (min-width: 1100px) {
+    #main-content {
+        width: 360px !important;
+        max-width: 400px !important;
+    }
+}
 </style>
 
 <div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
@@ -3579,13 +3706,25 @@ function buildMessageRow(msg, animate = true) {
     row.setAttribute('data-msg-id', msg.id || '');
     if (animate) row.classList.add('animate-msg');
 
-    // Долгое нажатие
+    // Долгое нажатие (мобайл)
     let lpTimer;
     row.addEventListener('touchstart', () => {
         lpTimer = setTimeout(() => { vibrate([10,30,10]); showMsgContextMenu(row, msg); }, 600);
     }, { passive: true });
     row.addEventListener('touchend',  () => clearTimeout(lpTimer), {passive:true});
     row.addEventListener('touchmove', () => clearTimeout(lpTimer), {passive:true});
+
+    // ПК: правый клик → компактное контекстное меню
+    row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showDesktopContextMenu(e.clientX, e.clientY, msg);
+    });
+
+    // ПК: hover эффект на сообщениях
+    if (window.matchMedia('(hover:hover)').matches) {
+        row.addEventListener('mouseenter', () => { row.style.background = 'rgba(255,255,255,0.03)'; });
+        row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    }
 
     // Двойной тап — лайк
     let tapCount = 0, tapTimer = null;
@@ -3820,6 +3959,220 @@ function renderNewMessage(msg, animate = true) {
 //  КОНТЕКСТНОЕ МЕНЮ СООБЩЕНИЯ
 // ══════════════════════════════════════════════════════════
 // ── iOS 26: контекстное меню сообщения ──────────────────
+// ══════════════════════════════════════════════════════════════
+//  DESKTOP CONTEXT MENU — правый клик на сообщении
+// ══════════════════════════════════════════════════════════════
+function showDesktopContextMenu(x, y, msg) {
+    document.getElementById('_wc_dctx')?.remove();
+
+    const isMe   = +msg.sender_id === +currentUser.id;
+    const isText = !msg.type || msg.type === 'text';
+    const text   = isText ? (msg.content || msg.text || '') : '';
+    const EMOJIS = ['❤️','😂','😮','😢','👍','🔥','💯','🎉'];
+
+    const menu = document.createElement('div');
+    menu.id = '_wc_dctx';
+    menu.style.cssText = [
+        'position:fixed',
+        `left:${x}px`,
+        `top:${y}px`,
+        'z-index:99998',
+        'background:rgba(28,28,34,0.97)',
+        'backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px)',
+        'border:.5px solid rgba(255,255,255,0.1)',
+        'border-radius:14px',
+        'box-shadow:0 8px 40px rgba(0,0,0,0.6),0 2px 8px rgba(0,0,0,0.4)',
+        'padding:5px',
+        'min-width:200px',
+        'animation:_dctx_in 0.12s cubic-bezier(0.34,1.56,0.64,1)',
+        'transform-origin:top left',
+        'user-select:none',
+    ].join(';');
+
+    // Анимация появления
+    if (!document.getElementById('_dctx_css')) {
+        const s = document.createElement('style');
+        s.id = '_dctx_css';
+        s.textContent = `
+            @keyframes _dctx_in {
+                from { opacity:0; transform:scale(0.88) translateY(-4px); }
+                to   { opacity:1; transform:scale(1) translateY(0); }
+            }
+            #_wc_dctx ._mi {
+                display:flex; align-items:center; gap:10px;
+                padding:7px 10px; border-radius:9px; cursor:pointer;
+                font-size:13.5px; font-weight:500; color:rgba(255,255,255,0.88);
+                transition:background 0.1s; white-space:nowrap;
+            }
+            #_wc_dctx ._mi:hover { background:rgba(255,255,255,0.08); }
+            #_wc_dctx ._mi:active { background:rgba(255,255,255,0.12); }
+            #_wc_dctx ._mi-icon {
+                width:28px; height:28px; border-radius:7px;
+                display:flex; align-items:center; justify-content:center;
+                flex-shrink:0; font-size:15px;
+            }
+            #_wc_dctx ._sep {
+                height:.5px; background:rgba(255,255,255,0.07);
+                margin:4px 8px;
+            }
+            #_wc_dctx ._reaction-row {
+                display:flex; align-items:center; gap:2px;
+                padding:4px 6px 6px; border-bottom:.5px solid rgba(255,255,255,0.07);
+                margin-bottom:3px;
+            }
+            #_wc_dctx ._rbtn {
+                font-size:20px; padding:3px 4px; background:none; border:none;
+                cursor:pointer; border-radius:7px; transition:all 0.12s;
+                line-height:1;
+            }
+            #_wc_dctx ._rbtn:hover {
+                background:rgba(255,255,255,0.1);
+                transform:scale(1.25) translateY(-2px);
+            }
+        `;
+        document.head.appendChild(s);
+    }
+
+    const close = () => {
+        menu.style.animation = 'none';
+        menu.style.opacity   = '0';
+        menu.style.transform = 'scale(0.92)';
+        menu.style.transition = 'opacity 0.1s,transform 0.1s';
+        setTimeout(() => menu.remove(), 110);
+    };
+
+    // Автоматическое позиционирование — не выходить за экран
+    requestAnimationFrame(() => {
+        const r  = menu.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        if (r.right  > vw - 8) menu.style.left = (vw - r.width  - 8) + 'px';
+        if (r.bottom > vh - 8) menu.style.top  = (y - r.height - 4)  + 'px';
+    });
+
+    // ── Реакции ──────────────────────────────────────────────
+    const rRow = document.createElement('div');
+    rRow.className = '_reaction-row';
+    EMOJIS.forEach(em => {
+        const b = document.createElement('button');
+        b.className = '_rbtn';
+        b.textContent = em;
+        b.title = em;
+        b.onclick = () => {
+            activeReactionMsgId = msg.id;
+            sendReaction(em);
+            close();
+        };
+        rRow.appendChild(b);
+    });
+    menu.appendChild(rRow);
+
+    // ── Пункты меню ──────────────────────────────────────────
+    const addItem = (icon, iconBg, label, color, action, danger) => {
+        const item = document.createElement('div');
+        item.className = '_mi';
+        if (danger) item.style.color = danger;
+        item.innerHTML = `
+            <div class="_mi-icon" style="background:${iconBg}">${icon}</div>
+            <span>${label}</span>`;
+        item.onclick = () => { close(); setTimeout(action, 80); };
+        menu.appendChild(item);
+    };
+
+    const addSep = () => {
+        const d = document.createElement('div');
+        d.className = '_sep';
+        menu.appendChild(d);
+    };
+
+    // Копировать текст
+    if (text) {
+        addItem(
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="9" width="13" height="13" rx="2" stroke="#5e9cf5" stroke-width="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="#5e9cf5" stroke-width="2" stroke-linecap="round"/>
+            </svg>`,
+            'rgba(94,156,245,0.15)', 'Копировать', null,
+            () => copyMessage(text)
+        );
+    }
+
+    // Ответить
+    addItem(
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M3 10h10a8 8 0 018 8v2M3 10l6 6M3 10l6-6" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>`,
+        'rgba(52,211,153,0.15)', 'Ответить', null,
+        () => {
+            if (typeof _setReplyMsg === 'function') _setReplyMsg(msg);
+            else { const inp = document.getElementById('msg-input'); if (inp) inp.focus(); }
+        }
+    );
+
+    // Переслать
+    addItem(
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <polyline points="15 17 20 12 15 7" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 18v-2a6 6 0 016-6h10" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"/>
+        </svg>`,
+        'rgba(167,139,250,0.15)', 'Переслать', null,
+        () => _forwardMessage(msg)
+    );
+
+    // Выбрать
+    addItem(
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="3" width="18" height="18" rx="4" stroke="#f59e0b" stroke-width="2"/>
+          <polyline points="8,12 11,15 16,9" stroke="#f59e0b" stroke-width="2" stroke-linecap="round"/>
+        </svg>`,
+        'rgba(245,158,11,0.15)', 'Выбрать', null,
+        () => _startMultiSelect(msg.id)
+    );
+
+    addSep();
+
+    // Удалить у меня
+    addItem(
+        `<svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#f5a623" stroke-width="2" stroke-linecap="round"/>
+        </svg>`,
+        'rgba(245,166,35,0.15)', 'Удалить у меня', '#f5a623',
+        () => _deleteMsgForMe(msg.id)
+    );
+
+    // Удалить у всех (только автор)
+    if (isMe) {
+        addItem(
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6" stroke="#ff453a" stroke-width="2" stroke-linecap="round"/>
+            </svg>`,
+            'rgba(255,69,58,0.15)', 'Удалить у всех', '#ff453a',
+            () => _confirmDeleteForAll(msg.id)
+        );
+    }
+
+    document.body.appendChild(menu);
+
+    // Закрываем по клику вне / Escape / scroll
+    const onDown = (e) => {
+        if (!menu.contains(e.target)) { close(); cleanup(); }
+    };
+    const onKey  = (e) => {
+        if (e.key === 'Escape') { close(); cleanup(); }
+    };
+    const onScroll = () => { close(); cleanup(); };
+    const cleanup  = () => {
+        document.removeEventListener('mousedown', onDown);
+        document.removeEventListener('keydown',   onKey);
+        window.removeEventListener('scroll', onScroll, true);
+    };
+    setTimeout(() => {
+        document.addEventListener('mousedown', onDown);
+        document.addEventListener('keydown',   onKey);
+        window.addEventListener('scroll', onScroll, { capture:true, once:true });
+    }, 10);
+}
+
 function showMsgContextMenu(row, msg) {
     // Убираем предыдущее меню если открыто
     document.getElementById('_wc_ctx')?.remove();
@@ -8055,6 +8408,27 @@ async function doLogout() {
     window.location.href = '/login';
 }
 
+// ── Keyboard shortcuts (только ПК) ────────────────────────────────
+(function() {
+    if (!window.matchMedia('(hover:hover)').matches) return; // пропускаем тачскрин
+    document.addEventListener('keydown', (e) => {
+        // Ctrl/Cmd+K — фокус на поиск
+        if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+            e.preventDefault();
+            document.getElementById('search-input')?.focus();
+            return;
+        }
+        // Escape — закрыть модалки / десктоп меню
+        if (e.key === 'Escape') {
+            document.getElementById('_wc_dctx')?.remove();
+            document.getElementById('_wc_ctx')?.remove();
+            document.querySelector('.modal-overlay')?.remove();
+            return;
+        }
+        // Enter в поле ввода — уже обрабатывается
+    });
+})();
+
 window.onload = init;
 // ══════════════════════════════════════════════════════════════════
 //  🎵 MUSIC PLAYER v4 — Background play, Canvas EQ, Long video
@@ -10592,6 +10966,11 @@ async function answerIncomingCall() {
 }
 
 function closeChat() {
+    // На desktop чат не закрывается — просто снимаем фокус
+    if (window.matchMedia('(min-width:768px)').matches) {
+        document.getElementById('main-content')?.classList.remove('chat-depth');
+        return;
+    }
     const chatWin = document.getElementById('chat-window');
     if(chatWin){
         chatWin.classList.remove('active');
