@@ -1742,43 +1742,65 @@ body {
    ════════════════════════════════════════════════════════ */
 @media (min-width: 768px) {
 
-    /* Скрываем мобильные артефакты */
+    /* ══ TELEGRAM-STYLE DESKTOP LAYOUT ══ */
+
     body { cursor: default; }
 
-    /* Основной контейнер — flex row */
+    /* #app — горизонтальный flex как в Telegram */
     #app {
         flex-direction: row !important;
         overflow: hidden !important;
     }
 
-    /* Левая колонка — список чатов */
+    /* ── Левая колонка: список чатов ── */
     #main-content {
-        width: 320px !important;
-        min-width: 260px !important;
-        max-width: 360px !important;
-        flex-shrink: 0 !important;
-        flex-grow: 0 !important;
-        border-right: .5px solid rgba(255,255,255,0.07) !important;
+        width: 340px !important;
+        min-width: 280px !important;
+        max-width: 380px !important;
+        flex: 0 0 340px !important;
         height: 100% !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
         padding-bottom: 0 !important;
+        border-right: 1px solid rgba(255,255,255,0.06) !important;
+        background: var(--bg, #1d1d1e) !important;
     }
 
-    /* Chat-window — правая колонка, всегда видна */
+    /* ── Правая колонка: окно чата ── */
+    /* КЛЮЧЕВОЕ: на десктопе .chat-view НЕ position:fixed */
     .chat-view {
         position: relative !important;
         flex: 1 1 0% !important;
-        transform: none !important;
+        min-width: 0 !important;
         height: 100% !important;
-        border-radius: 0 !important;
-    }
-
-    /* Chat-window без анимации slideIn на desktop */
-    .chat-view.active {
         transform: none !important;
+        transition: none !important;
+        border-radius: 0 !important;
+        display: flex !important;
+        flex-direction: column !important;
+        overflow: hidden !important;
     }
 
-    /* Эффект глубины отключаем на desktop */
+    /* На десктопе чат всегда виден (не translateX(100%)) */
+    .chat-view { transform: none !important; }
+    .chat-view.active { transform: none !important; }
+
+    /* Пустое состояние — пока чат не выбран */
+    #chat-window:not(.active) {
+        background: var(--bg, #1d1d1e) !important;
+        transform: none !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    #chat-window:not(.active) > *:not(#chat-empty-state) {
+        display: none !important;
+    }
+    #chat-window:not(.active) #chat-empty-state {
+        display: flex !important;
+    }
+
+    /* Убираем эффект глубины на desktop */
     #main-content.chat-depth {
         transform: none !important;
         filter: none !important;
@@ -1786,73 +1808,79 @@ body {
         pointer-events: all !important;
     }
 
-    /* Кнопка назад в заголовке чата — скрываем на desktop */
+    /* Кнопка назад — скрываем на десктопе */
     #chat-back-btn { display: none !important; }
 
-    /* FAB — убираем на desktop (есть клавиатурные шорткаты) */
+    /* FAB — скрываем на десктопе */
     .fab-btn { display: none !important; }
+    .fab-bd  { display: none !important; }
+    .fab-menu { display: none !important; }
 
-    /* Чуть компактнее элементы списка */
-    .chat-item { padding: 6px 14px !important; }
-
-    /* Скрываем кружки дозвона (только мобайл анимация) */
-    .call-ring-1, .call-ring-2, .call-ring-3 {
-        width: 160px !important; height: 160px !important;
+    /* Чаты: компактнее + hover */
+    .chat-item {
+        padding: 8px 16px !important;
+        transition: background .1s !important;
+        cursor: pointer !important;
     }
-
-    /* Компактнее шапка чата */
-    #chat-header {
-        padding-top: max(env(safe-area-inset-top,0px), 8px) !important;
-    }
-
-    /* Input bar — убираем safe-area снизу (нет home indicator) */
-    .input-bar {
-        padding-bottom: 8px !important;
-    }
-
-    /* Hover на пунктах списка чатов */
-    .chat-item { transition: background .1s !important; }
     .chat-item:hover { background: rgba(255,255,255,0.05) !important; }
 
-    /* Скроллбар в списке чатов */
-    #main-content::-webkit-scrollbar { width: 4px; }
+    /* Бабблы чуть уже */
+    .bubble { max-width: 62% !important; }
+    .msg-row.out .bubble { margin-left: 80px !important; }
+    .msg-row.in  .bubble { margin-right: 80px !important; }
+
+    /* Шапка чата */
+    #chat-header {
+        padding-top: 10px !important;
+    }
+
+    /* Input bar без мобильного safe-area */
+    .input-bar { padding-bottom: 10px !important; }
+
+    /* Скроллбары */
+    #main-content::-webkit-scrollbar { width: 5px; }
     #main-content::-webkit-scrollbar-track { background: transparent; }
-    #main-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
-    #main-content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+    #main-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+    #main-content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-    /* Скроллбар в сообщениях */
-    #messages::-webkit-scrollbar { width: 4px; }
+    #messages::-webkit-scrollbar { width: 5px; }
     #messages::-webkit-scrollbar-track { background: transparent; }
-    #messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+    #messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
 
-    /* Пустой экран чата если ни один не открыт */
-    #chat-window:not(.active) {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        background: var(--bg, #1d1d1e) !important;
-        transform: none !important;
+    /* Hover на кнопках */
+    button:hover { opacity: 0.82; }
+    .icon-btn:hover { background: rgba(255,255,255,0.09) !important; }
+
+    /* Курсор */
+    .chat-item, button, [onclick] { cursor: pointer; }
+
+    /* Моменты-бар на десктопе чуть компактнее */
+    #moments-bar-scroll { gap: 10px; }
+
+    /* Поиск в шапке */
+    #chat-search-bar { padding: 10px 16px 8px; }
+
+    /* Safe-area top — на десктопе 0 */
+    #chat-search-bar {
+        padding-top: 14px !important;
     }
-    #chat-window:not(.active)::after {
-        content: "Выберите чат";
-        color: rgba(255,255,255,0.18);
-        font-size: 16px;
-        font-weight: 500;
+}
+
+/* ══ 1100px+ : широкий экран ══ */
+@media (min-width: 1100px) {
+    #main-content {
+        width: 380px !important;
+        max-width: 420px !important;
     }
+    .bubble { max-width: 58% !important; }
+}
 
-    /* Немного уже бабблы на ПК */
-    .bubble { max-width: 66% !important; }
-    .msg-row.out .bubble { margin-left: 60px !important; }
-    .msg-row.in  .bubble { margin-right: 60px !important; }
-
-    /* Курсор pointer на интерактивных элементах */
-    .chat-item,
-    .msg-row,
-    button,
-    [onclick] { cursor: pointer; }
-
-    /* Tooltip для реакций */
-    .msg-row:hover .msg-reactions { opacity: 1 !important; }
+/* ══ 1400px+ : очень широкий ══ */
+@media (min-width: 1400px) {
+    #main-content {
+        width: 420px !important;
+        max-width: 460px !important;
+    }
 }
 
 /* Очень широкие экраны */
@@ -1860,6 +1888,17 @@ body {
     #main-content {
         width: 360px !important;
         max-width: 400px !important;
+    }
+}
+
+/* DESKTOP OVERRIDE: chat-view НЕ fixed на широких экранах */
+@media (min-width: 768px) {
+    .chat-view {
+        position: relative !important;
+        inset: auto !important;
+        height: 100% !important;
+        flex: 1 1 0% !important;
+        transform: none !important;
     }
 }
 </style>
@@ -2237,6 +2276,12 @@ body {
 
 <!-- ══ ЧАТ ОКНО ══ -->
 <div id="chat-window" class="chat-view">
+    <!-- Пустой экран для десктопа — показывается когда чат не выбран -->
+    <div id="chat-empty-state" style="display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;height:100%;opacity:0.25;pointer-events:none;user-select:none">
+        <svg width="72" height="72" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <div style="font-size:18px;font-weight:600;color:#fff">Выберите чат</div>
+        <div style="font-size:14px;color:rgba(255,255,255,0.5)">Начните общение</div>
+    </div>
     <div id="chat-header" class="glass" style="padding:10px 14px;padding-top:max(env(safe-area-inset-top,0px),10px);display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);position:relative;z-index:5;background:var(--hdr);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:10px">
             <button onclick="closeChat()" class="icon-btn">${ICONS.back}</button>
@@ -3149,7 +3194,10 @@ async function openChat(id, name, avatar) {
     const fabBtn=document.getElementById('fab-btn-el');
     if(fabBtn)fabBtn.style.display='none';
     // Эффект глубины — фон слегка уменьшается и размывается
-    document.getElementById('main-content')?.classList.add('chat-depth');
+    // На desktop эффект глубины не нужен
+    if (!window.matchMedia('(min-width:768px)').matches) {
+        document.getElementById('main-content')?.classList.add('chat-depth');
+    }
     const displayName = getContactDisplayName(id, name);
     document.getElementById('chat-name').textContent = displayName;
     document.getElementById('chat-status').textContent = 'загрузка...';
@@ -3240,7 +3288,10 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     closeFabMenu();
     const fabBtn2=document.getElementById('fab-btn-el');
     if(fabBtn2)fabBtn2.style.display='none';
-    document.getElementById('main-content')?.classList.add('chat-depth');
+    // На desktop эффект глубины не нужен
+    if (!window.matchMedia('(min-width:768px)').matches) {
+        document.getElementById('main-content')?.classList.add('chat-depth');
+    }
     document.getElementById('chat-name').textContent = groupName;
     document.getElementById('chat-status').textContent = 'группа';
     document.getElementById('chat-online-dot').style.display = 'none';
@@ -3330,8 +3381,11 @@ async function openChat(id, name, avatar) {
     win.classList.add('active');
     closeFabMenu();
     const fabBtn = document.getElementById('fab-btn-el');
-    if (fabBtn) fabBtn.style.display = 'none';
-    document.getElementById('main-content')?.classList.add('chat-depth');
+    if (fabBtn && !window.matchMedia('(min-width:768px)').matches) fabBtn.style.display = 'none';
+    // На desktop эффект глубины не нужен
+    if (!window.matchMedia('(min-width:768px)').matches) {
+        document.getElementById('main-content')?.classList.add('chat-depth');
+    }
 
     // ── 3. Заголовок ────────────────────────────────────────────
     const displayName = getContactDisplayName(id, name);
@@ -3463,8 +3517,11 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     win.classList.add('active');
     closeFabMenu();
     const fabBtn = document.getElementById('fab-btn-el');
-    if (fabBtn) fabBtn.style.display = 'none';
-    document.getElementById('main-content')?.classList.add('chat-depth');
+    if (fabBtn && !window.matchMedia('(min-width:768px)').matches) fabBtn.style.display = 'none';
+    // На desktop эффект глубины не нужен
+    if (!window.matchMedia('(min-width:768px)').matches) {
+        document.getElementById('main-content')?.classList.add('chat-depth');
+    }
 
     const elName   = document.getElementById('chat-name');
     const elStatus = document.getElementById('chat-status');
