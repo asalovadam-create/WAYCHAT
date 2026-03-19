@@ -1,8 +1,8 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
  * ║          WAYCHAT ULTIMATE ENGINE 2026                        ║
- * ║          Version: 8.2.0 — CLEAN TG STYLE                    ║
- * ║  Full-screen · FAB+ · Profile Sheet · VirtualList · MsgDB   ║
+ * ║          Version: 9.0.0 — TG INPUT · FULLSCREEN · ASYNC     ║
+ * ║  Telegram input · Photo zoom · Inline time · Async upload   ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
@@ -716,7 +716,7 @@ function _sendMediaOptimistic(file, chatId) {
     const isAudio = file.type.startsWith('audio/');
     const msgType = isVideo ? 'video' : isImage ? 'image' : isAudio ? 'audio' : 'file';
 
-    // Добавляем оптимистичное сообщение сразу
+    // Optimistic сообщение — показываем сразу с blob URL
     const optimMsg = {
         id: tempId, type: msgType, type_msg: msgType,
         file_url: blobUrl, content: file.name,
@@ -724,42 +724,73 @@ function _sendMediaOptimistic(file, chatId) {
         timestamp: new Date().toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit'}),
         _optimistic: true, _temp_id: tempId,
     };
-    if (VirtualList && VirtualList.append) VirtualList.append(optimMsg);
+    if (VirtualList && VirtualList.appendMessage) VirtualList.appendMessage(optimMsg);
+    else if (VirtualList && VirtualList.append) VirtualList.append(optimMsg);
 
-    // Загружаем на сервер
+    // Прогресс-индикатор
+    const _setProgress = (pct) => {
+        const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+        if (!el) return;
+        let prog = el.querySelector('.wc-upld-p');
+        if (!prog) {
+            prog = document.createElement('div');
+            prog.className = 'wc-upld-p';
+            prog.style.cssText = 'position:absolute;bottom:6px;right:8px;font-size:10px;color:rgba(255,255,255,.9);background:rgba(0,0,0,.5);padding:2px 6px;border-radius:8px;z-index:5;backdrop-filter:blur(4px)';
+            el.style.position = 'relative';
+            el.appendChild(prog);
+        }
+        prog.textContent = pct < 100 ? pct + '%' : '✓';
+        if (pct >= 100) setTimeout(() => prog?.remove(), 1500);
+    };
+
+    const _markFailed = () => {
+        URL.revokeObjectURL(blobUrl);
+        const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+        if (!el) return;
+        el.style.opacity = '0.45';
+        if (!el.querySelector('.wc-fail')) {
+            const e = document.createElement('div');
+            e.className = 'wc-fail';
+            e.style.cssText = 'font-size:11px;color:#ef4444;margin-top:3px;cursor:pointer;padding:2px 4px';
+            e.textContent = '⚠️ Ошибка — нажмите для повтора';
+            e.onclick = () => { e.remove(); el.style.opacity='1'; _sendMediaOptimistic(file, chatId); };
+            el.appendChild(e);
+        }
+    };
+
     const fd = new FormData();
     fd.append('file', file);
     fd.append('chat_id', chatId);
 
     const xhr = new XMLHttpRequest();
     xhr.open('POST', '/api/upload');
+    xhr.withCredentials = true;
 
     xhr.upload.addEventListener('progress', (e) => {
         if (!e.lengthComputable) return;
-        const pct = Math.round(e.loaded / e.total * 100);
-        const el  = document.querySelector(`[data-msg-id="${tempId}"]`);
-        if (!el) return;
-        let prog = el.querySelector('.wc-upld-p');
-        if (!prog) {
-            prog = document.createElement('span');
-            prog.className = 'wc-upld-p';
-            prog.style.cssText = 'position:absolute;bottom:4px;right:8px;font-size:10px;color:rgba(255,255,255,.65);background:rgba(0,0,0,.4);padding:1px 5px;border-radius:8px;';
-            el.style.position = 'relative';
-            el.appendChild(prog);
-        }
-        prog.textContent = pct < 100 ? pct + '%' : '✓';
+        _setProgress(Math.round(e.loaded / e.total * 100));
     });
 
     xhr.addEventListener('load', () => {
-        URL.revokeObjectURL(blobUrl);
         if (xhr.status >= 200 && xhr.status < 300) {
-            const el = document.querySelector(`[data-msg-id="${tempId}"]`);
-            if (el) el.dataset.delivered = '1';
-        } else {
-            _markMsgFailed(tempId);
-        }
+            try {
+                const resp = JSON.parse(xhr.responseText);
+                if (!resp.success) { _markFailed(); return; }
+                _setProgress(100);
+                // Polling fallback если WS media_ready не пришёл за 8 сек
+                setTimeout(() => {
+                    const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+                    if (el && el.dataset.mediaReady !== '1' && resp.temp_id) {
+                        fetch(`/api/upload_status/${resp.temp_id}`, { credentials: 'include' })
+                            .then(r => r.json())
+                            .then(s => { if (s.status === 'done' && s.url) _handleMediaReady({ temp_id: tempId, url: s.url }); })
+                            .catch(() => {});
+                    }
+                }, 8000);
+            } catch(e) { _markFailed(); }
+        } else { _markFailed(); }
     });
-    xhr.addEventListener('error', () => { URL.revokeObjectURL(blobUrl); _markMsgFailed(tempId); });
+    xhr.addEventListener('error', _markFailed);
     xhr.send(fd);
     return tempId;
 }
@@ -775,6 +806,36 @@ function _markMsgFailed(tempId) {
         e.textContent = '⚠️ Ошибка отправки';
         el.appendChild(e);
     }
+}
+
+// Обработчик media_ready — обновляет blob → реальный URL
+function _handleMediaReady(data) {
+    const tempId = data.temp_id;
+    const realUrl = data.url;
+    const realMsgId = data.msg_id;
+    const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+    if (!el) return;
+    el.dataset.mediaReady = '1';
+    if (realMsgId) el.setAttribute('data-msg-id', String(realMsgId));
+    const img = el.querySelector('img:not([class*="rounded-full"]):not([data-uid])');
+    const vid = el.querySelector('video');
+    if (img && img.src && img.src.startsWith('blob:')) { URL.revokeObjectURL(img.src); img.src = realUrl; }
+    if (vid && vid.src && vid.src.startsWith('blob:')) { URL.revokeObjectURL(vid.src); vid.src = realUrl; }
+    el.querySelector('.wc-upld-p')?.remove();
+    el.style.opacity = '1';
+}
+
+function insertEmoji() {
+    const inp = document.getElementById('msg-input');
+    if (!inp) return;
+    const emojis = ['😊','😂','❤️','👍','🔥','🎉','😎','🥰','🫡','💯','😍','🤣'];
+    const pick = emojis[Math.floor(Math.random() * emojis.length)];
+    const start = inp.selectionStart || inp.value.length;
+    inp.value = inp.value.slice(0, start) + pick + inp.value.slice(inp.selectionEnd || start);
+    inp.setSelectionRange(start + pick.length, start + pick.length);
+    inp.focus();
+    updateSendButton();
+    autoResize(inp);
 }
 
 // Scroll-down button — автоматически создаётся при открытии чата
@@ -1147,6 +1208,21 @@ function initSocket() {
     // ── Новый момент ──
     socket.on('new_moment', (d) => {
         onNewMomentSocket(d);
+    });
+
+    // v9.0: async upload events
+    socket.on('media_ready', _handleMediaReady);
+    socket.on('media_upload_error', (data) => {
+        const el = document.querySelector(`[data-msg-id="${data.temp_id}"]`);
+        if (!el) return;
+        el.style.opacity = '0.45';
+        if (!el.querySelector('.wc-fail')) {
+            const f = document.createElement('div');
+            f.className = 'wc-fail';
+            f.style.cssText = 'font-size:11px;color:#ef4444;margin-top:3px';
+            f.textContent = '⚠️ Ошибка загрузки файла';
+            el.appendChild(f);
+        }
     });
 }
 
@@ -1616,6 +1692,36 @@ body {
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
+
+/* ── v9.0: ВРЕМЯ INLINE как в Telegram ── */
+.msg-time { display:none !important; }
+.bubble { padding:8px 12px 6px !important; position:relative; }
+.msg-row { margin-bottom:1px !important; }
+.msg-meta-inline { display:inline-flex;align-items:center;gap:3px;float:right;margin-left:6px;margin-bottom:-3px;margin-top:2px;font-size:11px;opacity:0.6;white-space:nowrap;pointer-events:none;vertical-align:bottom;line-height:1; }
+.msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
+
+/* ── v9.0: TELEGRAM INPUT BAR ── */
+.tg-input-row { display:flex;align-items:flex-end;gap:6px; }
+.tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
+.tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:2px 6px 2px 14px;min-height:40px;transition:border-color 0.2s; }
+.tg-text-wrap:focus-within { border-color:var(--accent-30); }
+.tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
+.tg-inner-btn:active { color:white; }
+.tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
+.tg-send-btn:active { transform:scale(0.88); }
+.tg-mic-btn { background:transparent !important;box-shadow:none !important;color:rgba(255,255,255,0.6); }
+.tg-mic-btn:active { color:white; }
+
+/* ── v9.0: FULLSCREEN PHOTO ── */
+#wc-img-viewer { position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.22s ease; }
+#wc-img-viewer.open { opacity:1;pointer-events:all; }
+#wc-img-viewer img { max-width:100vw;max-height:100vh;object-fit:contain;user-select:none;-webkit-user-select:none;touch-action:pinch-zoom; }
+#wc-img-viewer-close { position:absolute;top:max(env(safe-area-inset-top,0px),12px);right:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10;-webkit-tap-highlight-color:transparent; }
+#wc-img-viewer-close:active { background:rgba(255,255,255,0.22); }
+.img-bubble { border-radius:18px !important;overflow:hidden !important;border:none !important; }
+.img-bubble img { display:block;width:100%;height:auto;max-height:380px;object-fit:cover; }
+.wc-img-sk { position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;pointer-events:none; }
 
 /* ПЕЧАТЬ */
 .typing-wrap { padding:0 16px 8px;display:none;align-items:flex-end;gap:6px; }
@@ -2307,19 +2413,26 @@ body {
         </div>
         <div style="font-size:11px;color:var(--text-2);margin-bottom:4px" id="typing-name-label"></div>
     </div>
-    <div class="input-bar glass" style="border-top:0.5px solid var(--border)">
-        <div class="input-wrap">
-            <button onclick="pickMedia('msg')" class="icon-btn">${ICONS.attach}</button>
-            <div class="input-inner" id="input-area">
+    <div class="input-bar glass" style="border-top:0.5px solid var(--sep)">
+        <div class="tg-input-row">
+            <button class="tg-attach-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <div class="tg-text-wrap" id="input-area">
                 <textarea id="msg-input" rows="1"
                     placeholder="Сообщение..."
                     oninput="handleTyping(); autoResize(this); updateSendButton()"
-                    onchange="updateSendButton()"
-                    onkeyup="updateSendButton()"
                     onkeydown="handleInputKeydown(event)"></textarea>
+                <button class="tg-inner-btn" onclick="insertEmoji()" aria-label="Эмодзи">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="9" r="1" fill="currentColor"/></svg>
+                </button>
             </div>
-            <button id="send-btn-main" onclick="sendText()" class="send-btn" style="display:none">${ICONS.send}</button>
-            <button id="voice-btn-main" class="send-btn" style="background:rgba(255,255,255,0.12);box-shadow:none;touch-action:none;user-select:none;-webkit-user-select:none">${ICONS.mic.replace('rgba(255,255,255,0.5)','white')}</button>
+            <button id="send-btn-main" onclick="sendText()" class="tg-send-btn" style="display:none" aria-label="Отправить">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое" style="touch-action:none;user-select:none;-webkit-user-select:none">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="2"/><path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
         </div>
     </div>
 </div>
@@ -3712,20 +3825,23 @@ function buildMessageRow(msg, animate = true) {
         // FIXED: skeleton + retry + eager load для blob (optimistic UI)
         const _isSrc  = msg.file_url || '';
         const _isBlob = _isSrc.startsWith('blob:');
-        contentHtml = `<div class="img-bubble" style="overflow:hidden;border-radius:18px;max-width:280px;cursor:zoom-in;position:relative;min-height:60px;background:rgba(255,255,255,0.06)"
+        const _skId = 'sk_' + (msg.id || tempId || Math.random().toString(36).slice(2));
+        contentHtml = `<div class="img-bubble" style="position:relative;max-width:280px;min-height:60px;background:rgba(255,255,255,0.06);cursor:zoom-in"
             onclick="openImgZoom(this.querySelector('img')?.src||'')">
-            <div class="wc-img-sk" style="position:absolute;inset:0;border-radius:18px;animation:wcSkPulse 1.5s ease-in-out infinite;background:rgba(255,255,255,0.07);pointer-events:none"></div>
+            <div class="wc-img-sk" id="${_skId}"></div>
             <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
-                 style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover;aspect-ratio:auto;position:relative;z-index:1"
-                 onload="const sk=this.parentElement.querySelector('.wc-img-sk');if(sk)sk.remove()"
-                 onerror="const sk=this.parentElement.querySelector('.wc-img-sk');if(sk)sk.remove();this.style.display='none';this.insertAdjacentHTML('afterend','<div style=\"padding:12px 16px;color:rgba(255,255,255,.4);font-size:13px;cursor:pointer\" onclick=\"event.stopPropagation();const img=this.previousElementSibling;img.style.display=\'block\';img.src=img.src.split(\'?r=\')[0]+\'?r=\'+Date.now()\">⚠ Нажмите для повтора</div>')">
+                 style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover;position:relative;z-index:1;opacity:0;transition:opacity 0.2s;border-radius:inherit"
+                 onload="(function(el){const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
+                 onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
+            <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
     } else if (type === 'video') {
         // FIXED: preload=metadata для мгновенного thumb, controls видны сразу
-        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px;background:rgba(255,255,255,0.06)">
+        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px;background:rgba(255,255,255,0.06);position:relative">
             <video src="${msg.file_url}" controls playsinline preload="metadata"
                    style="display:block;width:100%;max-height:380px;object-fit:cover"
-                   onerror="this.insertAdjacentHTML('afterend','<div style=\"padding:10px;color:rgba(255,255,255,.4);font-size:13px\">⚠ Видео недоступно</div>')"></video>
+                   onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
+            <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
     } else if (type === 'file' || type === 'document') {
         const fname = msg.content || 'Файл';
@@ -3752,7 +3868,8 @@ function buildMessageRow(msg, animate = true) {
         const linked = safe.replace(/(https?:\/\/[^\s<]+)/g,
             `<a href="$1" target="_blank" rel="noopener noreferrer"
                 style="color:${linkedColor};text-decoration:none;border-bottom:1px solid ${linkedColor}40;word-break:break-all;font-weight:500">$1</a>`);
-        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}</div>`;
+        const _inlineMeta = `<span class="msg-meta-inline">${displayTime}${isMe ? '&nbsp;<span class="status-icon" style="color:' + (msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)') + ';">' + (msg.is_read ? ICONS.checkDouble : ICONS.check) + '</span>' : ''}</span>`;
+        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}${_inlineMeta}</div>`;
     }
 
     // Аватар — кэшированный, для групп берём по sender_id
@@ -4251,20 +4368,68 @@ function showMsgContextMenu(row, msg) {
 }
 
 function openImgZoom(src) {
-    const ov = document.createElement('div');
-    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;touch-action:pinch-zoom;cursor:zoom-out';
-    ov.onclick = () => ov.remove();
-    const img = document.createElement('img');
+    if (!src) return;
+    let viewer = document.getElementById('wc-img-viewer');
+    if (!viewer) {
+        viewer = document.createElement('div');
+        viewer.id = 'wc-img-viewer';
+        viewer.innerHTML = `
+            <button id="wc-img-viewer-close" aria-label="Закрыть" onclick="closeImgZoom()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+            </button>
+            <a id="wc-img-dl" download="photo.jpg" style="position:absolute;top:max(env(safe-area-inset-top,0px),12px);right:60px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </a>
+            <img id="wc-img-viewer-img" src="" alt="" draggable="false">`;
+        document.body.appendChild(viewer);
+        viewer.addEventListener('click', function(e) { if (e.target === viewer) closeImgZoom(); });
+    }
+    const img = viewer.querySelector('#wc-img-viewer-img');
+    const dl  = viewer.querySelector('#wc-img-dl');
     img.src = src;
-    img.style.cssText = 'max-width:100%;max-height:100%;object-fit:contain;border-radius:4px';
-    // Кнопка скачать
-    const dl = document.createElement('a');
-    dl.href = src; dl.download = 'photo.jpg';
-    dl.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top),20px);right:20px;width:40px;height:40px;background:rgba(255,255,255,.15);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;backdrop-filter:blur(10px)';
-    dl.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    dl.onclick = e => e.stopPropagation();
-    ov.appendChild(img); ov.appendChild(dl);
-    document.body.appendChild(ov);
+    if (dl) dl.href = src;
+    viewer.classList.add('open');
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => { if (e.key === 'Escape') { closeImgZoom(); document.removeEventListener('keydown', onKey); } };
+    document.addEventListener('keydown', onKey);
+    // Swipe down to close
+    let _sy = 0, _dragging = false;
+    const onTS = (e) => { _sy = e.touches[0].clientY; _dragging = true; };
+    const onTM = (e) => {
+        if (!_dragging) return;
+        const dy = e.touches[0].clientY - _sy;
+        const dx = Math.abs(e.touches[0].clientX - (e.touches[0].clientX));
+        if (dy > 0) {
+            const prog = Math.min(dy / 250, 1);
+            img.style.transform = `translateY(${dy * 0.5}px) scale(${1 - prog * 0.15})`;
+            viewer.style.background = `rgba(0,0,0,${0.96 - prog * 0.5})`;
+        }
+    };
+    const onTE = (e) => {
+        if (!_dragging) return; _dragging = false;
+        const dy = e.changedTouches[0].clientY - _sy;
+        if (dy > 90) { closeImgZoom(); }
+        else { img.style.transform = ''; viewer.style.background = ''; }
+    };
+    viewer.addEventListener('touchstart', onTS, { passive: true });
+    viewer.addEventListener('touchmove',  onTM, { passive: true });
+    viewer.addEventListener('touchend',   onTE);
+    viewer._cleanup = () => {
+        viewer.removeEventListener('touchstart', onTS);
+        viewer.removeEventListener('touchmove', onTM);
+        viewer.removeEventListener('touchend', onTE);
+    };
+}
+
+function closeImgZoom() {
+    const viewer = document.getElementById('wc-img-viewer');
+    if (!viewer) return;
+    const img = viewer.querySelector('#wc-img-viewer-img');
+    if (img) img.style.transform = '';
+    viewer.style.background = '';
+    viewer.classList.remove('open');
+    document.body.style.overflow = '';
+    if (viewer._cleanup) { viewer._cleanup(); viewer._cleanup = null; }
 }
 
 function copyMessage(text) {
