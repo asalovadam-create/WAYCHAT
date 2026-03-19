@@ -1278,8 +1278,15 @@ def vapid_public_key():
 
 _INLINE_SW = """
 // WayChat Service Worker v6
-const CACHE = 'wc-v6';
-const STATIC = ['/static/img/icon-192.png', '/static/logo.png'];
+const CACHE = 'wc-v7';
+const STATIC = []; // иконки кэшируем по запросу
+
+// Принудительная активация если главная страница просит
+self.addEventListener('message', e => {
+    if (e.data && e.data.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
+});
 
 self.addEventListener('install', e => {
     e.waitUntil(
@@ -1292,7 +1299,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => {
     e.waitUntil(
         caches.keys()
-            .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+            .then(keys => Promise.all(keys.map(k => caches.delete(k)))) // удаляем ВСЕ кэши
             .then(() => self.clients.claim())
     );
     // Сообщаем клиентам что SW обновился
@@ -1400,18 +1407,24 @@ def service_worker():
 
 @app.after_request
 def add_cache_headers(response):
-    """Пункты 1,9: кэш-заголовки для CDN (Cloudflare) и браузера"""
+    """Cache headers: JS/CSS — no-cache, картинки — 7 дней, API — no-store"""
     path = request.path
-    # Статика — кэш 1 год (Cloudflare будет кэшировать)
-    if path.startswith('/static/') and not path.endswith('.html'):
-        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-        response.headers['Vary'] = 'Accept-Encoding'
-    # Аватары и медиа — кэш 1 час
+    # JS и CSS — НИКОГДА не кэшировать: версионирование через ?v= в URL
+    if path.endswith('.js') or path.endswith('.css'):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    # Загруженные файлы/аватары — 1 час
     elif path.startswith('/static/uploads/'):
         response.headers['Cache-Control'] = 'public, max-age=3600'
-    # API — no cache
-    elif path.startswith('/api/') or path in ['/get_messages/', '/get_my_chats']:
-        response.headers['Cache-Control'] = 'no-store'
+        response.headers['Vary'] = 'Accept-Encoding'
+    # Картинки/шрифты — 7 дней
+    elif path.startswith('/static/') and not path.endswith('.html'):
+        response.headers['Cache-Control'] = 'public, max-age=604800'
+        response.headers['Vary'] = 'Accept-Encoding'
+    # HTML и API — не кэшируем
+    else:
+        response.headers['Cache-Control'] = 'no-store, no-cache'
     return response
 
 
