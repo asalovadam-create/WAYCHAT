@@ -1,17 +1,13 @@
-# FIXED: используем gevent (сервер запущен с GeventWebSocketWorker)
-# eventlet убран — он не установлен в venv и конфликтовал с gevent
-import gevent.monkey
-gevent.monkey.patch_all()
-
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
-║          Version: 8.0.0 — FULL PRODUCTION REFACTOR          ║
-║  DetachedInstanceError fix · Cache fix · SW fix              ║
+║          Version: 9.0.0 — 1K USERS · REDIS · ASYNC UPLOAD   ║
+║  Redis SocketIO · Async Cloudinary · DB pool 25+50           ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
 import os
+import io
 import uuid
 import mimetypes
 import json
@@ -21,9 +17,7 @@ import base64
 import struct
 import hmac as hmac_module
 import random
-# eventlet убран — используем gevent
-import gevent
-import gevent.queue
+import threading
 from functools import wraps
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -179,8 +173,8 @@ app.config.update(
     SQLALCHEMY_ENGINE_OPTIONS      = {
         'pool_pre_ping':  True,
         'pool_recycle':   300,
-        'pool_size':      10,    # 5k+ юзеров
-        'max_overflow':   20,    # пик нагрузки
+        'pool_size':      25,    # 1k онлайн
+        'max_overflow':   50,    # пик нагрузки
         'pool_timeout':   30,
         'connect_args':   {'connect_timeout': 10},
     },
@@ -202,21 +196,25 @@ db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
-# FIXED: используем eventlet (monkey_patch уже применён выше)
-# threading конфликтовал с monkey_patch → дедлоки при >20 пользователей
+# Redis URL для multi-worker синхронизации WebSocket событий
+# При REDIS_URL='' — работает без Redis (1 worker)
+_REDIS_URL = os.environ.get('REDIS_URL', '').strip()
+
 socketio = SocketIO(
     app,
-    async_mode            = 'gevent',      # FIXED: gevent (GeventWebSocketWorker в gunicorn)
+    async_mode            = 'threading',
     cors_allowed_origins  = '*',
     manage_session        = True,
     path                  = '/socket.io',
-    ping_timeout          = 25,            # gevent/eventlet: секунды, не миллисекунды
-    ping_interval         = 10,            # gevent/eventlet: секунды, не миллисекунды
+    ping_timeout          = 20000,
+    ping_interval         = 10000,
     max_http_buffer_size  = 5 * 1024 * 1024,
     logger                = False,
     engineio_logger       = False,
     compression_threshold = 512,
     allow_upgrades        = True,
+    # Redis: синхронизирует несколько gunicorn workers
+    message_queue         = _REDIS_URL if _REDIS_URL else None,
 )
 
 # ══════════════════════════════════════════════════════════
@@ -308,6 +306,13 @@ def _run_early_migrations():
             resolved_at TIMESTAMP
         )''',
         'CREATE INDEX IF NOT EXISTS ix_ch_verify_req ON channel_verify_request(channel_id)',
+        # ── Индексы для 1k онлайн ──
+        'CREATE INDEX IF NOT EXISTS idx_msg_chat_time_desc ON message(chat_id, timestamp DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_msg_unread_fast ON message(chat_id, is_read, sender_id) WHERE is_read = FALSE AND is_deleted = FALSE',
+        'CREATE INDEX IF NOT EXISTS idx_user_username_lower ON "user"(lower(username))',
+        'CREATE INDEX IF NOT EXISTS idx_saved_contact_both ON saved_contact(user_id, contact_id)',
+        'CREATE INDEX IF NOT EXISTS idx_moment_user_time ON moment(user_id, timestamp DESC)',
+        'CREATE INDEX IF NOT EXISTS idx_group_member_user_fast ON group_member(user_id, group_id)',
     ]
     for sql in early_sqls:
         try:
@@ -500,7 +505,7 @@ def _send_web_push(subscription_info, payload_dict):
 
 
 def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra_push_data=None):
-    # eventlet.spawn запускает без Flask context — оборачиваем обязательно
+    # threading.Thread запускает без Flask context — оборачиваем через app.app_context()
     with app.app_context():
         if not PUSH_AVAILABLE:
             return
@@ -932,8 +937,7 @@ def _get_ip():
 
 @app.before_request
 def _ensure_clean_session():
-    """FIXED: убран unconditional rollback — он убивал данные в нормальных запросах.
-    При gevent SQLAlchemy сам управляет scoped sessions."""
+    """Откатываем только при необходимости — не на каждый запрос (perf)"""
     pass
 
 
@@ -1033,7 +1037,7 @@ def login():
                 return jsonify({'success': True, 'redirect': url_for('index')})
             return redirect(url_for('index'))
 
-        gevent.sleep(0.3)
+        time.sleep(0.3)
         if request.is_json:
             return jsonify({'success': False, 'error': 'Неправильный номер или пароль'}), 401
         flash('Неправильный номер или пароль', 'error')
@@ -1277,154 +1281,49 @@ def vapid_public_key():
 
 
 _INLINE_SW = """
-// WayChat Service Worker v6
-const CACHE = 'wc-v7';
-const STATIC = []; // иконки кэшируем по запросу
-
-// Принудительная активация если главная страница просит
-self.addEventListener('message', e => {
-    if (e.data && e.data.type === 'SKIP_WAITING') {
-        self.skipWaiting();
-    }
+const CACHE='wc-v3';
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/static/main.js']).catch(()=>{})).then(()=>self.skipWaiting()))});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||e.request.url.includes('/socket.io'))return;
+  if(e.request.url.match(/[.](js|css|png|jpg|webp|gif|woff2)$/)){
+    e.respondWith(caches.match(e.request).then(r=>r||(fetch(e.request).then(resp=>{if(resp.ok)caches.open(CACHE).then(c=>c.put(e.request,resp.clone()));return resp}))));
+  }
 });
-
-self.addEventListener('install', e => {
-    e.waitUntil(
-        caches.open(CACHE)
-            .then(c => c.addAll(STATIC).catch(() => {}))
-            .then(() => self.skipWaiting())
-    );
-});
-
-self.addEventListener('activate', e => {
-    e.waitUntil(
-        caches.keys()
-            .then(keys => Promise.all(keys.map(k => caches.delete(k)))) // удаляем ВСЕ кэши
-            .then(() => self.clients.claim())
-    );
-    // Сообщаем клиентам что SW обновился
-    self.clients.matchAll({ type: 'window' }).then(clients => {
-        clients.forEach(c => c.postMessage({ type: 'SW_UPDATED' }));
-    });
-});
-
-// Кэшируем только статику (картинки, иконки)
-self.addEventListener('fetch', e => {
-    if (e.request.method !== 'GET') return;
-    const url = e.request.url;
-    // Не кэшируем socket.io, API, HTML страницы
-    if (url.includes('/socket.io') || url.includes('/api/') ||
-        url.includes('/get_') || url.includes('/upload') ||
-        !url.match(/[.](png|jpg|jpeg|webp|gif|ico|woff2|woff|svg)$/)) return;
-
-    e.respondWith(
-        caches.match(e.request).then(cached => {
-            if (cached) return cached;
-            return fetch(e.request).then(resp => {
-                if (resp.ok) {
-                    caches.open(CACHE).then(c => c.put(e.request, resp.clone()));
-                }
-                return resp;
-            }).catch(() => cached);
-        })
-    );
-});
-
-// Push уведомления
-self.addEventListener('push', e => {
-    if (!e.data) return;
-    let data = {};
-    try { data = e.data.json(); } catch(err) { return; }
-
-    const title   = data.title || 'WayChat';
-    const options = {
-        body:    data.body    || '',
-        icon:    data.icon    || '/static/img/icon-192.png',
-        badge:   '/static/img/icon-192.png',
-        tag:     data.tag     || 'wc-msg',
-        data:    { url: data.url || '/', type: data.type, call_id: data.call_id, from_id: data.from_id },
-        vibrate: data.type === 'incoming_call' ? [300, 100, 300, 100, 300] : [200, 100, 200],
-        requireInteraction: data.requireInteraction || false,
-        actions: data.type === 'incoming_call'
-            ? [{ action: 'answer', title: 'Ответить' }, { action: 'decline', title: 'Отклонить' }]
-            : [],
-    };
-    e.waitUntil(self.registration.showNotification(title, options));
-});
-
-// Клик по уведомлению
-self.addEventListener('notificationclick', e => {
-    e.notification.close();
-    const data   = e.notification.data || {};
-    const action = e.action;
-
-    if (action === 'decline') {
-        // Отклонить звонок — сообщаем открытому окну
-        self.clients.matchAll({ type: 'window' }).then(clients => {
-            clients.forEach(c => c.postMessage({
-                type: 'decline_call', call_id: data.call_id, from_id: data.from_id
-            }));
-        });
-        return;
-    }
-
-    const targetUrl = (action === 'answer' && data.call_id)
-        ? '/?sw_action=answer_call&call_id=' + (data.call_id||'') + '&from_id=' + (data.from_id||'')
-        : (data.url || '/');
-
-    e.waitUntil(
-        self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
-            // Если уже есть открытое окно — фокусируем его и посылаем сообщение
-            for (const client of clients) {
-                if (client.url.includes(self.location.origin)) {
-                    client.focus();
-                    if (action === 'answer') {
-                        client.postMessage({ type: 'answer_call', call_id: data.call_id, from_id: data.from_id });
-                    } else if (data.chat_id) {
-                        client.postMessage({ type: 'open_chat', chat_id: data.chat_id });
-                    }
-                    return;
-                }
-            }
-            // Нет открытого окна — открываем новое
-            return self.clients.openWindow(targetUrl);
-        })
-    );
-});
+self.addEventListener('push',e=>{if(!e.data)return;try{const d=e.data.json();e.waitUntil(self.registration.showNotification(d.title||'WayChat',{body:d.body||'',icon:d.icon||'/static/icon-192.png',data:d.data||{},vibrate:[200,100,200]}))}catch(err){}});
+self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.openWindow(e.notification.data?.url||'/'))});
 """
 
 @app.route('/sw.js')
 def service_worker():
     from flask import Response
-    # FIXED: всегда отдаём встроенный SW (файл sw.js на диске мог быть старым)
-    resp = Response(_INLINE_SW, mimetype='application/javascript')
+    # 10: Сначала пробуем файл, затем встроенный SW
+    sw_path = os.path.join(BASE_DIR, 'sw.js')
+    try:
+        with open(sw_path, 'r', encoding='utf-8') as f:
+            sw_content = f.read()
+    except FileNotFoundError:
+        sw_content = _INLINE_SW
+    resp = Response(sw_content, mimetype='application/javascript')
     resp.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
     resp.headers['Service-Worker-Allowed'] = '/'
-    resp.headers['X-Content-Type-Options'] = 'nosniff'
     return resp
 
 
 
 @app.after_request
 def add_cache_headers(response):
-    """Cache headers: JS/CSS — no-cache, картинки — 7 дней, API — no-store"""
+    """Пункты 1,9: кэш-заголовки для CDN (Cloudflare) и браузера"""
     path = request.path
-    # JS и CSS — НИКОГДА не кэшировать: версионирование через ?v= в URL
-    if path.endswith('.js') or path.endswith('.css'):
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-    # Загруженные файлы/аватары — 1 час
+    # Статика — кэш 1 год (Cloudflare будет кэшировать)
+    if path.startswith('/static/') and not path.endswith('.html'):
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        response.headers['Vary'] = 'Accept-Encoding'
+    # Аватары и медиа — кэш 1 час
     elif path.startswith('/static/uploads/'):
         response.headers['Cache-Control'] = 'public, max-age=3600'
-        response.headers['Vary'] = 'Accept-Encoding'
-    # Картинки/шрифты — 7 дней
-    elif path.startswith('/static/') and not path.endswith('.html'):
-        response.headers['Cache-Control'] = 'public, max-age=604800'
-        response.headers['Vary'] = 'Accept-Encoding'
-    # HTML и API — не кэшируем
-    else:
-        response.headers['Cache-Control'] = 'no-store, no-cache'
+    # API — no cache
+    elif path.startswith('/api/') or path in ['/get_messages/', '/get_my_chats']:
+        response.headers['Cache-Control'] = 'no-store'
     return response
 
 
@@ -2280,23 +2179,130 @@ def upload_avatar_emoji():
 # ══════════════════════════════════════════════════════════
 #  МЕДИА
 # ══════════════════════════════════════════════════════════
+# ── Хранилище pending uploads ──
+_pending_uploads = {}  # temp_id → {'status': 'uploading'|'done'|'error', 'url': str, 'ts': float}
+
+
+def _do_async_upload(file_bytes, mime, folder, temp_id, chat_id, uid, uname, msg_type):
+    """Фоновая загрузка Cloudinary + WebSocket уведомление"""
+    with app.app_context():
+        try:
+            import cloudinary, cloudinary.uploader
+            cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
+            api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
+            api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
+            if not all([cloud_name, api_key, api_secret]):
+                raise Exception('Cloudinary not configured')
+            cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
+            result = cloudinary.uploader.upload(io.BytesIO(file_bytes), folder=folder, resource_type='auto')
+            url = result.get('secure_url', '')
+            if not url:
+                raise Exception('Empty URL from Cloudinary')
+
+            _pending_uploads[temp_id] = {'status': 'done', 'url': url, 'ts': time.monotonic()}
+
+            msg = Message(chat_id=chat_id, sender_id=uid, sender_name=uname,
+                          type=msg_type, content='', file_url=url)
+            db.session.add(msg)
+            db.session.commit()
+            _chat_cache.delete(uid)
+
+            payload = msg.to_dict()
+            payload['chat_id'] = chat_id
+            payload['temp_id'] = temp_id
+
+            chat = db.session.get(Chat, chat_id)
+            if chat:
+                socketio.emit('new_message', payload, room=f'chat_{chat_id}')
+                if chat.room_key.startswith('group_'):
+                    group = Group.query.filter_by(chat_id=chat_id).first()
+                    if group:
+                        for m in GroupMember.query.filter_by(group_id=group.id).all():
+                            _chat_cache.delete(m.user_id)
+                            if m.user_id != uid:
+                                socketio.emit('new_message', payload, room=f'user_{m.user_id}')
+                else:
+                    for uid_str in chat.room_key.replace('chat_', '').split('_'):
+                        if uid_str.isdigit():
+                            socketio.emit('new_message', payload, room=f'user_{uid_str}')
+                            _chat_cache.delete(int(uid_str))
+
+            socketio.emit('media_ready', {
+                'temp_id': temp_id, 'url': url, 'msg_id': msg.id, 'type': msg_type
+            }, room=f'user_{uid}')
+
+        except Exception as e:
+            app.logger.error(f'Async upload error: {e}')
+            _pending_uploads[temp_id] = {'status': 'error', 'url': '', 'ts': time.monotonic()}
+            socketio.emit('media_upload_error', {'temp_id': temp_id, 'error': str(e)[:200]}, room=f'user_{uid}')
+
+
+@app.route('/api/upload', methods=['POST'])
+@login_required
+@rate_limit('upload_media', max_calls=30, window_sec=60)
+def api_upload():
+    """Async upload: мгновенно возвращает temp_id, грузит в фоне"""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'Нет файла'}), 400
+    file = request.files['file']
+    if not file or not file.filename:
+        return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
+    chat_id_raw = request.form.get('chat_id')
+    if not chat_id_raw:
+        return jsonify({'success': False, 'error': 'chat_id required'}), 400
+    try:
+        chat_id = int(chat_id_raw)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid chat_id'}), 400
+
+    mime = file.content_type or mimetypes.guess_type(file.filename)[0] or ''
+    msg_type = 'file'
+    if mime.startswith('image/'): msg_type = 'image'
+    elif mime.startswith('video/'): msg_type = 'video'
+    elif mime.startswith('audio/'): msg_type = 'audio'
+
+    file.seek(0)
+    file_bytes = file.read()
+    uid   = current_user.id
+    uname = current_user.name
+    temp_id = f'tmp_{uid}_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}'
+    _pending_uploads[temp_id] = {'status': 'uploading', 'url': '', 'ts': time.monotonic()}
+
+    t = threading.Thread(
+        target=_do_async_upload,
+        args=(file_bytes, mime, 'waychat/messages', temp_id, chat_id, uid, uname, msg_type),
+        daemon=True
+    )
+    t.start()
+
+    return jsonify({'success': True, 'temp_id': temp_id, 'type': msg_type, 'status': 'uploading'})
+
+
+@app.route('/api/upload_status/<temp_id>')
+@login_required
+def api_upload_status(temp_id):
+    """Polling fallback если WebSocket не доставил media_ready"""
+    info = _pending_uploads.get(temp_id)
+    if not info:
+        return jsonify({'status': 'unknown'}), 404
+    return jsonify(info)
+
+
 @app.route('/upload_media', methods=['POST'])
 @login_required
 @rate_limit('upload_media', max_calls=30, window_sec=60)
 def upload_media():
+    """Legacy sync upload — оставлен для обратной совместимости"""
     if 'file' not in request.files:
         return jsonify({'success': False, 'error': 'Нет файла'}), 400
-
     file = request.files['file']
     if not file or not file.filename:
         return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
-
     mime      = file.content_type or mimetypes.guess_type(file.filename)[0] or ''
     file_type = 'file'
-    if mime.startswith('image/'):   file_type = 'image'
+    if mime.startswith('image/'): file_type = 'image'
     elif mime.startswith('video/'): file_type = 'video'
     elif mime.startswith('audio/'): file_type = 'audio'
-
     file.seek(0)
     url = upload_to_cloudinary(file, folder='waychat/messages')
     if not url:
@@ -3207,8 +3213,7 @@ def handle_msg(data):
                         emit('new_message', payload, room=f'user_{m.user_id}')
                         if not is_online:
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                            gevent.spawn(send_push_to_user, m.user_id,
-                                f'{uname} → {group.name}', push_preview, chat_id, _sender_ava)
+                            threading.Thread(target=send_push_to_user, args=(m.user_id, f'{uname} → {group.name}', push_preview, chat_id, _sender_ava), daemon=True).start()
         else:
             payload['is_group_msg'] = False
             # Emit в комнату чата — оба участника если в чате
@@ -3224,7 +3229,7 @@ def handle_msg(data):
                         is_online = _online_cache.get(uid_int)
                         if not is_online and push_preview and msg_type not in ('call_audio','call_video'):
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
-                            gevent.spawn(send_push_to_user, uid_int, uname, push_preview, chat_id, _sender_ava)
+                            threading.Thread(target=send_push_to_user, args=(uid_int, uname, push_preview, chat_id, _sender_ava), daemon=True).start()
                     else:
                         # Отправителю тоже шлём в user_ room — для обновления его списка чатов
                         emit('new_message', payload, room=f'user_{uid_str}')
@@ -3427,16 +3432,7 @@ def handle_call(data):
     # Also send push notification for offline recipients
     p_online = _online_cache.get(int(to))
     if not p_online:
-        gevent.spawn(send_push_to_user, int(to),
-            f'📞 {uname}',
-            f"Входящий {'видео' if call_type == 'video' else 'аудио'}звонок",
-            None, uavat,
-            extra_push_data={
-                'type':    'incoming_call',
-                'call_id': call_id,
-                'from_id': uid,
-            }
-        )
+        threading.Thread(target=send_push_to_user, args=(int(to), f'📞 {uname}', f"Входящий {'видео' if call_type == 'video' else 'аудио'}звонок", None, uavat), kwargs={'extra_push_data': {'type': 'incoming_call', 'call_id': call_id, 'from_id': uid}}, daemon=True).start()
 
 
 @socketio.on('answer_call')
@@ -3525,7 +3521,7 @@ def handle_end_call(data):
 def background_cleanup():
     _cleanup_cycle = 0
     while True:
-        gevent.sleep(300)
+        time.sleep(300)
         _cleanup_cycle += 1
         try:
             with app.app_context():
@@ -3576,6 +3572,12 @@ def background_cleanup():
                             _ip_rate_limits[ip][ep] = [t for t in _ip_rate_limits[ip][ep] if now_m - t < 3600]
                         if not any(_ip_rate_limits[ip].values()):
                             del _ip_rate_limits[ip]
+
+                # ── Чистим старые pending uploads (старше 2 часов) ──
+                old_uploads = [k for k, v in list(_pending_uploads.items())
+                               if time.monotonic() - v.get('ts', 0) > 7200]
+                for k in old_uploads:
+                    _pending_uploads.pop(k, None)
 
         except Exception as e:
             app.logger.error(f'Cleanup error: {e}')
@@ -4404,7 +4406,7 @@ def healthcheck():
     return jsonify({
         'status':   'ok' if db_ok else 'degraded',
         'db':       'ok' if db_ok else 'error',
-        'version':  '7.0.1',
+        'version':  '9.0.0',
         'time_msk': to_moscow_str(datetime.utcnow()),
     }), 200 if db_ok else 503
 
@@ -4448,10 +4450,10 @@ if __name__ == '__main__':
         db.create_all()
         run_migrations()
 
-    gevent.spawn(background_cleanup)
+    threading.Thread(target=background_cleanup, daemon=True).start()
 
     print('╔══════════════════════════════════════════════════════╗')
-    print('║         WAYCHAT SERVER v8.0.0 — STARTING            ║')
+    print('║         WAYCHAT SERVER v9.0.0 — 1K READY             ║')
     print('╚══════════════════════════════════════════════════════╝')
 
     port = int(os.environ.get('PORT', 5000))
@@ -4460,6 +4462,5 @@ if __name__ == '__main__':
         host='0.0.0.0',
         port=port,
         debug=False,
-        allow_unsafe_werkzeug=True,
         use_reloader=False,
     )
