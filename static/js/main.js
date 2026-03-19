@@ -1621,7 +1621,7 @@ body {
 @keyframes wave { 0%,100%{height:4px;} 50%{height:20px;} }
 
 /* ЗВОНОК */
-.call-screen { position:fixed;inset:0;z-index:9999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);overflow:hidden;transition:opacity 0.3s; }
+.call-screen { position:fixed;inset:0;z-index:99999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);overflow:hidden;transition:opacity 0.3s; }
 .hidden { display:none !important; }
 .call-screen.hidden { display:none; }
 .call-bg { position:absolute;inset:0;z-index:0;opacity:0.15;filter:blur(60px);background:radial-gradient(circle at 50% 30%,var(--accent) 0%,transparent 60%);animation:callBgPulse 3s ease infinite; }
@@ -2219,6 +2219,9 @@ body {
         </div>
     </div>
 </div>
+
+<!-- Portal root для модалок (всегда поверх всего) -->
+<div id="portal-root" style="position:fixed;inset:0;z-index:89000;pointer-events:none"></div>
 
 <!-- Пикер реакций -->
 <div id="reaction-picker" class="reaction-picker" style="display:none;left:50%">
@@ -3043,7 +3046,14 @@ async function openChat(id, name, avatar) {
                 document.getElementById('chat-status').textContent = 'обновление...';
             }
         });
-        msgs.innerHTML = '<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:14px">Загрузка...</div></div>';
+        // Skeleton loader пока грузятся сообщения
+        msgs.innerHTML = [1,2,3,4,5].map((_, i) => {
+            const isOut = i % 3 === 0;
+            const w = [60,80,55,70,45][i] + '%';
+            return `<div class="msg-row ${isOut?'out':'in'}" style="opacity:0.5">
+                <div style="max-width:${w};padding:10px 14px;border-radius:18px;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;height:36px"></div>
+            </div>`;
+        }).join('');
     }
 
     try {
@@ -3109,7 +3119,14 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
                 renderMessagesFromCache(idb);
             }
         });
-        msgs.innerHTML = '<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:14px">Загрузка...</div></div>';
+        // Skeleton loader пока грузятся сообщения
+        msgs.innerHTML = [1,2,3,4,5].map((_, i) => {
+            const isOut = i % 3 === 0;
+            const w = [60,80,55,70,45][i] + '%';
+            return `<div class="msg-row ${isOut?'out':'in'}" style="opacity:0.5">
+                <div style="max-width:${w};padding:10px 14px;border-radius:18px;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;height:36px"></div>
+            </div>`;
+        }).join('');
     }
 
     try {
@@ -3144,17 +3161,13 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 // ══════════════════════════════════════════════════════════
 const MESSAGES_PER_PAGE = 35;
 
-async function loadMessages(initial = false) {
+async function loadMessages(initial = false, retryCount = 0) {
     if (!currentChatId || loadingMessages || (!initial && !hasMoreMessages)) return;
     loadingMessages = true;
     const container = document.getElementById('messages');
-    const prevHeight = container?.scrollHeight || 0;
-
-    // Ключ кэша
-    const cacheKey = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
+    const cacheKey  = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
 
     try {
-        // Определяем before_id для пагинации
         let beforeId = null;
         if (!initial && container) {
             const firstMsg = container.querySelector('[data-msg-id]');
@@ -3165,23 +3178,41 @@ async function loadMessages(initial = false) {
             ? `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}&before_id=${beforeId}`
             : `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}`;
 
-        const res  = await apiFetch(url);
-        if (!res) return;
-        const msgs = await res.json();
+        const res = await apiFetch(url);
 
+        // Retry при сетевой ошибке (не при 4xx)
+        if (!res) {
+            if (retryCount < 3) {
+                const delay = 1000 * Math.pow(2, retryCount);
+                console.warn(`[msg] retry ${retryCount+1}/3 через ${delay}ms`);
+                loadingMessages = false;
+                setTimeout(() => loadMessages(initial, retryCount + 1), delay);
+            } else {
+                if (container && initial && !container.querySelector('[data-msg-id]')) {
+                    container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.4">
+                        <div style="font-size:32px;margin-bottom:10px">📡</div>
+                        <p style="font-size:14px;margin-bottom:16px">Нет соединения</p>
+                        <button onclick="loadMessages(true)" style="padding:10px 24px;background:var(--accent);border:none;border-radius:14px;color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Повторить</button>
+                    </div>`;
+                }
+            }
+            return;
+        }
+
+        const msgs = await res.json();
+        if (!Array.isArray(msgs)) { console.error('[msg] not array:', msgs); return; }
         if (msgs.length < MESSAGES_PER_PAGE) hasMoreMessages = false;
 
         if (initial) {
-            // Обновляем кэш
-            if (!messagesByChatCache[cacheKey]) {
+            if (!messagesByChatCache[cacheKey])
                 messagesByChatCache[cacheKey] = { messages: [], loadedAll: false };
-            }
             messagesByChatCache[cacheKey].messages = msgs;
             messagesByChatCache[cacheKey].lastFetch = Date.now();
 
-            container.innerHTML = '';
+            if (container) container.innerHTML = '';
+
             if (!msgs.length) {
-                container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>`;
+                if (container) container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>`;
                 return;
             }
             renderMessagesFromCache(msgs);
@@ -3189,16 +3220,19 @@ async function loadMessages(initial = false) {
             MsgDB.save(cacheKey, msgs);
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
-            // Загрузка более старых — добавляем в начало
             if (!messagesByChatCache[cacheKey]) messagesByChatCache[cacheKey] = { messages: [] };
             messagesByChatCache[cacheKey].messages = [...msgs, ...messagesByChatCache[cacheKey].messages];
-
             VirtualList.prependMessages(msgs);
         }
-
         currentPage++;
-    } catch(e) { console.error('loadMessages:', e); }
-    finally { loadingMessages = false; }
+    } catch(e) {
+        console.error('[msg] loadMessages error:', e);
+        if (retryCount < 2) {
+            loadingMessages = false;
+            setTimeout(() => loadMessages(initial, retryCount + 1), 1500);
+            return;
+        }
+    } finally { loadingMessages = false; }
 }
 
 function renderMessagesFromCache(msgs) {
@@ -3356,6 +3390,22 @@ function buildMessageRow(msg, animate = true) {
                    style="display:block;width:100%;max-height:380px;object-fit:cover"
                    onerror="this.insertAdjacentHTML('afterend','<div style=\"padding:10px;color:rgba(255,255,255,.4);font-size:13px\">⚠ Видео недоступно</div>')"></video>
         </div>`;
+    } else if (type === 'file' || type === 'document') {
+        const fname = msg.content || 'Файл';
+        const furl  = msg.file_url || '';
+        const ext   = (fname.split('.').pop() || '').toLowerCase();
+        const iconMap = { pdf:'📄', doc:'📝', docx:'📝', xls:'📊', xlsx:'📊', zip:'🗜', rar:'🗜', mp3:'🎵', wav:'🎵' };
+        const icon = iconMap[ext] || '📎';
+        const fsize = msg.file_size ? ` · ${_formatFileSize(msg.file_size)}` : '';
+        contentHtml = `<a href="${furl}" download="${fname}" target="_blank" rel="noopener"
+            style="display:flex;align-items:center;gap:12px;padding:4px 2px;text-decoration:none;color:inherit;min-width:180px;max-width:260px">
+            <div style="width:44px;height:44px;border-radius:12px;background:rgba(255,255,255,0.12);display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0">${icon}</div>
+            <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(fname)}</div>
+                <div style="font-size:11px;opacity:0.55;margin-top:2px">Нажмите для загрузки${fsize}</div>
+            </div>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:0.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5 5-5-5M12 3v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>`;
     } else if (type === 'audio') {
         contentHtml = renderAudioPlayer(msg.file_url);
     } else {
@@ -6913,6 +6963,15 @@ function _openMomentsOverlay(moments, startIdx) {
             img.draggable = false;
             img.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none;-webkit-user-select:none';
             mediaWrap.appendChild(img);
+            // Авто-перелистывание через 7 сек для фото + анимированный прогресс
+            const PHOTO_DURATION = 7000;
+            _autoTimer = setTimeout(() => goTo(idx + 1), PHOTO_DURATION);
+            // Анимируем прогресс-бар текущего слайда
+            const fill = document.getElementById('moment-prog-fill');
+            if (fill) {
+                fill.style.transition = `width ${PHOTO_DURATION}ms linear`;
+                requestAnimationFrame(() => { fill.style.width = '100%'; });
+            }
         } else if (isVid) {
             const vid = document.createElement('video');
             vid.src       = m.media_url;
@@ -7098,7 +7157,9 @@ function _confirmDialog(title, message, confirmText, cancelText) {
             </div>`;
 
         ov.appendChild(sh);
-        document.body.appendChild(ov);
+        const _pr = document.getElementById('portal-root') || document.body;
+        _pr.style.pointerEvents = 'all';
+        _pr.appendChild(ov);
 
         requestAnimationFrame(() => requestAnimationFrame(() => {
             sh.style.transform = 'translateY(0)';
