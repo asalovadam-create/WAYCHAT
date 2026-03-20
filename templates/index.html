@@ -15,7 +15,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#1d1d1e">
+    <meta name="theme-color" content="#1d1d1e" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#1d1d1e" media="(prefers-color-scheme: light)">
+    <meta name="color-scheme" content="dark">
     <meta name="format-detection" content="telephone=no">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -152,6 +154,7 @@ window.currentUser = {{ {
 <!-- Patch: viewport/safe-area/FAB/avatars fixes, должен быть ДО main.js -->
 
 <!-- Main application bundle -->
+<link rel="preload" href="/static/js/main.js?v=1773926108" as="script">
 <script src="/static/js/main.js?v=1773926108" defer></script>
 
 <script>
