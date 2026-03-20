@@ -15,9 +15,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="WayChat">
     <meta name="mobile-web-app-capable" content="yes">
-    <meta name="theme-color" content="#1d1d1e" media="(prefers-color-scheme: dark)">
-    <meta name="theme-color" content="#1d1d1e" media="(prefers-color-scheme: light)">
-    <meta name="color-scheme" content="dark">
+    <meta name="theme-color" content="#1d1d1e">
     <meta name="format-detection" content="telephone=no">
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -121,6 +119,38 @@
         @keyframes ringPulse    { 0%,100%{opacity:.4;transform:scale(1)}  50%{opacity:.8;transform:scale(1.06)} }
         @keyframes slideUpBanner{ from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
     </style>
+
+    <style>
+        /* ── Tailwind utility replacements (CDN removed — was causing JS errors) ── */
+        /* Layout */
+        .flex-1    { flex: 1 1 0%; min-width: 0; }
+        .flex-col  { display: flex; flex-direction: column; }
+        .h-screen  { height: 100vh; height: 100dvh; }
+        .w-screen  { width: 100vw; }
+        .h-8       { height: 2rem; }   /* 32px */
+        .w-8       { width: 2rem; }
+        .h-10      { height: 2.5rem; } /* 40px */
+        .w-10      { width: 2.5rem; }
+        /* Flex alignment */
+        .items-center   { align-items: center; }
+        .justify-center { justify-content: center; }
+        /* Overflow */
+        .overflow-hidden  { overflow: hidden; }
+        .overflow-y-auto  { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+        /* Rounded */
+        .rounded-full { border-radius: 9999px; }
+        /* Object fit */
+        .object-cover { object-fit: cover; }
+        /* Shadows */
+        .shadow-md    { box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3), 0 2px 4px -2px rgba(0,0,0,0.2); }
+        .shadow-inner { box-shadow: inset 0 2px 4px 0 rgba(0,0,0,0.3); }
+        /* Backgrounds */
+        .bg-zinc-800    { background-color: #27272a; }
+        .bg-zinc-900\/80 { background-color: rgba(24,24,27,0.8); }
+        /* Borders */
+        .border-white\/10 { border-color: rgba(255,255,255,0.1); }
+        .border-white\/5  { border-color: rgba(255,255,255,0.05); }
+    </style>
 </head>
 <body>
 
@@ -154,7 +184,6 @@ window.currentUser = {{ {
 <!-- Patch: viewport/safe-area/FAB/avatars fixes, должен быть ДО main.js -->
 
 <!-- Main application bundle -->
-<link rel="preload" href="/static/js/main.js?v=1773926108" as="script">
 <script src="/static/js/main.js?v=1773926108" defer></script>
 
 <script>
@@ -183,12 +212,10 @@ window.currentUser = {{ {
         setTimeout(setAppHeight, 150);
     }, { passive: true });
 
-    // ── 2. Tailwind CSS (async, non-blocking) ─────────────────────────────
-    // OPT: loaded async so it never blocks main.js execution
-    var tw = document.createElement('script');
-    tw.src = 'https://cdn.tailwindcss.com';
-    tw.async = true;
-    document.head.appendChild(tw);
+    // ── 2. Tailwind CSS — REMOVED ────────────────────────────────────────
+    // Tailwind CDN was causing thousands of "Unexpected identifier 'padding'"
+    // errors by trying to parse our CSS custom properties as JS class names.
+    // The app uses its own complete CSS system inside renderApp() — no Tailwind needed.
 
     // ── 3. Splash screen hide ─────────────────────────────────────────────
     var splashDone = false;
