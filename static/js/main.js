@@ -84,36 +84,19 @@ const WCCache = (() => {
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', function() {
             syncVH();
-            const vv  = window.visualViewport;
-            const kbH = Math.max(0, window.innerHeight - vv.height);
-
-            // CRITICAL iOS FIX: when keyboard opens, translate the chat-view UP
-            // by visualViewport.offsetTop so input-bar stays above keyboard
+            // При открытой клавиатуре — только скроллим вниз.
+            // НЕ трогаем chatWin.style.height — flex layout справляется сам.
+            const vv   = window.visualViewport;
+            const kbH  = Math.max(0, window.innerHeight - vv.height);
             const chat = document.getElementById('chat-window');
-            if (chat && chat.classList.contains('active')) {
-                const offset = vv.offsetTop || 0;
-                if (kbH > 60) {
-                    // Keyboard is open — shift chat view up with it
-                    chat.style.transform = `translateY(-${offset}px)`;
-                    // Scroll messages to bottom
-                    const msgs = document.getElementById('messages');
-                    if (msgs) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
-                } else {
-                    // Keyboard closed — reset
-                    chat.style.transform = '';
-                }
+            const msgs = document.getElementById('messages');
+            if (chat && chat.classList.contains('active') && kbH > 60 && msgs) {
+                requestAnimationFrame(function() {
+                    msgs.scrollTop = msgs.scrollHeight;
+                });
             }
         }, { passive: true });
-
-        window.visualViewport.addEventListener('scroll', function() {
-            syncVH();
-            // Keep chat in sync with viewport scroll (iOS Safari quirk)
-            const chat = document.getElementById('chat-window');
-            if (chat && chat.classList.contains('active')) {
-                const offset = window.visualViewport.offsetTop || 0;
-                chat.style.transform = offset > 0 ? `translateY(-${offset}px)` : '';
-            }
-        }, { passive: true });
+        window.visualViewport.addEventListener('scroll', syncVH, { passive: true });
     }
     window.addEventListener('resize', syncVH, { passive: true });
     window.addEventListener('orientationchange', function() {
@@ -135,15 +118,11 @@ const WCCache = (() => {
         .chat-view {
             position: fixed !important;
             top: 0 !important; left: 0 !important;
-            right: 0 !important;
-            /* Use --app-height from visualViewport — correct on keyboard open */
-            height: var(--app-height, var(--vh, 100dvh)) !important;
+            right: 0 !important; bottom: 0 !important;
+            height: var(--vh, 100dvh) !important;
             display: flex !important;
             flex-direction: column !important;
             overflow: hidden !important;
-            /* Smooth transition when keyboard opens/closes */
-            transition: transform 0s !important;
-            will-change: transform !important;
         }
         .chat-view.active { transform: translateX(0) !important; }
         /* messages: flex:1 + min-height:0 — ключевая пара для overflow */
@@ -161,7 +140,8 @@ const WCCache = (() => {
             position: relative !important;
             transform: none !important;
             z-index: 10 !important;
-            padding-bottom: 0 !important;
+            /* ЕДИНСТВЕННОЕ место для safe-area */
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; }
@@ -526,8 +506,31 @@ const ICONS = {
     mic: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="11" rx="3" stroke="rgba(255,255,255,0.5)" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3M8 22h8" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="rgba(255,255,255,0.35)" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-linecap="round"/></svg>`,
     plus: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-    check: `<svg width="15" height="10" viewBox="0 0 15 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 9.5L7.5 1.5L14 9.5H1Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="currentColor" fill-opacity="0.18"/></svg>`,
-    checkDouble: `<svg width="20" height="10" viewBox="0 0 20 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 9.5L6 1.5L11 9.5H1Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.18"/><path d="M9 9.5L14 1.5L19 9.5H9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.18"/></svg>`,
+    check: `<svg width="16" height="12" viewBox="0 0 16 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Main peak -->
+  <path d="M1 11 L5.5 3.5 L7 5.5 L8.5 3 L14 11 Z"
+        fill="currentColor" fill-opacity="0.35"
+        stroke="currentColor" stroke-width="1.1"
+        stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Snow cap -->
+  <path d="M7 5.5 L8.5 3 L10 5.5 Z"
+        fill="currentColor" fill-opacity="0.7"/>
+</svg>`,
+    checkDouble: `<svg width="22" height="12" viewBox="0 0 22 12" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Back mountain (left, slightly lower) -->
+  <path d="M1 11 L5 4.5 L9 11 Z"
+        fill="currentColor" fill-opacity="0.25"
+        stroke="currentColor" stroke-width="1.0"
+        stroke-linejoin="round"/>
+  <!-- Front mountain (right, taller) -->
+  <path d="M7 11 L12.5 2.5 L14 4.5 L18 2 L21 11 Z"
+        fill="currentColor" fill-opacity="0.4"
+        stroke="currentColor" stroke-width="1.1"
+        stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Snow cap on front peak -->
+  <path d="M14 4.5 L18 2 L20 4.5 Z"
+        fill="currentColor" fill-opacity="0.75"/>
+</svg>`,
     settings: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chats: `<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     moments: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
@@ -674,7 +677,6 @@ const MSG_CACHE_TTL = 120000; // 2 мин — сообщения редко ме
 
 let longPressTimer    = null;
 let activeTheme       = localStorage.getItem('waychat_theme') || 'emerald';
-// Deleted messages — never show again after deletion
 const _deletedMsgIds = new Set(
     JSON.parse(localStorage.getItem('_wc_del_ids') || '[]')
 );
@@ -682,11 +684,9 @@ function _markMsgDeleted(id) {
     if (!id) return;
     _deletedMsgIds.add(String(id));
     try {
-        const arr = Array.from(_deletedMsgIds).slice(-500);
-        localStorage.setItem('_wc_del_ids', JSON.stringify(arr));
+        localStorage.setItem('_wc_del_ids', JSON.stringify(Array.from(_deletedMsgIds).slice(-500)));
     } catch(e) {}
 }
-
 let wsConnected       = false;
 let wsReconnected     = false;
 let currentPage       = 1;
@@ -1139,8 +1139,7 @@ function initSocket() {
             // Update all outgoing message status icons to double-check (read)
             document.querySelectorAll('.msg-row.out .status-icon').forEach(el => {
                 el.innerHTML = ICONS.checkDouble;
-                el.style.color = '#93c5fd'; // blue mountain = read
-                el.style.transition = 'color 0.3s ease';
+                el.style.color = 'rgba(147,197,253,1)';
             });
         }
     });
@@ -1156,8 +1155,7 @@ function initSocket() {
         if (+d.chat_id === currentChatId) {
             document.querySelectorAll('.msg-row.out .status-icon').forEach(el => {
                 el.innerHTML = ICONS.checkDouble;
-                el.style.color = '#93c5fd';
-                el.style.transition = 'color 0.3s ease';
+                el.style.color = 'rgba(147,197,253,1)';
             });
         }
     });
@@ -1172,13 +1170,8 @@ function initSocket() {
     });
 
     socket.on('message_deleted', (d) => {
-        const row = document.querySelector(`[data-msg-id="${d.msg_id}"]`);
-        if (row) {
-            row.style.transition = 'opacity 0.3s, transform 0.3s';
-            row.style.opacity = '0';
-            row.style.transform = 'scale(0.95)';
-            setTimeout(() => row.remove(), 300);
-        }
+        _markMsgDeleted(d.msg_id);
+        _animDeleteMsgRow(d.msg_id);
         // Удаляем из кэша
         if (messagesByChatCache[d.chat_id]) {
             messagesByChatCache[d.chat_id].messages = messagesByChatCache[d.chat_id].messages.filter(m => m.id !== d.msg_id);
@@ -1732,13 +1725,7 @@ body {
 .msg-time { display:none !important; }
 .bubble { padding:8px 12px 6px !important; position:relative; }
 .msg-row { margin-bottom:1px !important; }
-
-/* Mountain status icons */
-.msg-row.out .status-icon { color: rgba(255,255,255,0.65); display:inline-flex;align-items:center;vertical-align:middle; }
-.msg-row.out .status-icon.read { color: #93c5fd !important; }
-.status-icon svg { display:block; }
-
-.msg-meta-inline { display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:3px;font-size:10.5px;opacity:0.55;white-space:nowrap;pointer-events:none;line-height:1; }
+.msg-meta-inline { display:inline-flex;align-items:center;gap:2px;font-size:10.5px;opacity:0.6;white-space:nowrap;pointer-events:none;line-height:1; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
@@ -1880,26 +1867,6 @@ body {
 @keyframes msgIn { from{opacity:0;transform:translateY(8px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
-
-/* Global smooth interactions */
-.bubble { transition: opacity 0.15s ease, transform 0.15s ease; }
-.msg-row { transition: background 0.15s ease; }
-.chat-item, [data-chat-key] { transition: background 0.12s ease; }
-/* Smooth page transitions */
-.chat-view { transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94) !important; }
-/* Typing indicator smooth */
-.typing-wrap { transition: opacity 0.2s ease, max-height 0.25s ease; }
-/* Toast appear */
-@keyframes toastIn { from{opacity:0;transform:translateY(12px) scale(0.95)} to{opacity:1;transform:none} }
-@keyframes toastOut { from{opacity:1;transform:none} to{opacity:0;transform:translateY(8px) scale(0.95)} }
-/* Date divider appear */
-@keyframes dividerFade { from{opacity:0} to{opacity:1} }
-.date-divider { animation: dividerFade 0.3s ease; }
-/* Reaction appear */
-@keyframes reactionIn { from{opacity:0;transform:scale(0.5)} to{opacity:1;transform:scale(1)} }
-/* Scroll btn */
-#wc-scroll-btn { transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34,1.56,0.64,1) !important; }
-
 .animate-msg { animation:msgIn 0.25s cubic-bezier(0.22,1,0.36,1); }
 .animate-up  { animation:slideUp 0.3s ease; }
 
@@ -3756,8 +3723,11 @@ function getMessageDate(msg) {
         const yesterday = new Date(now);
         yesterday.setDate(yesterday.getDate() - 1);
         if (moscow.toDateString() === yesterday.toDateString()) return 'Вчера';
-        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-        return `${moscow.getDate()} ${months[moscow.getMonth()]}`;
+        const months = ['января','февраля','марта','апреля','мая','июня',
+                        'июля','августа','сентября','октября','ноября','декабря'];
+        const day = moscow.getDate(), mon = months[moscow.getMonth()];
+        if (moscow.getFullYear() === now.getFullYear()) return `${day} ${mon}`;
+        return `${day} ${mon} ${moscow.getFullYear()}`;
     } catch(e) { return null; }
 }
 
@@ -3767,7 +3737,6 @@ function setupScrollPagination(){/* VirtualList handles it */}
 //  РЕНДЕР СООБЩЕНИЯ
 // ══════════════════════════════════════════════════════════
 function buildMessageRow(msg, animate = true) {
-    if (_deletedMsgIds.has(String(msg.id))) return null;
     const isMe = msg.sender_id === currentUser.id;
     const type = msg.type || msg.type_msg || 'text';
     const row  = document.createElement('div');
@@ -3889,18 +3858,18 @@ function buildMessageRow(msg, animate = true) {
         const _isSrc  = msg.file_url || '';
         const _isBlob = _isSrc.startsWith('blob:');
         const _skId = 'sk_' + (msg.id || tempId || Math.random().toString(36).slice(2));
-        contentHtml = `<div class="img-bubble" style="position:relative;max-width:280px;min-height:60px;background:rgba(255,255,255,0.06);cursor:zoom-in"
+        contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden"
             onclick="openImgZoom(this.querySelector('img')?.src||'')">
             <div class="wc-img-sk" id="${_skId}"></div>
             <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
-                 style="display:block;width:100%;height:auto;max-height:380px;object-fit:cover;position:relative;z-index:1;opacity:0;transition:opacity 0.2s;border-radius:inherit"
+                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;opacity:0;transition:opacity 0.22s ease"
                  onload="(function(el){const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
                  onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
     } else if (type === 'video') {
         // FIXED: preload=metadata для мгновенного thumb, controls видны сразу
-        contentHtml = `<div style="overflow:hidden;border-radius:18px;max-width:280px;background:rgba(255,255,255,0.06);position:relative">
+        contentHtml = `<div style="overflow:hidden;border-radius:14px;max-width:260px;background:transparent;position:relative">
             <video src="${msg.file_url}" controls playsinline preload="metadata"
                    style="display:block;width:100%;max-height:380px;object-fit:cover"
                    onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
@@ -3932,10 +3901,11 @@ function buildMessageRow(msg, animate = true) {
             `<a href="$1" target="_blank" rel="noopener noreferrer"
                 style="color:${linkedColor};text-decoration:none;border-bottom:1px solid ${linkedColor}40;word-break:break-all;font-weight:500">$1</a>`);
         const _statusIcon = isMe
-            ? `<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.6)'};display:inline-flex;align-items:center;vertical-align:middle">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>`
+            ? `<span class="status-icon" style="color:${msg.is_read ? '#93c5fd' : 'rgba(255,255,255,0.6)'};display:inline-flex;align-items:center;margin-left:2px;vertical-align:middle">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>`
             : '';
-        const _timeMeta = `<div style="display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:3px;font-size:10.5px;color:rgba(255,255,255,0.5);line-height:1;float:right;clear:both">${displayTime}&nbsp;${_statusIcon}</div>`;
-        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}</div>${_timeMeta}<div style="clear:both"></div>`;
+        // Telegram technique: ghost spacer + float time
+        const _timeFloat = `<span style="float:right;margin-left:6px;margin-top:2px;font-size:10.5px;color:rgba(255,255,255,0.55);white-space:nowrap;display:inline-flex;align-items:center;gap:2px;line-height:1.2;vertical-align:bottom;position:relative;top:2px">${displayTime}${_statusIcon}</span>`;
+        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5;overflow:hidden">${_timeFloat}${linked}</div>`;
     }
 
     // Аватар — кэшированный, для групп берём по sender_id
@@ -4611,19 +4581,24 @@ async function _deleteSelected() {
 function _animDeleteMsgRow(msgId) {
     const el = document.querySelector(`[data-msg-id="${msgId}"]`);
     if (!el) return;
-    el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
-    el.style.opacity    = '0';
-    el.style.transform  = 'scale(0.88)';
-    el.style.overflow   = 'hidden';
+    el.dataset.deleted = '1';
     const h = el.offsetHeight;
-    el.style.maxHeight  = h + 'px';
+    el.style.overflow   = 'hidden';
+    el.style.transition = 'opacity 0.18s ease, transform 0.18s ease, filter 0.18s ease';
+    el.style.opacity    = '0';
+    el.style.transform  = 'scale(0.9) translateX(6px)';
+    el.style.filter     = 'blur(2px)';
+    // Phase 2: collapse height
+    el.style.maxHeight = h + 'px';
     setTimeout(() => {
-        el.style.transition += ', max-height 0.28s ease, margin 0.28s ease, padding 0.28s ease';
-        el.style.maxHeight   = '0';
-        el.style.marginTop   = '0'; el.style.marginBottom = '0';
-        el.style.paddingTop  = '0'; el.style.paddingBottom = '0';
-    }, 160);
-    setTimeout(() => el.remove(), 430);
+        el.style.transition = 'max-height 0.22s ease, margin 0.22s ease, padding 0.22s ease';
+        el.style.maxHeight    = '0';
+        el.style.marginTop    = '0';
+        el.style.marginBottom = '0';
+        el.style.paddingTop   = '0';
+        el.style.paddingBottom= '0';
+        setTimeout(() => el.remove(), 230);
+    }, 180);
 }
 
 // ── Удалить у меня ──
@@ -4693,6 +4668,7 @@ function _confirmDeleteForAll(msgId) {
 
     sh.querySelector('#_dfa_ok').addEventListener('click', () => {
         closeConf();
+        _markMsgDeleted(msgId);
         _animDeleteMsgRow(msgId);
         socket.emit('delete_message', { msg_id: msgId, chat_id: currentChatId });
     });
@@ -4709,94 +4685,43 @@ function confirmDeleteMessage(msgId) { _confirmDeleteForAll(msgId); }
 // ══════════════════════════════════════════════════════════
 //  АУДИО ПЛЕЕР — с волновой формой
 // ══════════════════════════════════════════════════════════
-// Waveform height cache — keyed by audio src URL, persists across re-renders
-const _wvHeightCache = new Map();
+// Waveform height cache — no re-fetch on chat re-open
+const _wvCache = typeof _wvCache !== 'undefined' ? _wvCache : new Map();
 
 function renderAudioPlayer(src, displayTime, isMe, isRead) {
     const uid = `au_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
 
-    // Time + status shown at bottom right (always, for all audio messages)
-    const readColor  = isRead ? '#93c5fd' : 'rgba(255,255,255,0.6)';
-    const mountIcon  = isMe
-        ? `<span class="status-icon" style="color:${readColor};display:inline-flex;align-items:center;vertical-align:middle">
-               ${isRead ? ICONS.checkDouble : ICONS.check}
-           </span>`
-        : '';
-    const timeLine = displayTime
-        ? `<div style="display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:4px;font-size:10.5px;color:rgba(255,255,255,0.55);line-height:1">
-               ${displayTime}${mountIcon}
-           </div>`
+    // Status icon (mountain)
+    const _statusIcon = isMe
+        ? `<span class="status-icon" style="color:${isRead ? '#93c5fd' : 'rgba(255,255,255,0.6)'};display:inline-flex;align-items:center;vertical-align:middle">${isRead ? ICONS.checkDouble : ICONS.check}</span>`
         : '';
 
-    // Use cached waveform bars if available (avoids re-fetch on re-render)
-    const cachedBars = _wvHeightCache.get(src);
-    const initialBars = cachedBars
-        ? cachedBars.map(h =>
-            `<div style="width:2px;background:rgba(255,255,255,0.3);border-radius:1px;height:${h}px;transition:background 0.1s"></div>`
-          ).join('')
-        : Array(30).fill(0).map(() =>
-            `<div style="width:2px;background:rgba(255,255,255,0.25);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*18))}px;transition:background 0.1s"></div>`
-          ).join('');
+    // Initial bars — use cache if available, else random placeholders
+    const _cached = _wvCache.get(src);
+    const _bars = (_cached
+        ? _cached.map(h => `<div style="width:2px;background:rgba(255,255,255,${0.25+(h/26)*0.5});border-radius:1px;height:${h}px;transition:background 0.1s"></div>`)
+        : Array(30).fill(0).map(() => `<div style="width:2px;background:rgba(255,255,255,0.25);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*16))}px;transition:background 0.1s"></div>`)
+    ).join('');
 
     return `
-    <div class="audio-player" data-src="${src}" style="min-width:200px;max-width:260px">
+    <div class="audio-player" data-src="${src}" style="min-width:190px;max-width:250px">
         <button class="audio-play-btn" onclick="toggleAudio('${uid}')">
             <svg id="play-icon-${uid}" width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
-        <div class="audio-progress-wrap" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:0">
-            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:26px;flex:1;cursor:pointer" onclick="seekAudio(event,'${uid}')">
-                ${initialBars}
+        <div class="audio-progress-wrap" style="flex:1;min-width:0">
+            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:24px;flex:1;cursor:pointer" onclick="seekAudio(event,'${uid}')">
+                ${_bars}
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
-                <div class="audio-dur" id="dur_${uid}" style="font-size:11px;color:rgba(255,255,255,0.55)">0:00</div>
-                ${timeLine}
+                <div class="audio-dur" id="dur_${uid}" style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1">0:00</div>
+                <div style="font-size:10.5px;color:rgba(255,255,255,0.55);display:inline-flex;align-items:center;gap:2px;line-height:1">${displayTime || ''}${_statusIcon}</div>
             </div>
         </div>
         <audio id="${uid}" src="${src}"
             ontimeupdate="updateAudio('${uid}')"
             onended="onAudioEnd('${uid}')"
-            onloadedmetadata="setAudioDur('${uid}');_lazyDrawWaveform('${uid}','${src}')"></audio>
+            onloadedmetadata="setAudioDur('${uid}');_loadWaveform('${uid}','${src}')"></audio>
     </div>`;
-}
-
-
-async function _lazyDrawWaveform(uid, src) {
-    // Check cache first — no re-fetch needed
-    if (_wvHeightCache.has(src)) {
-        _applyWvHeights(uid, _wvHeightCache.get(src));
-        setAudioDur(uid);
-        return;
-    }
-    setAudioDur(uid);
-    try {
-        const resp    = await fetch(src, { cache: 'force-cache' });
-        if (!resp.ok) return;
-        const buf     = await resp.arrayBuffer();
-        const actx    = new (window.AudioContext || window.webkitAudioContext)();
-        const decoded = await actx.decodeAudioData(buf);
-        actx.close();
-        const data  = decoded.getChannelData(0);
-        const N     = 30;
-        const step  = Math.floor(data.length / N);
-        const hs    = [];
-        for (let i = 0; i < N; i++) {
-            let mx = 0;
-            for (let j = 0; j < step; j++) { const v = Math.abs(data[i*step+j]||0); if(v>mx) mx=v; }
-            hs.push(Math.max(3, Math.round(mx * 26)));
-        }
-        _wvHeightCache.set(src, hs);
-        _applyWvHeights(uid, hs);
-    } catch(e) {}
-}
-
-function _applyWvHeights(uid, hs) {
-    const wv = document.getElementById('wv_' + uid);
-    if (!wv) return;
-    wv.querySelectorAll('div').forEach((bar, i) => {
-        const h = hs[i] || 3;
-        bar.style.height     = h + 'px';
-        bar.style.background = 'rgba(255,255,255,' + (0.25 + (h/26)*0.5) + ')';
-    });
 }
 
 // Рисует реальную волну из audio file
