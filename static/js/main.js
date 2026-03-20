@@ -84,19 +84,36 @@ const WCCache = (() => {
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', function() {
             syncVH();
-            // При открытой клавиатуре — только скроллим вниз.
-            // НЕ трогаем chatWin.style.height — flex layout справляется сам.
-            const vv   = window.visualViewport;
-            const kbH  = Math.max(0, window.innerHeight - vv.height);
+            const vv  = window.visualViewport;
+            const kbH = Math.max(0, window.innerHeight - vv.height);
+
+            // CRITICAL iOS FIX: when keyboard opens, translate the chat-view UP
+            // by visualViewport.offsetTop so input-bar stays above keyboard
             const chat = document.getElementById('chat-window');
-            const msgs = document.getElementById('messages');
-            if (chat && chat.classList.contains('active') && kbH > 60 && msgs) {
-                requestAnimationFrame(function() {
-                    msgs.scrollTop = msgs.scrollHeight;
-                });
+            if (chat && chat.classList.contains('active')) {
+                const offset = vv.offsetTop || 0;
+                if (kbH > 60) {
+                    // Keyboard is open — shift chat view up with it
+                    chat.style.transform = `translateY(-${offset}px)`;
+                    // Scroll messages to bottom
+                    const msgs = document.getElementById('messages');
+                    if (msgs) requestAnimationFrame(() => { msgs.scrollTop = msgs.scrollHeight; });
+                } else {
+                    // Keyboard closed — reset
+                    chat.style.transform = '';
+                }
             }
         }, { passive: true });
-        window.visualViewport.addEventListener('scroll', syncVH, { passive: true });
+
+        window.visualViewport.addEventListener('scroll', function() {
+            syncVH();
+            // Keep chat in sync with viewport scroll (iOS Safari quirk)
+            const chat = document.getElementById('chat-window');
+            if (chat && chat.classList.contains('active')) {
+                const offset = window.visualViewport.offsetTop || 0;
+                chat.style.transform = offset > 0 ? `translateY(-${offset}px)` : '';
+            }
+        }, { passive: true });
     }
     window.addEventListener('resize', syncVH, { passive: true });
     window.addEventListener('orientationchange', function() {
@@ -118,11 +135,15 @@ const WCCache = (() => {
         .chat-view {
             position: fixed !important;
             top: 0 !important; left: 0 !important;
-            right: 0 !important; bottom: 0 !important;
-            height: var(--vh, 100dvh) !important;
+            right: 0 !important;
+            /* Use --app-height from visualViewport — correct on keyboard open */
+            height: var(--app-height, var(--vh, 100dvh)) !important;
             display: flex !important;
             flex-direction: column !important;
             overflow: hidden !important;
+            /* Smooth transition when keyboard opens/closes */
+            transition: transform 0s !important;
+            will-change: transform !important;
         }
         .chat-view.active { transform: translateX(0) !important; }
         /* messages: flex:1 + min-height:0 — ключевая пара для overflow */
@@ -140,8 +161,7 @@ const WCCache = (() => {
             position: relative !important;
             transform: none !important;
             z-index: 10 !important;
-            /* ЕДИНСТВЕННОЕ место для safe-area */
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
+            padding-bottom: 0 !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; }
@@ -362,37 +382,40 @@ function _ensureScrollBtn() {
     btn.id = 'wc-scroll-btn';
     btn.setAttribute('aria-label', 'Прокрутить вниз');
     // OPT: CSS transitions only (opacity + translateY) — no JS animation lib
-    // Telegram-style: flat, minimal, no excessive blur/glow
     btn.style.cssText = [
         'position:absolute',
         'right:14px',
-        'bottom:calc(76px + env(safe-area-inset-bottom,0px))',
-        'width:40px',
-        'height:40px',
+        // FIX 6a: account for safe-area-inset-bottom
+        'bottom:calc(72px + env(safe-area-inset-bottom,0px))',
+        'width:42px',
+        'height:42px',
         'border-radius:50%',
-        'background:#2a2a2b',
-        'border:0.5px solid rgba(255,255,255,0.10)',
+        'background:rgba(29,29,30,0.95)',
+        'backdrop-filter:blur(12px)',
+        '-webkit-backdrop-filter:blur(12px)',
+        'border:0.5px solid rgba(255,255,255,0.14)',
         'color:#fff',
         'font-size:0',
         'display:flex',
         'align-items:center',
         'justify-content:center',
-        'box-shadow:0 2px 8px rgba(0,0,0,0.35)',
+        'box-shadow:0 4px 18px rgba(0,0,0,0.45)',
         'z-index:500',
         'cursor:pointer',
         'opacity:0',
         'pointer-events:none',
-        'transition:opacity .18s ease, transform .18s ease',
-        'transform:translateY(8px)',
+        // OPT: CSS transition — GPU composited, no layout
+        'transition:opacity .2s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
+        'transform:translateY(10px)',
         '-webkit-tap-highlight-color:transparent',
     ].join(';');
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none">' +
         '<path d="M19 9l-7 7-7-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' +
         '</svg>' +
-        '<span id="wc-scroll-badge" style="display:none;position:absolute;top:-4px;right:-4px;' +
-        'min-width:17px;height:17px;background:var(--accent);color:#000;font-size:9px;font-weight:800;' +
+        '<span id="wc-scroll-badge" style="display:none;position:absolute;top:-5px;right:-5px;' +
+        'min-width:18px;height:18px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;' +
         'border-radius:9px;padding:0 4px;align-items:center;justify-content:center;' +
-        'border:1.5px solid #2a2a2b"></span>';
+        'border:1.5px solid rgba(29,29,30,0.9)"></span>';
 
     chatWin.style.position = 'relative';
     chatWin.appendChild(btn);
@@ -503,8 +526,8 @@ const ICONS = {
     mic: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="11" rx="3" stroke="rgba(255,255,255,0.5)" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3M8 22h8" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="rgba(255,255,255,0.35)" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-linecap="round"/></svg>`,
     plus: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>`,
-    check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    checkDouble: `<svg width="16" height="12" viewBox="0 0 24 16" fill="none"><polyline points="1 8 6 13 15 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="9 8 14 13 23 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    check: `<svg width="15" height="10" viewBox="0 0 15 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 9.5L7.5 1.5L14 9.5H1Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="currentColor" fill-opacity="0.18"/></svg>`,
+    checkDouble: `<svg width="20" height="10" viewBox="0 0 20 10" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 9.5L6 1.5L11 9.5H1Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.18"/><path d="M9 9.5L14 1.5L19 9.5H9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.18"/></svg>`,
     settings: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chats: `<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     moments: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
@@ -651,6 +674,19 @@ const MSG_CACHE_TTL = 120000; // 2 мин — сообщения редко ме
 
 let longPressTimer    = null;
 let activeTheme       = localStorage.getItem('waychat_theme') || 'emerald';
+// Deleted messages — never show again after deletion
+const _deletedMsgIds = new Set(
+    JSON.parse(localStorage.getItem('_wc_del_ids') || '[]')
+);
+function _markMsgDeleted(id) {
+    if (!id) return;
+    _deletedMsgIds.add(String(id));
+    try {
+        const arr = Array.from(_deletedMsgIds).slice(-500);
+        localStorage.setItem('_wc_del_ids', JSON.stringify(arr));
+    } catch(e) {}
+}
+
 let wsConnected       = false;
 let wsReconnected     = false;
 let currentPage       = 1;
@@ -696,9 +732,9 @@ const rtcConfig = {
 };
 
 const THEMES = {
-    emerald: { accent: '#10b981', glow: '0 2px 8px rgba(16,185,129,0.2)', name: 'Изумруд' },
-    blue:    { accent: '#3b82f6', glow: '0 2px 8px rgba(59,130,246,0.2)', name: 'Синий' },
-    purple:  { accent: '#8b5cf6', glow: '0 2px 8px rgba(139,92,246,0.2)', name: 'Фиолет' },
+    emerald: { accent: '#10b981', glow: '0 0 20px rgba(16,185,129,0.4)', name: 'Изумруд' },
+    blue:    { accent: '#3b82f6', glow: '0 0 20px rgba(59,130,246,0.4)', name: 'Синий' },
+    purple:  { accent: '#8b5cf6', glow: '0 0 20px rgba(139,92,246,0.4)', name: 'Фиолет' },
     rose:    { accent: '#f43f5e', glow: '0 0 20px rgba(244,63,94,0.4)',  name: 'Розовый' },
     amber:   { accent: '#f59e0b', glow: '0 0 20px rgba(245,158,11,0.4)', name: 'Янтарь' },
 };
@@ -1103,7 +1139,8 @@ function initSocket() {
             // Update all outgoing message status icons to double-check (read)
             document.querySelectorAll('.msg-row.out .status-icon').forEach(el => {
                 el.innerHTML = ICONS.checkDouble;
-                el.style.color = 'rgba(147,197,253,1)';
+                el.style.color = '#93c5fd'; // blue mountain = read
+                el.style.transition = 'color 0.3s ease';
             });
         }
     });
@@ -1119,7 +1156,8 @@ function initSocket() {
         if (+d.chat_id === currentChatId) {
             document.querySelectorAll('.msg-row.out .status-icon').forEach(el => {
                 el.innerHTML = ICONS.checkDouble;
-                el.style.color = 'rgba(147,197,253,1)';
+                el.style.color = '#93c5fd';
+                el.style.transition = 'color 0.3s ease';
             });
         }
     });
@@ -1469,38 +1507,44 @@ function updateConnStatus(online) {
 //  МОСКОВСКОЕ ВРЕМЯ
 // ══════════════════════════════════════════════════════════
 function getMoscowTime(dateStr) {
-    // Inline message time — ALWAYS HH:MM only (no relative dates)
     if (!dateStr) return '';
     try {
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return dateStr;
-        const moscowOffset = 3 * 60;
-        const localOffset  = d.getTimezoneOffset();
-        const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
-        return moscow.getHours().toString().padStart(2,'0') + ':' +
-               moscow.getMinutes().toString().padStart(2,'0');
-    } catch(e) { return dateStr; }
-}
 
-// Chat list preview time — compact (HH:MM today, "8 фев" older)
-function getChatPreviewTime(dateStr) {
-    if (!dateStr) return '';
-    try {
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) return dateStr;
         const moscowOffset = 3 * 60;
         const localOffset  = d.getTimezoneOffset();
         const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
         const nowMsk = new Date(Date.now() + (moscowOffset + (new Date().getTimezoneOffset())) * 60000);
-        if (moscow.toDateString() === nowMsk.toDateString()) {
-            return moscow.getHours().toString().padStart(2,'0') + ':' +
-                   moscow.getMinutes().toString().padStart(2,'0');
+
+        const mDate = moscow.toDateString();
+        const nDate = nowMsk.toDateString();
+
+        // Сегодня — только время
+        if (mDate === nDate) {
+            return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
         }
-        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+
+        // Вчера
+        const yesterday = new Date(nowMsk);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (mDate === yesterday.toDateString()) return 'Вчера';
+
+        // Эта неделя (до 7 дней) — название дня
+        const diffDays = Math.floor((nowMsk - moscow) / 86400000);
+        if (diffDays < 7) {
+            const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+            return days[moscow.getDay()];
+        }
+
+        // Этот год — день + месяц по-русски (без года)
+        const months = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
         if (moscow.getFullYear() === nowMsk.getFullYear()) {
-            return `${moscow.getDate()} ${months[moscow.getMonth()]}`;
+            return moscow.getDate() + ' ' + months[moscow.getMonth()];
         }
-        return `${moscow.getDate()}.${(moscow.getMonth()+1).toString().padStart(2,'0')}.${moscow.getFullYear()}`;
+
+        // Старше года — день.месяц.год
+        return moscow.getDate() + ' ' + months[moscow.getMonth()] + ' ' + moscow.getFullYear();
     } catch(e) { return dateStr; }
 }
 
@@ -1512,7 +1556,7 @@ function renderApp() {
 <style>
 :root {
     --accent: #10b981;
-    --glow: 0 2px 8px rgba(16,185,129,0.2);
+    --glow: 0 0 20px rgba(16,185,129,0.4);
     --accent-10: rgba(16,185,129,0.1);
     --accent-30: rgba(16,185,129,0.3);
     --bg: #1d1d1e;
@@ -1523,7 +1567,7 @@ function renderApp() {
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
     --msg-in: #2a2a2b;
-    --msg-out: #0e9e6e;
+    --msg-out: #1a7a52;
     --divider: rgba(255,255,255,0.05);
     --chat-bg: #1d1d1e;
     --hdr: rgba(29,29,30,0.97);
@@ -1545,8 +1589,8 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--text);
 }
-.glass { background:var(--hdr);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px); }
-.glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--border); }
+.glass { background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px); }
+.glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
 /* FAB — максимально внизу, без анимации, без свечения */
@@ -1577,7 +1621,7 @@ body {
     transition:opacity .18s ease,transform .18s cubic-bezier(.34,1.56,.64,1)
 }
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
-.fab-mi{display:flex;align-items:center;gap:14px;background:rgba(40,40,42,0.98);border:.5px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 18px;cursor:pointer;box-shadow:0 8px 32px rgba(0,0,0,.6);font-size:15px;font-weight:500;color:rgba(255,255,255,.9);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.fab-mi{display:flex;align-items:center;gap:14px;background:rgba(40,40,42,0.98);border:.5px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 18px;cursor:pointer;box-shadow:0 8px 32px rgba(0,0,0,.6);font-size:15px;font-weight:500;color:rgba(255,255,255,.9);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
 .fab-mi:active{background:rgba(60,60,62,0.98)}
 .fab-mi-ico{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .fab-bd{position:fixed;inset:0;z-index:899;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .2s ease}
@@ -1606,7 +1650,7 @@ body {
 .chat-item{display:flex;align-items:center;gap:12px;padding:7px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
-.online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:none}
+.online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 6px var(--accent)}
 
 /* СВАЙП ЖЕСТЫ */
 .chat-swipe-container{position:relative;overflow:hidden;touch-action:pan-y}
@@ -1657,7 +1701,7 @@ body {
 
 .bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
 .msg-row.out .bubble { background:var(--accent);border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 12px rgba(16,185,129,0.25); }
-.msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:none; }
+.msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3); }
 
 .msg-time { font-size:11px;opacity:0.6;display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:4px;white-space:nowrap; }
 .status-icon { display:flex;align-items:center; }
@@ -1673,13 +1717,13 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:6px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+6px),8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);flex-shrink:0; }
+.input-bar { padding:6px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+6px),8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
 .input-inner:focus-within { border-color:var(--accent-30); }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
-.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s;box-shadow:none; }
+.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
@@ -1688,7 +1732,13 @@ body {
 .msg-time { display:none !important; }
 .bubble { padding:8px 12px 6px !important; position:relative; }
 .msg-row { margin-bottom:1px !important; }
-.msg-meta-inline { display:inline-flex;align-items:center;gap:3px;float:right;margin-left:6px;margin-bottom:-3px;margin-top:2px;font-size:11px;opacity:0.6;white-space:nowrap;pointer-events:none;vertical-align:bottom;line-height:1; }
+
+/* Mountain status icons */
+.msg-row.out .status-icon { color: rgba(255,255,255,0.65); display:inline-flex;align-items:center;vertical-align:middle; }
+.msg-row.out .status-icon.read { color: #93c5fd !important; }
+.status-icon svg { display:block; }
+
+.msg-meta-inline { display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:3px;font-size:10.5px;opacity:0.55;white-space:nowrap;pointer-events:none;line-height:1; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
@@ -1830,6 +1880,26 @@ body {
 @keyframes msgIn { from{opacity:0;transform:translateY(8px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
+
+/* Global smooth interactions */
+.bubble { transition: opacity 0.15s ease, transform 0.15s ease; }
+.msg-row { transition: background 0.15s ease; }
+.chat-item, [data-chat-key] { transition: background 0.12s ease; }
+/* Smooth page transitions */
+.chat-view { transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94) !important; }
+/* Typing indicator smooth */
+.typing-wrap { transition: opacity 0.2s ease, max-height 0.25s ease; }
+/* Toast appear */
+@keyframes toastIn { from{opacity:0;transform:translateY(12px) scale(0.95)} to{opacity:1;transform:none} }
+@keyframes toastOut { from{opacity:1;transform:none} to{opacity:0;transform:translateY(8px) scale(0.95)} }
+/* Date divider appear */
+@keyframes dividerFade { from{opacity:0} to{opacity:1} }
+.date-divider { animation: dividerFade 0.3s ease; }
+/* Reaction appear */
+@keyframes reactionIn { from{opacity:0;transform:scale(0.5)} to{opacity:1;transform:scale(1)} }
+/* Scroll btn */
+#wc-scroll-btn { transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.34,1.56,0.64,1) !important; }
+
 .animate-msg { animation:msgIn 0.25s cubic-bezier(0.22,1,0.36,1); }
 .animate-up  { animation:slideUp 0.3s ease; }
 
@@ -2046,7 +2116,7 @@ body {
                 <!-- ══ МУЗЫКА (modal overlay, открывается из профиля) ══ -->
         <div id="music-section" style="display:none;position:fixed;inset:0;z-index:9200;background:#0a0a0e;overflow-y:auto;-webkit-overflow-scrolling:touch">
             <!-- Header -->
-            <div style="position:sticky;top:0;z-index:10;background:rgba(10,10,14,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:.5px solid rgba(255,255,255,.07);padding:max(env(safe-area-inset-top),44px) 16px 12px">
+            <div style="position:sticky;top:0;z-index:10;background:rgba(10,10,14,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:.5px solid rgba(255,255,255,.07);padding:max(env(safe-area-inset-top),44px) 16px 12px">
                 <div style="display:flex;align-items:center;gap:12px">
                     <button onclick="closeMusicPlayer()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -2230,8 +2300,8 @@ body {
                             ${getAvatarHtml(currentUser, 'w-full h-full')}
                         </div>
                         <div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);display:flex;gap:8px">
-                            <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
-                            <button onclick="setEmojiAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
+                            <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
+                            <button onclick="setEmojiAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
                         </div>
                     </div>
                     <h2 id="settings-name" style="font-size:24px;font-weight:800;letter-spacing:-0.4px;text-shadow:0 2px 12px rgba(0,0,0,0.5);margin:0">${currentUser.name}</h2>
@@ -2478,7 +2548,7 @@ body {
                 display:flex;align-items:center;gap:8px;
                 padding:10px 22px;
                 background:rgba(255,255,255,0.15);
-                backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+                backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
                 border:1px solid rgba(255,255,255,0.25);
                 border-radius:24px;color:#fff;font-size:14px;font-weight:700;
                 cursor:pointer;font-family:inherit;
@@ -2559,10 +2629,10 @@ function openProfileSheet(){
     sh.style.display='flex';
     inn.style.transition='none';
     inn.style.transform='translateY(100%)';
-    setTimeout(()=>{
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
         inn.style.transition='transform .35s cubic-bezier(.32,.72,0,1)';
         inn.style.transform='translateY(0)';
-    }, 16);
+    }));
     vibrate(8);
     // Свайп вниз для закрытия
     _setupProfileSwipeClose(inn);
@@ -3662,6 +3732,7 @@ async function loadMessages(initial = false, retryCount = 0) {
 
 
 function renderMessagesFromCache(msgs) {
+    msgs = msgs.filter(m => !_deletedMsgIds.has(String(m.id)));
     const container = document.getElementById('messages');
     if (!container) return;
     // mount пересоздаёт структуру — нужно до setMessages
@@ -3681,14 +3752,12 @@ function getMessageDate(msg) {
         const localOffset  = d.getTimezoneOffset();
         const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
         const now    = new Date(Date.now() + (moscowOffset + (new Date().getTimezoneOffset())) * 60000);
-        const months = ['января','февраля','марта','апреля','мая','июня',
-                        'июля','августа','сентября','октября','ноября','декабря'];
-        // Same year → "8 февраля", different year → "8 февраля 2024"
-        const day   = moscow.getDate();
-        const month = months[moscow.getMonth()];
-        const year  = moscow.getFullYear();
-        if (year === now.getFullYear()) return `${day} ${month}`;
-        return `${day} ${month} ${year}`;
+        if (moscow.toDateString() === now.toDateString()) return 'Сегодня';
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (moscow.toDateString() === yesterday.toDateString()) return 'Вчера';
+        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+        return `${moscow.getDate()} ${months[moscow.getMonth()]}`;
     } catch(e) { return null; }
 }
 
@@ -3698,6 +3767,7 @@ function setupScrollPagination(){/* VirtualList handles it */}
 //  РЕНДЕР СООБЩЕНИЯ
 // ══════════════════════════════════════════════════════════
 function buildMessageRow(msg, animate = true) {
+    if (_deletedMsgIds.has(String(msg.id))) return null;
     const isMe = msg.sender_id === currentUser.id;
     const type = msg.type || msg.type_msg || 'text';
     const row  = document.createElement('div');
@@ -3753,25 +3823,20 @@ function buildMessageRow(msg, animate = true) {
         const _dur      = (!_isMissed && msg.content && !isNaN(+msg.content)) ? +msg.content : 0;
         const _durStr   = _dur > 0 ? fmtSec(_dur) : '';
 
-        // FIX 3: muted, readable colors instead of bright glow
-        const _clr  = _isMissed ? '#f87171' : 'rgba(255,255,255,0.75)';
-        const _bg   = _isMissed ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.05)';
-        const _brd  = _isMissed ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.08)';
-        const _ibg  = _isMissed ? 'rgba(239,68,68,0.10)' : 'rgba(255,255,255,0.08)';
-        const _iclr = _isMissed ? '#f87171' : 'rgba(255,255,255,0.55)';
+        // цвет по типу
+        const _clr  = _isMissed ? '#ff453a' : '#30d158';
+        const _bg   = _isMissed ? 'rgba(255,69,58,0.10)' : 'rgba(48,209,88,0.08)';
+        const _brd  = _isMissed ? 'rgba(255,69,58,0.20)' : 'rgba(48,209,88,0.18)';
+        const _ibg  = _isMissed ? 'rgba(255,69,58,0.14)' : 'rgba(48,209,88,0.14)';
 
-        // FIX 4: label with time and duration — "Видеозвонок · 21:43 · 15 сек"
-        const _baseLabel = _isMissed
+        const _label = _isMissed
             ? (_isMine ? 'Нет ответа' : 'Пропущенный')
-            : (_isVideo ? 'Входящий видеозвонок' : 'Входящий звонок');
-        const _timeStr = displayTime ? ` · ${displayTime}` : '';
-        const _durLabel = _durStr ? ` · ${_durStr}` : '';
-        const _label = _baseLabel + _timeStr + _durLabel;
+            : (_isVideo ? 'Видеозвонок' : 'Звонок');
 
         const _ico = _isMissed
             ? `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6A.83.83 0 0121.83 18v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11z" stroke="${_iclr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                 <line x1="2" y1="2" x2="22" y2="22" stroke="${_iclr}" stroke-width="2.2" stroke-linecap="round"/>
+                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6A.83.83 0 0121.83 18v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11z" stroke="${_clr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                 <line x1="2" y1="2" x2="22" y2="22" stroke="${_clr}" stroke-width="2.2" stroke-linecap="round"/>
                </svg>`
             : _isVideo
             ? `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
@@ -3784,10 +3849,10 @@ function buildMessageRow(msg, animate = true) {
         const _callbackBtn = (_isMissed && !_isMine)
             ? `<button onclick="startCall('${_isVideo ? 'video' : 'audio'}')" style="
                 margin-top:10px;width:100%;padding:9px 0;
-                background:rgba(255,255,255,0.07);
-                border:1px solid rgba(255,255,255,0.10);
+                background:rgba(48,209,88,0.12);
+                border:1px solid rgba(48,209,88,0.25);
                 border-radius:14px;
-                color:rgba(255,255,255,0.7);font-size:13px;font-weight:600;
+                color:#30d158;font-size:13px;font-weight:700;
                 cursor:pointer;font-family:inherit;
                 display:flex;align-items:center;justify-content:center;gap:6px;
                 -webkit-tap-highlight-color:transparent">
@@ -3807,8 +3872,14 @@ function buildMessageRow(msg, animate = true) {
           <div style="display:flex;align-items:center;gap:11px">
             <div style="width:38px;height:38px;border-radius:50%;background:${_ibg};flex-shrink:0;display:flex;align-items:center;justify-content:center">${_ico}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600;color:${_clr};line-height:1.3">${_label}</div>
-              ${_isMissed && !_isMine ? '<div style="margin-top:2px;font-size:11px;color:rgba(255,255,255,0.35)">Нажмите чтобы перезвонить</div>' : ''}
+              <div style="font-size:14px;font-weight:700;color:${_clr};line-height:1.2">${_label}</div>
+              ${_durStr
+                ? `<div style="margin-top:3px;font-size:12px;color:rgba(255,255,255,0.38);display:flex;align-items:center;gap:4px">
+                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="2"/><path d="M12 7v5l3 2" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round"/></svg>
+                     ${_durStr}
+                   </div>`
+                : `<div style="margin-top:3px;font-size:12px;color:rgba(255,255,255,0.35)">${_isMissed ? 'Не отвечено' : ''}</div>`
+              }
             </div>
           </div>
           ${_callbackBtn}
@@ -3852,7 +3923,7 @@ function buildMessageRow(msg, animate = true) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:0.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5 5-5-5M12 3v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>`;
     } else if (type === 'audio') {
-        contentHtml = renderAudioPlayer(msg.file_url);
+        contentHtml = renderAudioPlayer(msg.file_url, displayTime, isMe, msg.is_read);
     } else {
         const text = msg.content || msg.text || '';
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -3860,8 +3931,11 @@ function buildMessageRow(msg, animate = true) {
         const linked = safe.replace(/(https?:\/\/[^\s<]+)/g,
             `<a href="$1" target="_blank" rel="noopener noreferrer"
                 style="color:${linkedColor};text-decoration:none;border-bottom:1px solid ${linkedColor}40;word-break:break-all;font-weight:500">$1</a>`);
-        const _inlineMeta = `<span class="msg-meta-inline">${displayTime}${isMe ? '&nbsp;<span class="status-icon" style="color:' + (msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)') + ';">' + (msg.is_read ? ICONS.checkDouble : ICONS.check) + '</span>' : ''}</span>`;
-        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}${_inlineMeta}</div>`;
+        const _statusIcon = isMe
+            ? `<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.6)'};display:inline-flex;align-items:center;vertical-align:middle">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>`
+            : '';
+        const _timeMeta = `<div style="display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:3px;font-size:10.5px;color:rgba(255,255,255,0.5);line-height:1;float:right;clear:both">${displayTime}&nbsp;${_statusIcon}</div>`;
+        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}</div>${_timeMeta}<div style="clear:both"></div>`;
     }
 
     // Аватар — кэшированный, для групп берём по sender_id
@@ -4356,7 +4430,7 @@ function showMsgContextMenu(row, msg) {
     sh.appendChild(actWrap);
     ov.appendChild(sh);
     document.body.appendChild(ov);
-    setTimeout(() => { sh.style.transform = 'translateY(0)'; }, 16);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
 function openImgZoom(src) {
@@ -4626,7 +4700,7 @@ function _confirmDeleteForAll(msgId) {
 
     ov.appendChild(sh);
     document.body.appendChild(ov);
-    setTimeout(() => { sh.style.transform = 'translateY(0)'; }, 16);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
 // Совместимость со старым кодом
@@ -4635,21 +4709,94 @@ function confirmDeleteMessage(msgId) { _confirmDeleteForAll(msgId); }
 // ══════════════════════════════════════════════════════════
 //  АУДИО ПЛЕЕР — с волновой формой
 // ══════════════════════════════════════════════════════════
-function renderAudioPlayer(src) {
+// Waveform height cache — keyed by audio src URL, persists across re-renders
+const _wvHeightCache = new Map();
+
+function renderAudioPlayer(src, displayTime, isMe, isRead) {
     const uid = `au_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+
+    // Time + status shown at bottom right (always, for all audio messages)
+    const readColor  = isRead ? '#93c5fd' : 'rgba(255,255,255,0.6)';
+    const mountIcon  = isMe
+        ? `<span class="status-icon" style="color:${readColor};display:inline-flex;align-items:center;vertical-align:middle">
+               ${isRead ? ICONS.checkDouble : ICONS.check}
+           </span>`
+        : '';
+    const timeLine = displayTime
+        ? `<div style="display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:4px;font-size:10.5px;color:rgba(255,255,255,0.55);line-height:1">
+               ${displayTime}${mountIcon}
+           </div>`
+        : '';
+
+    // Use cached waveform bars if available (avoids re-fetch on re-render)
+    const cachedBars = _wvHeightCache.get(src);
+    const initialBars = cachedBars
+        ? cachedBars.map(h =>
+            `<div style="width:2px;background:rgba(255,255,255,0.3);border-radius:1px;height:${h}px;transition:background 0.1s"></div>`
+          ).join('')
+        : Array(30).fill(0).map(() =>
+            `<div style="width:2px;background:rgba(255,255,255,0.25);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*18))}px;transition:background 0.1s"></div>`
+          ).join('');
+
     return `
-    <div class="audio-player" data-src="${src}">
+    <div class="audio-player" data-src="${src}" style="min-width:200px;max-width:260px">
         <button class="audio-play-btn" onclick="toggleAudio('${uid}')">
             <svg id="play-icon-${uid}" width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
-        <div class="audio-progress-wrap">
-            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:24px;flex:1;cursor:pointer" id="wv_${uid}_wrap">
-                ${Array(30).fill(0).map(() => `<div style="width:2px;background:rgba(255,255,255,0.3);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*20))}px;transition:background 0.1s"></div>`).join('')}
+        <div class="audio-progress-wrap" style="flex:1;min-width:0;display:flex;flex-direction:column;gap:0">
+            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:26px;flex:1;cursor:pointer" onclick="seekAudio(event,'${uid}')">
+                ${initialBars}
             </div>
-            <div class="audio-dur" id="dur_${uid}">0:00</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
+                <div class="audio-dur" id="dur_${uid}" style="font-size:11px;color:rgba(255,255,255,0.55)">0:00</div>
+                ${timeLine}
+            </div>
         </div>
-        <audio id="${uid}" src="${src}" ontimeupdate="updateAudio('${uid}')" onended="onAudioEnd('${uid}')" onloadedmetadata="setAudioDur('${uid}');drawWaveform('${uid}')"></audio>
+        <audio id="${uid}" src="${src}"
+            ontimeupdate="updateAudio('${uid}')"
+            onended="onAudioEnd('${uid}')"
+            onloadedmetadata="setAudioDur('${uid}');_lazyDrawWaveform('${uid}','${src}')"></audio>
     </div>`;
+}
+
+
+async function _lazyDrawWaveform(uid, src) {
+    // Check cache first — no re-fetch needed
+    if (_wvHeightCache.has(src)) {
+        _applyWvHeights(uid, _wvHeightCache.get(src));
+        setAudioDur(uid);
+        return;
+    }
+    setAudioDur(uid);
+    try {
+        const resp    = await fetch(src, { cache: 'force-cache' });
+        if (!resp.ok) return;
+        const buf     = await resp.arrayBuffer();
+        const actx    = new (window.AudioContext || window.webkitAudioContext)();
+        const decoded = await actx.decodeAudioData(buf);
+        actx.close();
+        const data  = decoded.getChannelData(0);
+        const N     = 30;
+        const step  = Math.floor(data.length / N);
+        const hs    = [];
+        for (let i = 0; i < N; i++) {
+            let mx = 0;
+            for (let j = 0; j < step; j++) { const v = Math.abs(data[i*step+j]||0); if(v>mx) mx=v; }
+            hs.push(Math.max(3, Math.round(mx * 26)));
+        }
+        _wvHeightCache.set(src, hs);
+        _applyWvHeights(uid, hs);
+    } catch(e) {}
+}
+
+function _applyWvHeights(uid, hs) {
+    const wv = document.getElementById('wv_' + uid);
+    if (!wv) return;
+    wv.querySelectorAll('div').forEach((bar, i) => {
+        const h = hs[i] || 3;
+        bar.style.height     = h + 'px';
+        bar.style.background = 'rgba(255,255,255,' + (0.25 + (h/26)*0.5) + ')';
+    });
 }
 
 // Рисует реальную волну из audio file
@@ -4684,9 +4831,6 @@ function toggleAudio(uid) {
     const audio = document.getElementById(uid);
     const btn   = audio?.closest('.audio-player')?.querySelector('.audio-play-btn');
     if (!audio || !btn) return;
-    // Setup drag on first interaction (lazy — DOM guaranteed to exist)
-    const wv = document.getElementById('wv_' + uid);
-    if (wv && !wv._dragSetup) { wv._dragSetup = true; _setupAudioDrag(wv, uid); }
     if (audio.paused) {
         document.querySelectorAll('audio').forEach(a => {
             if (a !== audio) { a.pause(); const b = a.closest('.audio-player')?.querySelector('.audio-play-btn'); if(b) b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>'; }
@@ -4736,58 +4880,10 @@ function onAudioEnd(uid) {
 
 function seekAudio(e, uid) {
     const audio = document.getElementById(uid);
-    if (!audio || !audio.duration) return;
+    if (!audio?.duration) return;
     const bar  = e.currentTarget;
     const rect = bar.getBoundingClientRect();
-    // Clamp to [0, 1] to prevent out-of-bounds
-    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.currentTime = ratio * audio.duration;
-    updateAudio(uid);
-}
-
-function _setupAudioDrag(wvEl, uid) {
-    // Full drag support: touchstart/move/end + mousedown/move/up
-    let dragging = false;
-
-    function _seek(clientX) {
-        const audio = document.getElementById(uid);
-        if (!audio || !audio.duration) return;
-        const rect  = wvEl.getBoundingClientRect();
-        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-        audio.currentTime = ratio * audio.duration;
-        updateAudio(uid);
-    }
-
-    // Touch
-    wvEl.addEventListener('touchstart', e => {
-        dragging = true;
-        _seek(e.touches[0].clientX);
-        e.preventDefault();
-    }, { passive: false });
-
-    wvEl.addEventListener('touchmove', e => {
-        if (!dragging) return;
-        _seek(e.touches[0].clientX);
-        e.preventDefault();
-    }, { passive: false });
-
-    wvEl.addEventListener('touchend', () => { dragging = false; }, { passive: true });
-
-    // Mouse
-    wvEl.addEventListener('mousedown', e => {
-        dragging = true;
-        _seek(e.clientX);
-    });
-
-    document.addEventListener('mousemove', e => {
-        if (!dragging) return;
-        _seek(e.clientX);
-    });
-
-    document.addEventListener('mouseup', () => { dragging = false; });
-
-    // Remove click handler (now handled by mousedown/touchstart)
-    wvEl.onclick = null;
+    audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
 }
 
 function fmtSec(s) {
@@ -6091,9 +6187,9 @@ function createBottomSheet(htmlContent, opts = {}) {
     });
 
     // Анимация открытия
-    setTimeout(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
         sh.style.transform = 'translateY(0)';
-    });
+    }));
 
     return ov;
 }
@@ -7616,10 +7712,10 @@ async function _showMomentsBar() {
     if (!bar) return;
 
     bar.style.display = 'block';
-    setTimeout(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
         bar.style.maxHeight = '110px';
         bar.style.opacity   = '1';
-    });
+    }));
 
     // Skeleton пока данные не загружены
     if (!momentsCache && scroll) {
@@ -7961,9 +8057,9 @@ function _confirmDialog(title, message, confirmText, cancelText) {
         _pr.style.pointerEvents = 'all';
         _pr.appendChild(ov);
 
-        setTimeout(() => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
             sh.style.transform = 'translateY(0)';
-        });
+        }));
 
         const close = (result) => {
             sh.style.transform = 'translateY(100%)';
@@ -10128,9 +10224,9 @@ function _mpUpdateMiniPlayer() {
     // Показываем
     if (mmp.style.display === 'none') {
         mmp.style.display = '';
-        setTimeout(() => {
+        requestAnimationFrame(() => requestAnimationFrame(() => {
             mmp.style.transform = 'translateY(0)';
-        });
+        }));
     }
 
     // Обложка
@@ -10234,10 +10330,10 @@ function openMusicPlayer() {
     sec.style.transform = 'translateY(100%)';
     sec.style.display   = '';
     sec.style.transition = 'none';
-    setTimeout(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
         sec.style.transition = 'transform .35s cubic-bezier(.32,.72,0,1)';
         sec.style.transform  = 'translateY(0)';
-    });
+    }));
     musicTabOpened();
 }
 function closeMusicPlayer() {
@@ -10684,7 +10780,7 @@ function _runMomentsViewer(list, startIdx) {
         // Кнопка "Переслать" — для чужих моментов
         if (!isMe) {
             const fwdBtn = document.createElement('button');
-            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
+            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
             fwdBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><polyline points="15 17 20 12 15 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12v-2a6 6 0 016-6h10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Переслать';
             fwdBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _forwardMoment(m); };
             btm.appendChild(fwdBtn);
@@ -10695,7 +10791,7 @@ function _runMomentsViewer(list, startIdx) {
             acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
             // Глазок
             const viewBtn = document.createElement('button');
-            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
+            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
             viewBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.3"/></svg><span id="mv-vcnt-' + m.id + '">' + (m.view_count||0) + '</span>';
             viewBtn.onpointerdown = () => { viewBtn.style.transform='scale(0.92)'; viewBtn.style.background='rgba(255,255,255,0.24)'; };
             viewBtn.onpointerup = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
@@ -10703,7 +10799,7 @@ function _runMomentsViewer(list, startIdx) {
             viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id, ov); };
             // Ведро
             const del = document.createElement('button');
-            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
+            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
             del.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
             del.onpointerdown = () => { del.style.transform='scale(0.88)'; del.style.background='rgba(239,68,68,0.38)'; };
             del.onpointerup = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
@@ -11628,7 +11724,7 @@ function openAddParticipant() {
 
     ov.appendChild(sh);
     document.body.appendChild(ov);
-    setTimeout(() => { sh.style.transform = 'translateY(0)'; }, 16);
+    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
     ov.onclick = e => { if (e.target === ov) closeSheet(); };
 }
 
