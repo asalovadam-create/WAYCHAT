@@ -4686,7 +4686,7 @@ function confirmDeleteMessage(msgId) { _confirmDeleteForAll(msgId); }
 //  АУДИО ПЛЕЕР — с волновой формой
 // ══════════════════════════════════════════════════════════
 // Waveform height cache — no re-fetch on chat re-open
-const _wvCache = typeof _wvCache !== 'undefined' ? _wvCache : new Map();
+const _wvCache = new Map(); // waveform height cache, keyed by audio src URL
 
 function renderAudioPlayer(src, displayTime, isMe, isRead) {
     const uid = `au_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
