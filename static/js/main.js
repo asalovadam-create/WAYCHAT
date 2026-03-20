@@ -362,40 +362,37 @@ function _ensureScrollBtn() {
     btn.id = 'wc-scroll-btn';
     btn.setAttribute('aria-label', 'Прокрутить вниз');
     // OPT: CSS transitions only (opacity + translateY) — no JS animation lib
+    // Telegram-style: flat, minimal, no excessive blur/glow
     btn.style.cssText = [
         'position:absolute',
         'right:14px',
-        // FIX 6a: account for safe-area-inset-bottom
-        'bottom:calc(72px + env(safe-area-inset-bottom,0px))',
-        'width:42px',
-        'height:42px',
+        'bottom:calc(76px + env(safe-area-inset-bottom,0px))',
+        'width:40px',
+        'height:40px',
         'border-radius:50%',
-        'background:rgba(29,29,30,0.95)',
-        'backdrop-filter:blur(12px)',
-        '-webkit-backdrop-filter:blur(12px)',
-        'border:0.5px solid rgba(255,255,255,0.14)',
+        'background:#2a2a2b',
+        'border:0.5px solid rgba(255,255,255,0.10)',
         'color:#fff',
         'font-size:0',
         'display:flex',
         'align-items:center',
         'justify-content:center',
-        'box-shadow:0 4px 18px rgba(0,0,0,0.45)',
+        'box-shadow:0 2px 8px rgba(0,0,0,0.35)',
         'z-index:500',
         'cursor:pointer',
         'opacity:0',
         'pointer-events:none',
-        // OPT: CSS transition — GPU composited, no layout
-        'transition:opacity .2s ease, transform .2s cubic-bezier(.34,1.56,.64,1)',
-        'transform:translateY(10px)',
+        'transition:opacity .18s ease, transform .18s ease',
+        'transform:translateY(8px)',
         '-webkit-tap-highlight-color:transparent',
     ].join(';');
     btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none">' +
         '<path d="M19 9l-7 7-7-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>' +
         '</svg>' +
-        '<span id="wc-scroll-badge" style="display:none;position:absolute;top:-5px;right:-5px;' +
-        'min-width:18px;height:18px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;' +
+        '<span id="wc-scroll-badge" style="display:none;position:absolute;top:-4px;right:-4px;' +
+        'min-width:17px;height:17px;background:var(--accent);color:#000;font-size:9px;font-weight:800;' +
         'border-radius:9px;padding:0 4px;align-items:center;justify-content:center;' +
-        'border:1.5px solid rgba(29,29,30,0.9)"></span>';
+        'border:1.5px solid #2a2a2b"></span>';
 
     chatWin.style.position = 'relative';
     chatWin.appendChild(btn);
@@ -699,9 +696,9 @@ const rtcConfig = {
 };
 
 const THEMES = {
-    emerald: { accent: '#10b981', glow: '0 0 20px rgba(16,185,129,0.4)', name: 'Изумруд' },
-    blue:    { accent: '#3b82f6', glow: '0 0 20px rgba(59,130,246,0.4)', name: 'Синий' },
-    purple:  { accent: '#8b5cf6', glow: '0 0 20px rgba(139,92,246,0.4)', name: 'Фиолет' },
+    emerald: { accent: '#10b981', glow: '0 2px 8px rgba(16,185,129,0.2)', name: 'Изумруд' },
+    blue:    { accent: '#3b82f6', glow: '0 2px 8px rgba(59,130,246,0.2)', name: 'Синий' },
+    purple:  { accent: '#8b5cf6', glow: '0 2px 8px rgba(139,92,246,0.2)', name: 'Фиолет' },
     rose:    { accent: '#f43f5e', glow: '0 0 20px rgba(244,63,94,0.4)',  name: 'Розовый' },
     amber:   { accent: '#f59e0b', glow: '0 0 20px rgba(245,158,11,0.4)', name: 'Янтарь' },
 };
@@ -1044,177 +1041,49 @@ function _stopRingtone() {
 // ══ END RINGTONE ═══════════════════════════════════════════════════
 
 function initSocket() {
-    // ╔══════════════════════════════════════════════════════╗
-    // ║   SOCKET LAYER v2 — Production-grade realtime       ║
-    // ║   • Guaranteed delivery queue                        ║
-    // ║   • Heartbeat / liveness check                       ║
-    // ║   • State sync on reconnect                          ║
-    // ║   • Exponential backoff                               ║
-    // ╚══════════════════════════════════════════════════════╝
-
     socket = io({
         path:                  '/socket.io',
         transports:            ['websocket', 'polling'],
-        upgrade:               true,
-        rememberUpgrade:       true,
         reconnection:          true,
-        reconnectionAttempts:  Infinity,
-        reconnectionDelay:     800,
-        reconnectionDelayMax:  8000,
-        randomizationFactor:   0.4,
-        timeout:               12000,
+        reconnectionAttempts:  Infinity,   // OPT Task 5e: never give up
+        reconnectionDelay:     1000,
+        reconnectionDelayMax:  10000,
+        randomizationFactor:   0.5,
+        timeout:               15000,      // OPT: faster failure detection
         forceNew:              false,
         withCredentials:       true,
-        ackTimeout:            6000,
+        ackTimeout:            5000,       // OPT: 5s ACK timeout
     });
 
-    // ── Emit Queue — гарантированная доставка событий ─────
-    // Все emit-ы буферизуются когда сокет оффлайн,
-    // и отправляются в том же порядке при реконнекте.
-    const _EQ = {
-        queue:    [],           // [{event, data, ts, retries}]
-        MAX_SIZE: 100,
-        MAX_AGE:  5 * 60000,   // 5 min — старые события не нужны
-
-        push(event, data) {
-            // Не буферизуем realtime-события без смысла повторять
-            const SKIP = ['typing','stop_typing','enter_chat','leave_chat','mark_read'];
-            if (SKIP.includes(event)) return;
-            if (this.queue.length >= this.MAX_SIZE) this.queue.shift();
-            this.queue.push({ event, data, ts: Date.now(), retries: 0 });
-        },
-
-        flush() {
-            const now = Date.now();
-            const fresh = this.queue.filter(e => now - e.ts < this.MAX_AGE);
-            this.queue = [];
-            fresh.forEach(e => {
-                try {
-                    socket.emit(e.event, e.data);
-                } catch(err) {
-                    console.warn('[EQ] flush error', err);
-                }
-            });
-            if (fresh.length) console.log(`[EQ] flushed ${fresh.length} queued events`);
-        },
-
-        clear() { this.queue = []; },
-    };
-
-    // Патчим socket.emit — добавляем буферизацию при оффлайн
-    const _origEmit = socket.emit.bind(socket);
-    socket.emit = function(event, ...args) {
-        if (!wsConnected && event !== 'connect' && event !== 'disconnect') {
-            // Не буферизуем heartbeat и служебные
-            const CRITICAL = ['send_message', 'call_user', 'answer_call',
-                              'ice_candidate', 'call_declined', 'end_call',
-                              'react_message', 'delete_message'];
-            if (CRITICAL.includes(event)) {
-                _EQ.push(event, args[0]);
-                console.log(`[EQ] queued ${event} (offline)`);
-                return socket; // не падаем
-            }
-        }
-        return _origEmit(event, ...args);
-    };
-
-    // ── Heartbeat — liveness check каждые 25 сек ──────────
-    let _hbTimer     = null;
-    let _hbMissed    = 0;
-    const HB_INTERVAL = 25000;
-    const HB_MAX_MISS = 3;
-
-    function _startHeartbeat() {
-        clearInterval(_hbTimer);
-        _hbMissed = 0;
-        _hbTimer = setInterval(() => {
-            if (!wsConnected) return;
-            _hbMissed++;
-            if (_hbMissed >= HB_MAX_MISS) {
-                console.warn(`[HB] missed ${_hbMissed} pongs — forcing reconnect`);
-                _hbMissed = 0;
-                socket.disconnect();
-                setTimeout(() => socket.connect(), 500);
-                return;
-            }
-            _origEmit('heartbeat', { uid: currentUser?.id, ts: Date.now() }, () => {
-                _hbMissed = Math.max(0, _hbMissed - 1);
-            });
-        }, HB_INTERVAL);
-    }
-
-    function _stopHeartbeat() {
-        clearInterval(_hbTimer);
-        _hbTimer = null;
-    }
-
-    // ── Connect ───────────────────────────────────────────
     socket.on('connect', () => {
-        wsConnected  = true;
-        wsReconnected = true;
-        updateConnStatus(true);
-        _hbMissed = 0;
-        _startHeartbeat();
-
-        // Re-join user room
-        _origEmit('join', { user_id: currentUser.id });
-
-        // Re-join active chat
-        if (currentChatId) {
-            _origEmit('enter_chat', { chat_id: currentChatId });
-        }
-
-        // Flush queued events
-        _EQ.flush();
-        _flushOfflineQueue();
-
-        // Sync state
-        if (Date.now() - _lastChatsLoad > 4000) loadChats();
-        setTimeout(() => { if (Date.now() - momentsLastLoad > 30000) loadMoments(); }, 1200);
-    });
-
-    // ── Disconnect ────────────────────────────────────────
-    socket.on('disconnect', (reason) => {
-        wsConnected = false;
-        updateConnStatus(false);
-        _stopHeartbeat();
-        CallEngine.onSocketDisconnect(); // notify call engine
-        if (reason !== 'io client disconnect' && reason !== 'io server disconnect') {
-            showToast('⚡ Переподключение...', 'warning', 3000);
-        }
-        console.log('[Socket] disconnect:', reason);
-    });
-
-    // ── Connect Error ─────────────────────────────────────
-    socket.on('connect_error', (err) => {
-        wsConnected = false;
-        updateConnStatus(false);
-        _stopHeartbeat();
-        console.warn('[Socket] connect_error:', err.message);
-    });
-
-    // ── Reconnect ─────────────────────────────────────────
-    socket.on('reconnect', (attempt) => {
         wsConnected = true;
         updateConnStatus(true);
-        _startHeartbeat();
-        showToast('✅ Соединение восстановлено', 'success', 2500);
-        console.log(`[Socket] reconnected after ${attempt} attempts`);
-
-        _origEmit('join', { user_id: currentUser.id });
-        if (currentChatId) {
-            _origEmit('enter_chat', { chat_id: currentChatId });
-            const lastId = _getLastMsgId(currentChatId);
-            if (lastId) loadMessagesSince(currentChatId, lastId);
-        }
-
-        _EQ.flush();
-        _flushOfflineQueue();
-        loadChats();
+        socket.emit('join', { user_id: currentUser.id });
+        // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
+        if (Date.now() - _lastChatsLoad > 5000) loadChats();
+    // Предзагружаем моменты сразу при старте
+    setTimeout(() => loadMoments(), 800);
+        if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
+        wsReconnected = true;
     });
 
-    socket.on('reconnect_attempt', (n) => {
-        console.log(`[Socket] reconnect attempt #${n}`);
+    socket.on('disconnect', () => { wsConnected = false; updateConnStatus(false); });
+    socket.on('connect_error', () => { wsConnected = false; updateConnStatus(false); });
+    socket.on('reconnect', () => {
+        wsConnected = true;
+        updateConnStatus(true);
+        // FIX Task 5e: re-join rooms and load missed messages on reconnect
+        socket.emit('join', { user_id: currentUser.id });
+        if (currentChatId) {
+            socket.emit('enter_chat', { chat_id: currentChatId });
+            // OPT: load messages that arrived while disconnected
+            var lastId = _getLastMsgId(currentChatId);
+            if (lastId) loadMessagesSince(currentChatId, lastId);
+        }
+        // Flush offline message queue (Task 5f)
+        _flushOfflineQueue();
+        loadChats();
+    loadMoments(); // INIT: загружаем моменты при старте
     });
 
     socket.on('new_message', onNewMessage);
@@ -1306,55 +1175,17 @@ function initSocket() {
         showToast('Вас исключили из группы', 'warning');
     });
 
-    socket.on('incoming_call', (data) => {
-        // Full state machine via CallEngine
-        CallEngine.incoming(data);
-    });
-    socket.on('call_answered', (data) => {
-        CallEngine.onAnswered(data);
-    });
-    socket.on('ice_candidate', (data) => {
-        if (data.candidate) CallEngine.queueIce(data.candidate);
-    });
-    socket.on('call_ended', (data) => {
-        _stopRingtone();
-        if (!CallEngine.isIdle()) {
-            CallEngine.end(false, data?.duration || 0);
-        } else {
-            endCall(false);
-        }
-    });
-
-    // ── Server-side auto-expire events ────────────────────
-    socket.on('call_missed', () => {
-        // Server detected missed call (ring timeout)
-        showToast('📵 Пропущенный звонок', 'warning', 4000);
-        vibrate([100, 50, 100]);
-        _debouncedLoadChats();
-    });
-
-    socket.on('call_no_answer', () => {
-        // Our outgoing call — no answer (server timeout)
-        if (!CallEngine.isIdle()) {
-            showToast('Абонент не ответил', 'warning', 3000);
-            CallEngine.end(false, 0);
-        }
-    });
-
+    socket.on('incoming_call',  onIncomingCall);
+    socket.on('call_answered',  onCallAnswered);
+    socket.on('ice_candidate',  onIceCandidate);
+    socket.on('call_ended',     () => { _stopRingtone(); endCall(false); });
     // FIX Task 4d: recipient declined call from push notification
     socket.on('call_declined', (data) => {
         _stopRingtone();
-        const reason = data.reason || 'declined';
-        const msgs = { declined: '📵 Звонок отклонён', busy: '📵 Абонент занят', timeout: '📵 Нет ответа' };
         const lbl = document.getElementById('call-status-label');
-        if (lbl) lbl.textContent = msgs[reason] || msgs.declined;
-        showToast(msgs[reason] || msgs.declined, 'info', 2500);
-        // Clean up via CallEngine state machine
-        if (!CallEngine.isIdle()) {
-            CallEngine.end(false, 0);
-        } else {
-            setTimeout(() => endCall(false), 1800);
-        }
+        if (lbl) lbl.textContent = 'Звонок отклонён';
+        showToast('Звонок отклонён', 'info');
+        setTimeout(() => endCall(false), 1800);
     });
 
     // ── Групповые звонки ──
@@ -1617,11 +1448,6 @@ function showToast(text, type = 'info', duration = 2500) {
 // ══════════════════════════════════════════════════════════
 function updateConnStatus(online) {
     wsConnected = online;
-    // Show queued events count when offline
-    if (!online && _EQ && _EQ.queue && _EQ.queue.length > 0) {
-        const cnt = _EQ.queue.length;
-        console.log(`[EQ] ${cnt} events pending while offline`);
-    }
     const el = document.getElementById('conn-status');
     const wsLabel = document.getElementById('ws-status-label');
     if (!el) return;
@@ -1643,44 +1469,38 @@ function updateConnStatus(online) {
 //  МОСКОВСКОЕ ВРЕМЯ
 // ══════════════════════════════════════════════════════════
 function getMoscowTime(dateStr) {
+    // Inline message time — ALWAYS HH:MM only (no relative dates)
     if (!dateStr) return '';
     try {
         const d = new Date(dateStr);
         if (isNaN(d.getTime())) return dateStr;
+        const moscowOffset = 3 * 60;
+        const localOffset  = d.getTimezoneOffset();
+        const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
+        return moscow.getHours().toString().padStart(2,'0') + ':' +
+               moscow.getMinutes().toString().padStart(2,'0');
+    } catch(e) { return dateStr; }
+}
 
+// Chat list preview time — compact (HH:MM today, "8 фев" older)
+function getChatPreviewTime(dateStr) {
+    if (!dateStr) return '';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return dateStr;
         const moscowOffset = 3 * 60;
         const localOffset  = d.getTimezoneOffset();
         const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
         const nowMsk = new Date(Date.now() + (moscowOffset + (new Date().getTimezoneOffset())) * 60000);
-
-        const mDate = moscow.toDateString();
-        const nDate = nowMsk.toDateString();
-
-        // Сегодня — только время
-        if (mDate === nDate) {
-            return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
+        if (moscow.toDateString() === nowMsk.toDateString()) {
+            return moscow.getHours().toString().padStart(2,'0') + ':' +
+                   moscow.getMinutes().toString().padStart(2,'0');
         }
-
-        // Вчера
-        const yesterday = new Date(nowMsk);
-        yesterday.setDate(yesterday.getDate() - 1);
-        if (mDate === yesterday.toDateString()) return 'Вчера';
-
-        // Эта неделя (до 7 дней) — название дня
-        const diffDays = Math.floor((nowMsk - moscow) / 86400000);
-        if (diffDays < 7) {
-            const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-            return days[moscow.getDay()];
-        }
-
-        // Этот год — день + месяц по-русски (без года)
-        const months = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
+        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
         if (moscow.getFullYear() === nowMsk.getFullYear()) {
-            return moscow.getDate() + ' ' + months[moscow.getMonth()];
+            return `${moscow.getDate()} ${months[moscow.getMonth()]}`;
         }
-
-        // Старше года — день.месяц.год
-        return moscow.getDate() + ' ' + months[moscow.getMonth()] + ' ' + moscow.getFullYear();
+        return `${moscow.getDate()}.${(moscow.getMonth()+1).toString().padStart(2,'0')}.${moscow.getFullYear()}`;
     } catch(e) { return dateStr; }
 }
 
@@ -1692,7 +1512,7 @@ function renderApp() {
 <style>
 :root {
     --accent: #10b981;
-    --glow: 0 0 20px rgba(16,185,129,0.4);
+    --glow: 0 2px 8px rgba(16,185,129,0.2);
     --accent-10: rgba(16,185,129,0.1);
     --accent-30: rgba(16,185,129,0.3);
     --bg: #1d1d1e;
@@ -1703,7 +1523,7 @@ function renderApp() {
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
     --msg-in: #2a2a2b;
-    --msg-out: var(--accent);
+    --msg-out: #0e9e6e;
     --divider: rgba(255,255,255,0.05);
     --chat-bg: #1d1d1e;
     --hdr: rgba(29,29,30,0.97);
@@ -1725,8 +1545,8 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     background: var(--bg); color: var(--text);
 }
-.glass { background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px); }
-.glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
+.glass { background:var(--hdr);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px); }
+.glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
 /* FAB — максимально внизу, без анимации, без свечения */
@@ -1757,7 +1577,7 @@ body {
     transition:opacity .18s ease,transform .18s cubic-bezier(.34,1.56,.64,1)
 }
 .fab-menu.open{pointer-events:all;opacity:1;transform:translateY(0) scale(1)}
-.fab-mi{display:flex;align-items:center;gap:14px;background:rgba(40,40,42,0.98);border:.5px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 18px;cursor:pointer;box-shadow:0 8px 32px rgba(0,0,0,.6);font-size:15px;font-weight:500;color:rgba(255,255,255,.9);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+.fab-mi{display:flex;align-items:center;gap:14px;background:rgba(40,40,42,0.98);border:.5px solid rgba(255,255,255,.1);border-radius:16px;padding:14px 18px;cursor:pointer;box-shadow:0 8px 32px rgba(0,0,0,.6);font-size:15px;font-weight:500;color:rgba(255,255,255,.9);white-space:nowrap;-webkit-tap-highlight-color:transparent;transition:background .12s;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
 .fab-mi:active{background:rgba(60,60,62,0.98)}
 .fab-mi-ico{width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,.1);display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .fab-bd{position:fixed;inset:0;z-index:899;background:rgba(0,0,0,.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);opacity:0;pointer-events:none;transition:opacity .2s ease}
@@ -1786,7 +1606,7 @@ body {
 .chat-item{display:flex;align-items:center;gap:12px;padding:7px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
-.online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 6px var(--accent)}
+.online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:none}
 
 /* СВАЙП ЖЕСТЫ */
 .chat-swipe-container{position:relative;overflow:hidden;touch-action:pan-y}
@@ -1837,7 +1657,7 @@ body {
 
 .bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
 .msg-row.out .bubble { background:var(--accent);border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 12px rgba(16,185,129,0.25); }
-.msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3); }
+.msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:none; }
 
 .msg-time { font-size:11px;opacity:0.6;display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:4px;white-space:nowrap; }
 .status-icon { display:flex;align-items:center; }
@@ -1853,13 +1673,13 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:6px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+6px),8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
+.input-bar { padding:6px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+6px),8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
 .input-inner:focus-within { border-color:var(--accent-30); }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
-.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
+.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s;box-shadow:none; }
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
@@ -2226,7 +2046,7 @@ body {
                 <!-- ══ МУЗЫКА (modal overlay, открывается из профиля) ══ -->
         <div id="music-section" style="display:none;position:fixed;inset:0;z-index:9200;background:#0a0a0e;overflow-y:auto;-webkit-overflow-scrolling:touch">
             <!-- Header -->
-            <div style="position:sticky;top:0;z-index:10;background:rgba(10,10,14,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:.5px solid rgba(255,255,255,.07);padding:max(env(safe-area-inset-top),44px) 16px 12px">
+            <div style="position:sticky;top:0;z-index:10;background:rgba(10,10,14,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:.5px solid rgba(255,255,255,.07);padding:max(env(safe-area-inset-top),44px) 16px 12px">
                 <div style="display:flex;align-items:center;gap:12px">
                     <button onclick="closeMusicPlayer()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.08);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;-webkit-tap-highlight-color:transparent">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M12 5l-7 7 7 7" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -2410,8 +2230,8 @@ body {
                             ${getAvatarHtml(currentUser, 'w-full h-full')}
                         </div>
                         <div style="position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);display:flex;gap:8px">
-                            <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
-                            <button onclick="setEmojiAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
+                            <button onclick="changeAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.camera}</button>
+                            <button onclick="setEmojiAvatar()" style="width:32px;height:32px;background:rgba(0,0,0,0.65);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.2);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;color:white">${ICONS.smile}</button>
                         </div>
                     </div>
                     <h2 id="settings-name" style="font-size:24px;font-weight:800;letter-spacing:-0.4px;text-shadow:0 2px 12px rgba(0,0,0,0.5);margin:0">${currentUser.name}</h2>
@@ -2640,12 +2460,6 @@ body {
         <div id="call-avatar-box" style="margin-bottom:16px"></div>
         <h2 id="call-name" style="font-size:28px;font-weight:800;letter-spacing:-0.5px;z-index:1;text-shadow:0 2px 20px rgba(0,0,0,0.6)">...</h2>
         <div id="call-status-label" style="color:rgba(255,255,255,0.7);font-size:15px;margin-top:8px;z-index:1;font-weight:500">Вызов...</div>
-        <div id="call-ring-countdown" style="display:none;font-size:13px;font-weight:700;color:rgba(255,255,255,0.45);margin-top:6px;font-variant-numeric:tabular-nums;"></div>
-        <div id="call-state-dots" style="display:flex;gap:6px;justify-content:center;margin-top:10px">
-            <div class="_csd" style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.3);animation:_csdPulse 1.4s ease-in-out infinite;animation-delay:0s"></div>
-            <div class="_csd" style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.3);animation:_csdPulse 1.4s ease-in-out infinite;animation-delay:0.2s"></div>
-            <div class="_csd" style="width:6px;height:6px;border-radius:50%;background:rgba(255,255,255,0.3);animation:_csdPulse 1.4s ease-in-out infinite;animation-delay:0.4s"></div>
-        </div>
         <div id="call-timer" class="call-timer" style="margin-top:10px;display:none;font-size:22px;font-weight:700;color:white;font-variant-numeric:tabular-nums">0:00</div>
         <div id="call-quality-label" style="display:none;font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px"></div>
     </div>
@@ -2664,7 +2478,7 @@ body {
                 display:flex;align-items:center;gap:8px;
                 padding:10px 22px;
                 background:rgba(255,255,255,0.15);
-                backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+                backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
                 border:1px solid rgba(255,255,255,0.25);
                 border-radius:24px;color:#fff;font-size:14px;font-weight:700;
                 cursor:pointer;font-family:inherit;
@@ -2680,14 +2494,11 @@ body {
 
         <!-- Основные кнопки -->
         <div style="display:flex;gap:14px;align-items:center;justify-content:center;margin-bottom:14px">
-            <button id="decline-btn" onclick="CallEngine.decline();event.stopPropagation()" class="call-btn danger" style="display:none" title="Отклонить">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="white"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" transform="rotate(135 12 12)"/><line x1="4" y1="4" x2="20" y2="20" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
-            </button>
             <button id="accept-btn" onclick="answerIncomingCall();event.stopPropagation()" class="call-btn accept" style="display:none">
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="white"><path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z"/></svg>
             </button>
             <button id="mute-btn" onclick="toggleMute();event.stopPropagation()" class="call-btn neutral" style="color:white" title="Микрофон">${ICONS.mic.replace('rgba(255,255,255,0.5)','white')}</button>
-            <button onclick="CallEngine.end(true);event.stopPropagation()" class="call-btn danger" title="Завершить">${ICONS.phone_off}</button>
+            <button onclick="endCall(true);event.stopPropagation()" class="call-btn danger" title="Завершить">${ICONS.phone_off}</button>
             <button id="video-btn" onclick="toggleVideo();event.stopPropagation()" class="call-btn neutral" style="color:white" title="Камера">${ICONS.video.replace('white','white')}</button>
             <button id="speaker-btn" onclick="toggleSpeaker();event.stopPropagation()" class="call-btn neutral" style="color:white" title="Динамик">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15.54 8.46a5 5 0 010 7.07" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>
@@ -2748,10 +2559,10 @@ function openProfileSheet(){
     sh.style.display='flex';
     inn.style.transition='none';
     inn.style.transform='translateY(100%)';
-    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    setTimeout(()=>{
         inn.style.transition='transform .35s cubic-bezier(.32,.72,0,1)';
         inn.style.transform='translateY(0)';
-    }));
+    }, 16);
     vibrate(8);
     // Свайп вниз для закрытия
     _setupProfileSwipeClose(inn);
@@ -3870,12 +3681,14 @@ function getMessageDate(msg) {
         const localOffset  = d.getTimezoneOffset();
         const moscow = new Date(d.getTime() + (moscowOffset + localOffset) * 60000);
         const now    = new Date(Date.now() + (moscowOffset + (new Date().getTimezoneOffset())) * 60000);
-        if (moscow.toDateString() === now.toDateString()) return 'Сегодня';
-        const yesterday = new Date(now);
-        yesterday.setDate(yesterday.getDate() - 1);
-        if (moscow.toDateString() === yesterday.toDateString()) return 'Вчера';
-        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
-        return `${moscow.getDate()} ${months[moscow.getMonth()]}`;
+        const months = ['января','февраля','марта','апреля','мая','июня',
+                        'июля','августа','сентября','октября','ноября','декабря'];
+        // Same year → "8 февраля", different year → "8 февраля 2024"
+        const day   = moscow.getDate();
+        const month = months[moscow.getMonth()];
+        const year  = moscow.getFullYear();
+        if (year === now.getFullYear()) return `${day} ${month}`;
+        return `${day} ${month} ${year}`;
     } catch(e) { return null; }
 }
 
@@ -3940,20 +3753,25 @@ function buildMessageRow(msg, animate = true) {
         const _dur      = (!_isMissed && msg.content && !isNaN(+msg.content)) ? +msg.content : 0;
         const _durStr   = _dur > 0 ? fmtSec(_dur) : '';
 
-        // цвет по типу
-        const _clr  = _isMissed ? '#ff453a' : '#30d158';
-        const _bg   = _isMissed ? 'rgba(255,69,58,0.10)' : 'rgba(48,209,88,0.08)';
-        const _brd  = _isMissed ? 'rgba(255,69,58,0.20)' : 'rgba(48,209,88,0.18)';
-        const _ibg  = _isMissed ? 'rgba(255,69,58,0.14)' : 'rgba(48,209,88,0.14)';
+        // FIX 3: muted, readable colors instead of bright glow
+        const _clr  = _isMissed ? '#f87171' : 'rgba(255,255,255,0.75)';
+        const _bg   = _isMissed ? 'rgba(239,68,68,0.08)' : 'rgba(255,255,255,0.05)';
+        const _brd  = _isMissed ? 'rgba(239,68,68,0.15)' : 'rgba(255,255,255,0.08)';
+        const _ibg  = _isMissed ? 'rgba(239,68,68,0.10)' : 'rgba(255,255,255,0.08)';
+        const _iclr = _isMissed ? '#f87171' : 'rgba(255,255,255,0.55)';
 
-        const _label = _isMissed
+        // FIX 4: label with time and duration — "Видеозвонок · 21:43 · 15 сек"
+        const _baseLabel = _isMissed
             ? (_isMine ? 'Нет ответа' : 'Пропущенный')
-            : (_isVideo ? 'Видеозвонок' : 'Звонок');
+            : (_isVideo ? 'Входящий видеозвонок' : 'Входящий звонок');
+        const _timeStr = displayTime ? ` · ${displayTime}` : '';
+        const _durLabel = _durStr ? ` · ${_durStr}` : '';
+        const _label = _baseLabel + _timeStr + _durLabel;
 
         const _ico = _isMissed
             ? `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
-                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6A.83.83 0 0121.83 18v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11z" stroke="${_clr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                 <line x1="2" y1="2" x2="22" y2="22" stroke="${_clr}" stroke-width="2.2" stroke-linecap="round"/>
+                 <path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12 12 0 003.53.6A.83.83 0 0121.83 18v3.5a.83.83 0 01-.83.83C9.65 21 3 14.35 3 6.17a.83.83 0 01.83-.84h3.5a.83.83 0 01.83.83 12 12 0 00.6 3.53 2 2 0 01-.45 2.11z" stroke="${_iclr}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                 <line x1="2" y1="2" x2="22" y2="22" stroke="${_iclr}" stroke-width="2.2" stroke-linecap="round"/>
                </svg>`
             : _isVideo
             ? `<svg width="19" height="19" viewBox="0 0 24 24" fill="none">
@@ -3966,10 +3784,10 @@ function buildMessageRow(msg, animate = true) {
         const _callbackBtn = (_isMissed && !_isMine)
             ? `<button onclick="startCall('${_isVideo ? 'video' : 'audio'}')" style="
                 margin-top:10px;width:100%;padding:9px 0;
-                background:rgba(48,209,88,0.12);
-                border:1px solid rgba(48,209,88,0.25);
+                background:rgba(255,255,255,0.07);
+                border:1px solid rgba(255,255,255,0.10);
                 border-radius:14px;
-                color:#30d158;font-size:13px;font-weight:700;
+                color:rgba(255,255,255,0.7);font-size:13px;font-weight:600;
                 cursor:pointer;font-family:inherit;
                 display:flex;align-items:center;justify-content:center;gap:6px;
                 -webkit-tap-highlight-color:transparent">
@@ -3989,14 +3807,8 @@ function buildMessageRow(msg, animate = true) {
           <div style="display:flex;align-items:center;gap:11px">
             <div style="width:38px;height:38px;border-radius:50%;background:${_ibg};flex-shrink:0;display:flex;align-items:center;justify-content:center">${_ico}</div>
             <div style="flex:1;min-width:0">
-              <div style="font-size:14px;font-weight:700;color:${_clr};line-height:1.2">${_label}</div>
-              ${_durStr
-                ? `<div style="margin-top:3px;font-size:12px;color:rgba(255,255,255,0.38);display:flex;align-items:center;gap:4px">
-                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="2"/><path d="M12 7v5l3 2" stroke="rgba(255,255,255,0.3)" stroke-width="2" stroke-linecap="round"/></svg>
-                     ${_durStr}
-                   </div>`
-                : `<div style="margin-top:3px;font-size:12px;color:rgba(255,255,255,0.35)">${_isMissed ? 'Не отвечено' : ''}</div>`
-              }
+              <div style="font-size:13px;font-weight:600;color:${_clr};line-height:1.3">${_label}</div>
+              ${_isMissed && !_isMine ? '<div style="margin-top:2px;font-size:11px;color:rgba(255,255,255,0.35)">Нажмите чтобы перезвонить</div>' : ''}
             </div>
           </div>
           ${_callbackBtn}
@@ -4544,7 +4356,7 @@ function showMsgContextMenu(row, msg) {
     sh.appendChild(actWrap);
     ov.appendChild(sh);
     document.body.appendChild(ov);
-    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
+    setTimeout(() => { sh.style.transform = 'translateY(0)'; }, 16);
 }
 
 function openImgZoom(src) {
@@ -4814,7 +4626,7 @@ function _confirmDeleteForAll(msgId) {
 
     ov.appendChild(sh);
     document.body.appendChild(ov);
-    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
+    setTimeout(() => { sh.style.transform = 'translateY(0)'; }, 16);
 }
 
 // Совместимость со старым кодом
@@ -4831,7 +4643,7 @@ function renderAudioPlayer(src) {
             <svg id="play-icon-${uid}" width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
         <div class="audio-progress-wrap">
-            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:24px;flex:1;cursor:pointer" onclick="seekAudio(event,'${uid}')">
+            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:24px;flex:1;cursor:pointer" id="wv_${uid}_wrap">
                 ${Array(30).fill(0).map(() => `<div style="width:2px;background:rgba(255,255,255,0.3);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*20))}px;transition:background 0.1s"></div>`).join('')}
             </div>
             <div class="audio-dur" id="dur_${uid}">0:00</div>
@@ -4872,6 +4684,9 @@ function toggleAudio(uid) {
     const audio = document.getElementById(uid);
     const btn   = audio?.closest('.audio-player')?.querySelector('.audio-play-btn');
     if (!audio || !btn) return;
+    // Setup drag on first interaction (lazy — DOM guaranteed to exist)
+    const wv = document.getElementById('wv_' + uid);
+    if (wv && !wv._dragSetup) { wv._dragSetup = true; _setupAudioDrag(wv, uid); }
     if (audio.paused) {
         document.querySelectorAll('audio').forEach(a => {
             if (a !== audio) { a.pause(); const b = a.closest('.audio-player')?.querySelector('.audio-play-btn'); if(b) b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>'; }
@@ -4921,10 +4736,58 @@ function onAudioEnd(uid) {
 
 function seekAudio(e, uid) {
     const audio = document.getElementById(uid);
-    if (!audio?.duration) return;
+    if (!audio || !audio.duration) return;
     const bar  = e.currentTarget;
     const rect = bar.getBoundingClientRect();
-    audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+    // Clamp to [0, 1] to prevent out-of-bounds
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = ratio * audio.duration;
+    updateAudio(uid);
+}
+
+function _setupAudioDrag(wvEl, uid) {
+    // Full drag support: touchstart/move/end + mousedown/move/up
+    let dragging = false;
+
+    function _seek(clientX) {
+        const audio = document.getElementById(uid);
+        if (!audio || !audio.duration) return;
+        const rect  = wvEl.getBoundingClientRect();
+        const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        audio.currentTime = ratio * audio.duration;
+        updateAudio(uid);
+    }
+
+    // Touch
+    wvEl.addEventListener('touchstart', e => {
+        dragging = true;
+        _seek(e.touches[0].clientX);
+        e.preventDefault();
+    }, { passive: false });
+
+    wvEl.addEventListener('touchmove', e => {
+        if (!dragging) return;
+        _seek(e.touches[0].clientX);
+        e.preventDefault();
+    }, { passive: false });
+
+    wvEl.addEventListener('touchend', () => { dragging = false; }, { passive: true });
+
+    // Mouse
+    wvEl.addEventListener('mousedown', e => {
+        dragging = true;
+        _seek(e.clientX);
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!dragging) return;
+        _seek(e.clientX);
+    });
+
+    document.addEventListener('mouseup', () => { dragging = false; });
+
+    // Remove click handler (now handled by mousedown/touchstart)
+    wvEl.onclick = null;
 }
 
 function fmtSec(s) {
@@ -5072,17 +4935,9 @@ function sendText() {
             }
         });
     } else {
-        // Offline: store in IndexedDB queue, show ⏳ pending status
+        // Offline: store in IndexedDB queue, show ⏳ status
         _omqAdd({ tempId: tempMsg.id, chat_id: currentChatId, text, ts: Date.now() });
-        // Also push to EQ for socket layer
-        if (typeof _EQ !== 'undefined') _EQ.push('send_message', _msgPayload);
-        // Update message status to pending ⏳
-        const pendingEl = document.querySelector(`[data-msg-id="${tempMsg.id}"] .status-icon`);
-        if (pendingEl) {
-            pendingEl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="rgba(255,255,255,0.4)" stroke-width="2"/><path d="M12 7v5l3 2" stroke="rgba(255,255,255,0.4)" stroke-width="2" stroke-linecap="round"/></svg>';
-            pendingEl.title = 'Отправится при подключении';
-        }
-        showToast('📨 Сохранено — отправится при подключении', 'warning', 3000);
+        showToast('Нет соединения — сообщение отправится когда появится сеть', 'warning', 4000);
     }
     input.value = '';
     input.style.height = 'auto';
@@ -6236,9 +6091,9 @@ function createBottomSheet(htmlContent, opts = {}) {
     });
 
     // Анимация открытия
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    setTimeout(() => {
         sh.style.transform = 'translateY(0)';
-    }));
+    });
 
     return ov;
 }
@@ -7761,10 +7616,10 @@ async function _showMomentsBar() {
     if (!bar) return;
 
     bar.style.display = 'block';
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    setTimeout(() => {
         bar.style.maxHeight = '110px';
         bar.style.opacity   = '1';
-    }));
+    });
 
     // Skeleton пока данные не загружены
     if (!momentsCache && scroll) {
@@ -8106,9 +7961,9 @@ function _confirmDialog(title, message, confirmText, cancelText) {
         _pr.style.pointerEvents = 'all';
         _pr.appendChild(ov);
 
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(() => {
             sh.style.transform = 'translateY(0)';
-        }));
+        });
 
         const close = (result) => {
             sh.style.transform = 'translateY(100%)';
@@ -10273,9 +10128,9 @@ function _mpUpdateMiniPlayer() {
     // Показываем
     if (mmp.style.display === 'none') {
         mmp.style.display = '';
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        setTimeout(() => {
             mmp.style.transform = 'translateY(0)';
-        }));
+        });
     }
 
     // Обложка
@@ -10379,10 +10234,10 @@ function openMusicPlayer() {
     sec.style.transform = 'translateY(100%)';
     sec.style.display   = '';
     sec.style.transition = 'none';
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    setTimeout(() => {
         sec.style.transition = 'transform .35s cubic-bezier(.32,.72,0,1)';
         sec.style.transform  = 'translateY(0)';
-    }));
+    });
     musicTabOpened();
 }
 function closeMusicPlayer() {
@@ -10829,7 +10684,7 @@ function _runMomentsViewer(list, startIdx) {
         // Кнопка "Переслать" — для чужих моментов
         if (!isMe) {
             const fwdBtn = document.createElement('button');
-            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
+            fwdBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);flex-shrink:0';
             fwdBtn.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><polyline points="15 17 20 12 15 7" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 12v-2a6 6 0 016-6h10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> Переслать';
             fwdBtn.onclick = e => { e.stopPropagation(); clearTimeout(autoTimer); _forwardMoment(m); };
             btm.appendChild(fwdBtn);
@@ -10840,7 +10695,7 @@ function _runMomentsViewer(list, startIdx) {
             acts.style.cssText = 'display:flex;gap:10px;align-items:center;flex-shrink:0';
             // Глазок
             const viewBtn = document.createElement('button');
-            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
+            viewBtn.style.cssText = 'display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.14);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,0.22);border-radius:50px;color:#fff;padding:9px 16px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 2px 14px rgba(0,0,0,0.3);transition:background 0.15s,transform 0.1s';
             viewBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2.3"/></svg><span id="mv-vcnt-' + m.id + '">' + (m.view_count||0) + '</span>';
             viewBtn.onpointerdown = () => { viewBtn.style.transform='scale(0.92)'; viewBtn.style.background='rgba(255,255,255,0.24)'; };
             viewBtn.onpointerup = () => { viewBtn.style.transform=''; viewBtn.style.background='rgba(255,255,255,0.14)'; };
@@ -10848,7 +10703,7 @@ function _runMomentsViewer(list, startIdx) {
             viewBtn.onclick = e => { e.stopPropagation(); _showMomentViewers(m.id, ov); };
             // Ведро
             const del = document.createElement('button');
-            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
+            del.style.cssText = 'width:42px;height:42px;display:flex;align-items:center;justify-content:center;background:rgba(239,68,68,0.18);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid rgba(239,68,68,0.32);border-radius:50%;cursor:pointer;box-shadow:0 2px 14px rgba(239,68,68,0.2);transition:background 0.15s,transform 0.1s;flex-shrink:0';
             del.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><polyline points="3 6 5 6 21 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v6M14 11v6" stroke="#ef4444" stroke-width="2" stroke-linecap="round"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" stroke="#ef4444" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
             del.onpointerdown = () => { del.style.transform='scale(0.88)'; del.style.background='rgba(239,68,68,0.38)'; };
             del.onpointerup = () => { del.style.transform=''; del.style.background='rgba(239,68,68,0.18)'; };
@@ -11195,18 +11050,11 @@ function _updateGCGrid() {
 async function acquireWakeLock() { try { if ('wakeLock' in navigator) wakelock = await navigator.wakeLock.request('screen'); } catch(e) {} }
 
 async function answerIncomingCall() {
-    // Delegate to CallEngine — handles state, ICE queue, stream setup
-    if (incomingCallData) currentPartnerId = incomingCallData.from;
-    vibrate(30);
-    CallEngine.accept();
-}
-
-async function answerIncomingCall_legacy() {
     const data = incomingCallData;
     if (!data) return;
     document.getElementById('accept-btn').style.display = 'none';
     document.getElementById('call-status-label').textContent = 'Подключение...';
-    _stopRingtone();
+    _stopRingtone(); // FIX Task 4c: stop ringtone when answered
     currentPartnerId = data.from; vibrate(30);
     try {
         callLocalStream = await getLocalStream(currentCallType);
@@ -11273,12 +11121,9 @@ function createPeerConnection() {
         console.log('ICE state:', state);
 
         if (state === 'connected' || state === 'completed') {
-            CallEngine.onConnected(); // notify state machine
-            if (label) label.textContent = '🟢 В эфире';
+            if (label) label.textContent = 'В эфире';
             startCallTimer();
             document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'none');
-            const dots = document.getElementById('call-state-dots');
-            if (dots) dots.classList.add('_hide');
         } else if (state === 'checking') {
             if (label) label.textContent = 'Соединение...';
         } else if (state === 'disconnected') {
@@ -11525,11 +11370,6 @@ function hideCallControls() {
 }
 
 async function onCallAnswered(data) {
-    // Delegate to CallEngine
-    CallEngine.onAnswered(data);
-}
-
-async function onCallAnswered_legacy(data) {
     if (!peerConnection) return;
     try {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
@@ -11660,16 +11500,11 @@ function onGroupCallLeave(data) {
 
 async function onIceCandidate(data) {
     if (!data.candidate) return;
-    // CallEngine manages ICE queue — buffers until remote description is set
-    CallEngine.queueIce(data.candidate);
+    if (!peerConnection || !peerConnection.remoteDescription?.type) { pendingIce.push(data.candidate); return; }
+    try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e) {}
 }
 
 function onIncomingCall(data) {
-    // Delegate entirely to CallEngine state machine
-    CallEngine.incoming(data);
-}
-
-function onIncomingCall_legacy(data) {
     incomingCallData = data;
     pendingIce = [];
     currentCallType = data.call_type || 'audio';
@@ -11693,7 +11528,6 @@ function onIncomingCall_legacy(data) {
     setEl('call-status-label', el => el.textContent = currentCallType === 'video' ? '📹 Входящий видеозвонок' : '📞 Входящий звонок');
     setEl('call-avatar-box',   el => el.innerHTML = getAvatarHtml({id:data.from, name:data.from_name, avatar:data.from_avatar||''}, 'w-28 h-28'));
     setEl('accept-btn',        el => { el.style.display = 'flex'; });
-    setEl('decline-btn',       el => { el.style.display = 'flex'; });
     setEl('call-timer',        el => el.style.display = 'none');
 
     // Показываем кольца анимации
@@ -11794,7 +11628,7 @@ function openAddParticipant() {
 
     ov.appendChild(sh);
     document.body.appendChild(ov);
-    requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
+    setTimeout(() => { sh.style.transform = 'translateY(0)'; }, 16);
     ov.onclick = e => { if (e.target === ov) closeSheet(); };
 }
 
@@ -12167,202 +12001,7 @@ function showLocalVideo() {
     }
 }
 
-
-// ╔══════════════════════════════════════════════════════════╗
-// ║   CALL ENGINE v2 — State machine для звонков             ║
-// ║   idle → calling → ringing → connecting → connected      ║
-// ╚══════════════════════════════════════════════════════════╝
-const CallEngine = (() => {
-    const STATES = { IDLE:'idle', CALLING:'calling', RINGING:'ringing', CONNECTING:'connecting', CONNECTED:'connected', ENDED:'ended' };
-    let state = STATES.IDLE, callData = null, ringTimer = null, startedAt = null;
-    const _iceQ = [];
-
-    function setState(s) {
-        const prev = state; state = s;
-        console.log('[Call]', prev, '→', s);
-        const el = document.getElementById('call-status-label');
-        if (!el) return;
-        const lbl = { [STATES.CALLING]:'📞 Вызов...', [STATES.RINGING]: callData?.type==='video'?'📹 Входящий видеозвонок':'📞 Входящий звонок', [STATES.CONNECTING]:'🔄 Соединение...', [STATES.ENDED]:'📵 Завершён' };
-        if (lbl[s] !== undefined) el.textContent = lbl[s];
-    }
-
-    function _startRingTimer(cb) {
-        clearTimeout(ringTimer);
-        let remaining = 30;
-        const badge = document.getElementById('call-ring-countdown');
-        if (badge) { badge.style.display = 'block'; badge.textContent = remaining + 'с'; }
-        const tick = setInterval(() => {
-            remaining--;
-            if (badge) badge.textContent = remaining + 'с';
-            if (remaining <= 0) clearInterval(tick);
-        }, 1000);
-        ringTimer = setTimeout(() => { clearInterval(tick); if (badge) badge.style.display = 'none'; cb(); }, 30000);
-    }
-
-    function _clearRingTimer() {
-        clearTimeout(ringTimer); ringTimer = null;
-        const badge = document.getElementById('call-ring-countdown');
-        if (badge) badge.style.display = 'none';
-    }
-
-    function queueIce(c) {
-        if (peerConnection && peerConnection.remoteDescription) {
-            peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{});
-        } else { _iceQ.push(c); }
-    }
-
-    function _flushIce() {
-        while (_iceQ.length) {
-            const c = _iceQ.shift();
-            if (peerConnection) peerConnection.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{});
-        }
-    }
-
-    async function call(pid, type) {
-        if (state !== STATES.IDLE) { showToast('Уже идёт звонок','warning'); return; }
-        currentCallType = type||'audio';
-        callData = { to: pid, type: currentCallType, callId: 'c_'+Date.now().toString(36) };
-        setState(STATES.CALLING);
-        setupCallScreen(type, false);
-        _iceQ.length = 0;
-        try {
-            callLocalStream = await getLocalStream(type);
-            if (type==='video') showLocalVideo();
-            peerConnection = createPeerConnection();
-            callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
-            const offer = await peerConnection.createOffer({ offerToReceiveAudio:true, offerToReceiveVideo:type==='video' });
-            await peerConnection.setLocalDescription(offer);
-            socket.emit('call_user', { to:pid, from_name:currentUser.name, from_avatar:currentUser.avatar, offer, call_type:type, call_id:callData.callId });
-            _startRingTimer(() => {
-                if (state===STATES.CALLING) { showToast('Абонент не отвечает','warning',3000); _saveMissed(pid, type); end(true,0); }
-            });
-        } catch(e) {
-            setState(STATES.IDLE); endCall(false);
-            showToast(e.name==='NotAllowedError' ? 'Разрешите доступ к микрофону/камере' : 'Ошибка: '+e.message, 'error', 5000);
-        }
-    }
-
-    function incoming(data) {
-        if (state !== STATES.IDLE) { socket.emit('call_declined',{to:data.from,call_id:data.call_id}); return; }
-        callData = { from:data.from, name:data.from_name, avatar:data.from_avatar, type:data.call_type||'audio', offer:data.offer, callId:data.call_id };
-        incomingCallData = data;
-        currentCallType  = callData.type;
-        _iceQ.length = 0;
-        setState(STATES.RINGING);
-        vibrate([400,200,400,200,400]);
-        _showIncomingUI(data);
-        _playRingtone();
-        acquireWakeLock();
-        _startRingTimer(() => {
-            if (state===STATES.RINGING) {
-                _stopRingtone();
-                socket.emit('call_declined',{to:data.from,call_id:callData?.callId});
-                end(false,0);
-                showToast('Пропущенный звонок','warning',3000);
-            }
-        });
-    }
-
-    async function accept() {
-        if (state!==STATES.RINGING||!callData) return;
-        _clearRingTimer(); _stopRingtone();
-        setState(STATES.CONNECTING);
-        setupCallScreen(callData.type, true);
-        try {
-            callLocalStream = await getLocalStream(callData.type);
-            if (callData.type==='video') showLocalVideo();
-            peerConnection = createPeerConnection();
-            callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(callData.offer));
-            _flushIce();
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-            socket.emit('answer_call', { to:callData.from, answer, call_id:callData.callId });
-        } catch(e) {
-            end(false,0);
-            showToast('Ошибка ответа: '+e.message,'error',4000);
-        }
-    }
-
-    async function onAnswered(data) {
-        if (state!==STATES.CALLING) return;
-        _clearRingTimer();
-        setState(STATES.CONNECTING);
-        try {
-            await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-            _flushIce();
-        } catch(e) { end(true,0); }
-    }
-
-    function onConnected() {
-        if (state===STATES.CONNECTING||state===STATES.CALLING) {
-            setState(STATES.CONNECTED);
-            startedAt = Date.now();
-            startCallTimer();
-        }
-    }
-
-    function decline() {
-        if (state!==STATES.RINGING) return;
-        _clearRingTimer(); _stopRingtone();
-        socket.emit('call_declined',{to:callData.from,call_id:callData?.callId});
-        end(false,0);
-    }
-
-    function end(notify=true, duration) {
-        _clearRingTimer(); _stopRingtone();
-        _iceQ.length = 0;
-        const dur = duration!==undefined ? duration : (startedAt ? Math.floor((Date.now()-startedAt)/1000) : 0);
-        if (notify && callData) {
-            const to = callData.to||callData.from;
-            if (to) socket.emit('end_call',{to, duration:dur, chat_id:currentChatId, call_type:callData.type, call_id:callData?.callId});
-        }
-        setState(STATES.ENDED);
-        startedAt=null; callData=null;
-        setTimeout(() => { setState(STATES.IDLE); endCall(false); }, 600);
-    }
-
-    function _saveMissed(pid, type) {
-        if (!currentChatId) return;
-        socket.emit('send_message',{chat_id:currentChatId,type_msg:'call_'+(type==='video'?'video':'audio'),content:'missed',sender_id:currentUser.id});
-    }
-
-    function _showIncomingUI(data) {
-        const screen = document.getElementById('call-screen');
-        if (!screen) return;
-        screen.classList.remove('hidden');
-        screen.style.cssText = 'display:;opacity:1;pointer-events:all;';
-        const setEl=(id,fn)=>{ const el=document.getElementById(id); if(el) fn(el); };
-        setEl('call-name',       el=>el.textContent=data.from_name||'Звонок');
-        setEl('call-avatar-box', el=>el.innerHTML=getAvatarHtml({id:data.from,name:data.from_name,avatar:data.from_avatar||''},'w-28 h-28'));
-        setEl('accept-btn',      el=>el.style.display='flex');
-        setEl('decline-btn',     el=>el.style.display='flex');
-        setEl('call-timer',      el=>el.style.display='none');
-        if (!document.getElementById('call-ring-countdown')) {
-            const b=document.createElement('div'); b.id='call-ring-countdown';
-            b.style.cssText='position:absolute;top:18px;right:20px;font-size:13px;font-weight:700;color:rgba(255,255,255,0.5);display:none;';
-            screen.appendChild(b);
-        }
-        document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r=>r.style.display='block');
-    }
-
-    function onSocketDisconnect() {
-        if (state===STATES.CONNECTED) { console.warn('[Call] socket down during active call — WebRTC holds'); }
-        else if (state===STATES.CALLING||state===STATES.RINGING) {
-            setTimeout(()=>{ if(state===STATES.CALLING||state===STATES.RINGING){ showToast('Связь потеряна','error',3000); end(false,0); } }, 8000);
-        }
-    }
-
-    return { call, incoming, accept, decline, end, onAnswered, onConnected, queueIce, onSocketDisconnect, getState:()=>state, isIdle:()=>state===STATES.IDLE, STATES };
-})();
-
-
 async function startCall(type) {
-    // Delegate to CallEngine
-    return CallEngine.call(currentPartnerId, type);
-}
-
-async function startCall_legacy(type) {
     if (!currentPartnerId) return;
     currentCallType = type; iceRestartCount = 0;
     vibrate(50);
