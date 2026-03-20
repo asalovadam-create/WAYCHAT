@@ -1499,6 +1499,35 @@ function updateConnStatus(online) {
 // ══════════════════════════════════════════════════════════
 //  МОСКОВСКОЕ ВРЕМЯ
 // ══════════════════════════════════════════════════════════
+
+function getChatPreviewTime(dateStr) {
+    if (!dateStr) return '';
+    try {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) return '';
+        const msk = 3 * 60;
+        const loc = d.getTimezoneOffset();
+        const moscow = new Date(d.getTime() + (msk + loc) * 60000);
+        const now    = new Date(Date.now() + (msk + (new Date().getTimezoneOffset())) * 60000);
+        const hh = moscow.getHours().toString().padStart(2,'0');
+        const mm = moscow.getMinutes().toString().padStart(2,'0');
+        // Today → HH:MM
+        if (moscow.toDateString() === now.toDateString()) return `${hh}:${mm}`;
+        // Yesterday → Вчера
+        const yest = new Date(now); yest.setDate(yest.getDate()-1);
+        if (moscow.toDateString() === yest.toDateString()) return 'Вчера';
+        // This week (< 7 days) → day name
+        const diff = Math.floor((now - moscow) / 86400000);
+        if (diff < 7) {
+            const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+            return days[moscow.getDay()];
+        }
+        // Older → date
+        const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+        return `${moscow.getDate()} ${months[moscow.getMonth()]}`;
+    } catch(e) { return ''; }
+}
+
 function getMoscowTime(dateStr) {
     if (!dateStr) return '';
     try {
@@ -1765,10 +1794,11 @@ body {
 .rec-pulse { width:12px;height:12px;background:#ef4444;border-radius:50%;animation:recPulse 0.8s infinite;flex-shrink:0; }
 @keyframes recPulse { 0%,100%{transform:scale(1);opacity:1;} 50%{transform:scale(1.4);opacity:0.6;} }
 .waveform { display:flex;align-items:center;gap:2px;flex:1;height:24px; }
-.wave-bar { width:3px;background:var(--accent);border-radius:2px;animation:wave 0.8s ease infinite;min-height:4px; }
+.wave-bar { width:3px;background:var(--accent);border-radius:2px;min-height:4px;height:4px; }
 .wave-bar:nth-child(odd) { animation-delay:0.1s; }
 .wave-bar:nth-child(3n) { animation-delay:0.2s; }
 @keyframes wave { 0%,100%{height:4px;} 50%{height:20px;} }
+.record-ui .wave-bar { animation:wave 0.8s ease infinite; }
 
 /* ЗВОНОК */
 .call-screen { position:fixed;inset:0;z-index:99999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);overflow:hidden;transition:opacity 0.3s; }
@@ -1820,6 +1850,8 @@ body {
 .audio-progress-wrap { flex:1;display:flex;flex-direction:column;gap:3px; }
 .audio-progress-bar { height:3px;background:rgba(255,255,255,0.2);border-radius:2px;overflow:hidden;cursor:pointer;position:relative; }
 .audio-progress-fill { height:100%;background:rgba(255,255,255,0.8);border-radius:2px;width:0;transition:width 0.1s linear; }
+.w-full { width: 100%; }
+.h-full { height: 100%; }
 .audio-dur { font-size:10px;opacity:0.5; }
 
 /* ПОИСК */
@@ -3032,8 +3064,18 @@ function renderChatList(chats) {
         const partnerName  = isGroup ? (chat.group_name || 'Группа') : chat.partner_name;
         const partnerAvatar= isGroup ? (chat.group_avatar || '') : (chat.partner_avatar || '');
         const displayName  = isGroup ? partnerName : getContactDisplayName(partnerId, partnerName);
-        const preview      = chat.last_message || 'Начните переписку';
-        const time         = getMoscowTime(chat.raw_timestamp || chat.timestamp) || chat.timestamp || '';
+        const _lastType    = chat.last_message_type || '';
+        const _lastText    = chat.last_message || '';
+        // Format preview based on message type
+        let preview;
+        if (_lastType === 'audio')       preview = '🎙 Голосовое';
+        else if (_lastType === 'image' || _lastType === 'photo') preview = '🖼 Фото';
+        else if (_lastType === 'video')  preview = '📹 Видео';
+        else if (_lastType === 'call_audio') preview = '📞 Звонок';
+        else if (_lastType === 'call_video') preview = '📹 Видеозвонок';
+        else if (_lastText && _lastText.startsWith('WayChat:')) preview = _lastText.split(':').slice(1).join(':').trim() || 'Сообщение';
+        else preview = _lastText || 'Начните переписку';
+        const time         = getChatPreviewTime(chat.raw_timestamp || chat.timestamp) || '';
         const chatKey      = makeKey(chat);
 
         let div = existingMap.get(chatKey);
@@ -4686,7 +4728,7 @@ function confirmDeleteMessage(msgId) { _confirmDeleteForAll(msgId); }
 //  АУДИО ПЛЕЕР — с волновой формой
 // ══════════════════════════════════════════════════════════
 // Waveform height cache — no re-fetch on chat re-open
-const _wvCache = new Map(); // waveform height cache, keyed by audio src URL
+const _wvCache = new Map(); // waveform height cache keyed by src URL
 
 function renderAudioPlayer(src, displayTime, isMe, isRead) {
     const uid = `au_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
@@ -4722,6 +4764,44 @@ function renderAudioPlayer(src, displayTime, isMe, isRead) {
             onended="onAudioEnd('${uid}')"
             onloadedmetadata="setAudioDur('${uid}');_loadWaveform('${uid}','${src}')"></audio>
     </div>`;
+}
+
+
+async function _loadWaveform(uid, src) {
+    setAudioDur(uid);
+    if (_wvCache.has(src)) { _applyWvBars(uid, _wvCache.get(src)); return; }
+    try {
+        const r = await fetch(src, { cache: 'force-cache' });
+        if (!r.ok) return;
+        const buf     = await r.arrayBuffer();
+        const actx    = new (window.AudioContext || window.webkitAudioContext)();
+        const decoded = await actx.decodeAudioData(buf);
+        actx.close();
+        const data = decoded.getChannelData(0);
+        const N    = 30;
+        const step = Math.floor(data.length / N);
+        const hs   = [];
+        for (let i = 0; i < N; i++) {
+            let mx = 0;
+            for (let j = 0; j < step; j++) {
+                const v = Math.abs(data[i*step+j]||0);
+                if (v > mx) mx = v;
+            }
+            hs.push(Math.max(3, Math.round(mx * 26)));
+        }
+        _wvCache.set(src, hs);
+        _applyWvBars(uid, hs);
+    } catch(e) {}
+}
+
+function _applyWvBars(uid, hs) {
+    const wv = document.getElementById('wv_' + uid);
+    if (!wv) return;
+    wv.querySelectorAll('div').forEach((bar, i) => {
+        const h = hs[i] || 3;
+        bar.style.height     = h + 'px';
+        bar.style.background = 'rgba(255,255,255,' + (0.25 + (h/26)*0.5) + ')';
+    });
 }
 
 // Рисует реальную волну из audio file
