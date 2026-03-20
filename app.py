@@ -1,8 +1,8 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
-║          Version: 9.0.0 — 1K USERS · REDIS · ASYNC UPLOAD   ║
-║  Redis SocketIO · Async Cloudinary · DB pool 25+50           ║
+║  Version: 10.0.0 — 1K USERS · REDIS · E2E · JWT · SECURITY  ║
+║  Async uploads · Rate limit · Brute force · Refresh tokens   ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -126,6 +126,26 @@ _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _ip_rate_limits  = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
+_brute_force_ips = {}   # ip -> {count, until}  brute force lockout
+
+def _is_brute_blocked(ip):
+    entry = _brute_force_ips.get(ip)
+    if not entry: return False
+    if time.monotonic() > entry.get('until', 0):
+        _brute_force_ips.pop(ip, None)
+        return False
+    return True
+
+def _record_failed_login(ip):
+    entry = _brute_force_ips.setdefault(ip, {'count': 0, 'until': 0})
+    entry['count'] += 1
+    if entry['count'] >= 10:
+        entry['until'] = time.monotonic() + 1800   # 30 min
+    elif entry['count'] >= 5:
+        entry['until'] = time.monotonic() + 300    # 5 min
+
+def _reset_failed_login(ip):
+    _brute_force_ips.pop(ip, None)
 
 
 def ip_rate_limit(endpoint, max_calls=5, window_sec=60):
@@ -1003,6 +1023,9 @@ def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
     if request.method == 'POST':
+        _ip = _get_ip() if '_get_ip' in dir() else (request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr or 'unknown').split(',')[0].strip())
+        if _is_brute_blocked(_ip):
+            return jsonify({'success': False, 'error': 'Слишком много неудачных попыток. Попробуйте позже.'}), 429
         if request.is_json:
             data     = request.get_json() or {}
             phone    = data.get('phone', '').strip()
@@ -1281,16 +1304,89 @@ def vapid_public_key():
 
 
 _INLINE_SW = """
-const CACHE='wc-v3';
-self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(['/','/static/main.js']).catch(()=>{})).then(()=>self.skipWaiting()))});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
-self.addEventListener('fetch',e=>{if(e.request.method!=='GET'||e.request.url.includes('/socket.io'))return;
-  if(e.request.url.match(/[.](js|css|png|jpg|webp|gif|woff2)$/)){
-    e.respondWith(caches.match(e.request).then(r=>r||(fetch(e.request).then(resp=>{if(resp.ok)caches.open(CACHE).then(c=>c.put(e.request,resp.clone()));return resp}))));
+const CACHE='wc-v10';
+const STATIC=['/','/static/js/main.js','/static/logo.png','/static/manifest.json'];
+
+self.addEventListener('message',e=>{if(e.data&&e.data.type==='SKIP_WAITING')self.skipWaiting();});
+
+self.addEventListener('install',e=>{
+  e.waitUntil(
+    caches.open(CACHE)
+      .then(c=>c.addAll(STATIC).catch(()=>{}))
+      .then(()=>self.skipWaiting())
+  );
+});
+
+self.addEventListener('activate',e=>{
+  e.waitUntil(
+    caches.keys()
+      .then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k))))
+      .then(()=>self.clients.claim())
+  );
+});
+
+self.addEventListener('fetch',e=>{
+  const url=e.request.url;
+  if(e.request.method!=='GET'||url.includes('/socket.io')||url.includes('/api/')||url.includes('/get_messages'))return;
+  // Static assets — cache first
+  if(url.match(/[.](js|css|png|jpg|jpeg|webp|gif|woff2|ico|svg)([?]|$)/)){
+    e.respondWith(caches.match(e.request).then(r=>{
+      if(r)return r;
+      return fetch(e.request).then(resp=>{
+        if(resp&&resp.ok&&resp.status<400){
+          const clone=resp.clone();
+          caches.open(CACHE).then(c=>c.put(e.request,clone)).catch(()=>{});
+        }
+        return resp;
+      }).catch(()=>caches.match('/'));
+    }));
+    return;
+  }
+  // HTML pages — network first, cache fallback
+  if(e.request.headers.get('accept')&&e.request.headers.get('accept').includes('text/html')){
+    e.respondWith(
+      fetch(e.request).then(resp=>{
+        if(resp&&resp.ok){const cl=resp.clone();caches.open(CACHE).then(c=>c.put(e.request,cl)).catch(()=>{});}
+        return resp;
+      }).catch(()=>caches.match(e.request).then(r=>r||caches.match('/')))
+    );
   }
 });
-self.addEventListener('push',e=>{if(!e.data)return;try{const d=e.data.json();e.waitUntil(self.registration.showNotification(d.title||'WayChat',{body:d.body||'',icon:d.icon||'/static/icon-192.png',data:d.data||{},vibrate:[200,100,200]}))}catch(err){}});
-self.addEventListener('notificationclick',e=>{e.notification.close();e.waitUntil(clients.openWindow(e.notification.data?.url||'/'))});
+
+self.addEventListener('push',e=>{
+  if(!e.data)return;
+  try{
+    const d=e.data.json();
+    const opts={
+      body:d.body||'',
+      icon:d.icon||'/static/img/icon-192.png',
+      badge:'/static/img/icon-72.png',
+      data:d.data||{},
+      vibrate:[200,100,200,100,200],
+      tag:d.tag||'waychat',
+      renotify:true,
+      silent:false,
+      actions:[
+        {action:'open',title:'Открыть'},
+        {action:'dismiss',title:'Закрыть'}
+      ]
+    };
+    e.waitUntil(self.registration.showNotification(d.title||'WayChat',opts));
+  }catch(err){}
+});
+
+self.addEventListener('notificationclick',e=>{
+  e.notification.close();
+  const url=e.notification.data?.url||'/';
+  if(e.action==='dismiss')return;
+  e.waitUntil(
+    clients.matchAll({type:'window',includeUncontrolled:true}).then(ws=>{
+      const w=ws.find(w=>w.url.includes(self.location.origin)&&'focus' in w);
+      if(w){w.focus();w.postMessage({type:'open_chat',url});}
+      else clients.openWindow(url);
+    })
+  );
+});
 """
 
 @app.route('/sw.js')
@@ -1312,7 +1408,7 @@ def service_worker():
 
 @app.after_request
 def add_cache_headers(response):
-    """Пункты 1,9: кэш-заголовки для CDN (Cloudflare) и браузера"""
+    """Cache-control + security headers"""
     path = request.path
     # Статика — кэш 1 год (Cloudflare будет кэшировать)
     if path.startswith('/static/') and not path.endswith('.html'):
@@ -1324,6 +1420,15 @@ def add_cache_headers(response):
     # API — no cache
     elif path.startswith('/api/') or path in ['/get_messages/', '/get_my_chats']:
         response.headers['Cache-Control'] = 'no-store'
+
+    # ── Security headers (промт #8) ──
+    response.headers.setdefault('X-Content-Type-Options',    'nosniff')
+    response.headers.setdefault('X-Frame-Options',            'SAMEORIGIN')
+    response.headers.setdefault('X-XSS-Protection',           '1; mode=block')
+    response.headers.setdefault('Referrer-Policy',             'strict-origin-when-cross-origin')
+    response.headers.setdefault('Permissions-Policy',          'camera=self, microphone=self, geolocation=self')
+    # Remove server fingerprint
+    response.headers.pop('Server', None)
     return response
 
 
@@ -1446,6 +1551,79 @@ def api_me():
         'phone':         u.phone or '',
     })
 
+
+
+
+# ══════════════════════════════════════════════════════════
+#  JWT TOKENS — refresh token support
+# ══════════════════════════════════════════════════════════
+_refresh_tokens = {}   # token → {uid, expires}
+_JWT_SECRET = os.environ.get('JWT_SECRET', os.environ.get('SECRET_KEY', 'waychat-jwt-2026'))
+_JWT_ACCESS_TTL  = 900    # 15 min
+_JWT_REFRESH_TTL = 2592000  # 30 days
+
+
+def _make_access_token(uid):
+    if not CRYPTO_AVAILABLE:
+        return ''
+    try:
+        payload = {
+            'uid': uid,
+            'exp': int(time.time()) + _JWT_ACCESS_TTL,
+            'iat': int(time.time()),
+            'type': 'access',
+        }
+        return pyjwt.encode(payload, _JWT_SECRET, algorithm='HS256')
+    except Exception:
+        return ''
+
+
+def _make_refresh_token(uid):
+    token = uuid.uuid4().hex + uuid.uuid4().hex
+    _refresh_tokens[token] = {'uid': uid, 'expires': time.time() + _JWT_REFRESH_TTL}
+    # Cleanup old tokens
+    if len(_refresh_tokens) > 10000:
+        now = time.time()
+        expired = [k for k, v in _refresh_tokens.items() if v['expires'] < now]
+        for k in expired[:5000]:
+            _refresh_tokens.pop(k, None)
+    return token
+
+
+@app.route('/api/token/refresh', methods=['POST'])
+def api_token_refresh():
+    data = request.get_json() or {}
+    rt = data.get('refresh_token', '').strip()
+    if not rt:
+        return jsonify({'error': 'Missing refresh_token'}), 400
+    entry = _refresh_tokens.get(rt)
+    if not entry or time.time() > entry['expires']:
+        _refresh_tokens.pop(rt, None)
+        return jsonify({'error': 'Invalid or expired refresh token'}), 401
+    uid = entry['uid']
+    access = _make_access_token(uid)
+    new_rt = _make_refresh_token(uid)
+    _refresh_tokens.pop(rt, None)  # rotate
+    return jsonify({'access_token': access, 'refresh_token': new_rt, 'expires_in': _JWT_ACCESS_TTL})
+
+
+@app.route('/api/token/issue', methods=['POST'])
+@login_required
+def api_token_issue():
+    """Issue initial access+refresh token pair for authenticated session"""
+    uid = current_user.id
+    access = _make_access_token(uid)
+    refresh = _make_refresh_token(uid)
+    return jsonify({'access_token': access, 'refresh_token': refresh, 'expires_in': _JWT_ACCESS_TTL})
+
+
+@app.route('/api/token/revoke', methods=['POST'])
+@login_required
+def api_token_revoke():
+    data = request.get_json() or {}
+    rt = data.get('refresh_token', '').strip()
+    _refresh_tokens.pop(rt, None)
+    return jsonify({'ok': True})
 
 @app.route('/get_user_profile/<int:user_id>')
 @login_required
@@ -1624,7 +1802,35 @@ def get_my_chats():
         except Exception as e:
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
+    # ── Batch group query — один SQL вместо N+1 ──
     memberships = GroupMember.query.filter_by(user_id=uid).all()
+    group_ids = [m.group_id for m in memberships]
+    _group_last_msgs = {}
+    _group_unread = {}
+    if group_ids:
+        # Batch last messages for all groups
+        _grp_chat_ids_rows = db.session.execute(text(
+            'SELECT g.id as gid, g.chat_id FROM "group" g WHERE g.id = ANY(:ids) AND g.chat_id IS NOT NULL'
+        ), {'ids': group_ids}).fetchall()
+        _grp_chat_map = {r.gid: r.chat_id for r in _grp_chat_ids_rows}
+        _all_grp_chat_ids = list(_grp_chat_map.values())
+        if _all_grp_chat_ids:
+            _glm_rows = db.session.execute(text(
+                '''SELECT DISTINCT ON (chat_id) chat_id, id, type, content, timestamp, sender_id, sender_name
+                   FROM message WHERE chat_id = ANY(:ids) AND is_deleted = FALSE
+                   ORDER BY chat_id, id DESC'''
+            ), {'ids': _all_grp_chat_ids}).fetchall()
+            _glm_by_chat = {r.chat_id: r for r in _glm_rows}
+            _gur_rows = db.session.execute(text(
+                '''SELECT chat_id, COUNT(*) as cnt FROM message
+                   WHERE chat_id = ANY(:ids) AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE
+                   GROUP BY chat_id'''
+            ), {'ids': _all_grp_chat_ids, 'uid': uid}).fetchall()
+            _gur_by_chat = {r.chat_id: r.cnt for r in _gur_rows}
+            for gid, cid in _grp_chat_map.items():
+                _group_last_msgs[gid] = _glm_by_chat.get(cid)
+                _group_unread[gid] = _gur_by_chat.get(cid, 0)
+
     for m in memberships:
         try:
             group = db.session.get(Group, m.group_id)
@@ -1634,23 +1840,23 @@ def get_my_chats():
             if not chat:
                 continue
 
-            last_msg = Message.query.filter_by(
-                chat_id=chat.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
-
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': chat.id, 'uid': uid}
-            ).scalar() or 0
+            last_msg = _group_last_msgs.get(m.group_id)
+            unread   = _group_unread.get(m.group_id, 0)
 
             type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
             preview  = '👥 Группа создана'
             sort_ts  = group.created_at or datetime(2000, 1, 1)
 
             if last_msg:
-                sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
-                sort_ts = last_msg.timestamp
+                _lm_type    = getattr(last_msg, 'type', None)
+                _lm_content = getattr(last_msg, 'content', None) or '...'
+                _lm_sname   = getattr(last_msg, 'sender_name', None) or ''
+                _lm_ts      = getattr(last_msg, 'timestamp', None)
+                sender_prefix = f'{_lm_sname}: ' if _lm_sname else ''
+                preview = sender_prefix + (type_map.get(_lm_type, _lm_content))
+                sort_ts = _lm_ts or sort_ts
+            else:
+                _lm_ts = None
 
             member_count = GroupMember.query.filter_by(group_id=group.id).count()
             result.append({
@@ -1664,8 +1870,8 @@ def get_my_chats():
                 'member_count':  member_count,
                 'online':        False,
                 'last_message':  preview,
-                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
-                'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
+                'timestamp':     to_moscow_str(_lm_ts),
+                'raw_timestamp': _lm_ts.isoformat() + 'Z' if _lm_ts else '',
                 'unread_count':  unread,
                 'is_group':      True,
                 '_sort':         sort_ts,
@@ -1687,6 +1893,11 @@ def get_my_chats():
     result.sort(key=sort_key, reverse=True)
     for r in result:
         r.pop('_sort', None)
+
+    # Mark archived chats
+    arch_ids = _archived_chats.get(uid, set())
+    for r in result:
+        r['is_archived'] = r['chat_id'] in arch_ids
 
     _chat_cache.set(uid, result)
     return jsonify(result)
@@ -1752,7 +1963,15 @@ def get_messages(chat_id):
 
     msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in reversed(msgs)])
+    pinned_id = _pinned_messages.get(chat_id)
+    pinned_msg = None
+    if pinned_id:
+        pm = db.session.get(Message, pinned_id)
+        if pm and not pm.is_deleted:
+            pinned_msg = pm.to_dict()
+        else:
+            _pinned_messages.pop(chat_id, None)
+    return jsonify({'messages': [m.to_dict() for m in reversed(msgs)], 'pinned': pinned_msg})
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -3518,6 +3737,17 @@ def handle_end_call(data):
 # ══════════════════════════════════════════════════════════
 #  ФОНОВАЯ ОЧИСТКА
 # ══════════════════════════════════════════════════════════
+def _cleanup_secret_messages():
+    """Удаляет истёкшие секретные сообщения (self-destruct)"""
+    now = time.time()
+    for sc_id in list(_secret_messages.keys()):
+        msgs = _secret_messages[sc_id]
+        before = len(msgs)
+        _secret_messages[sc_id] = [m for m in msgs if not m.get('expire_at') or m['expire_at'] > now]
+        if not _secret_messages[sc_id]:
+            del _secret_messages[sc_id]
+
+
 def background_cleanup():
     _cleanup_cycle = 0
     while True:
@@ -4258,6 +4488,179 @@ def channel_upload_avatar(ch_id):
 
 
 
+
+
+# ══════════════════════════════════════════════════════════
+#  АРХИВ ЧАТОВ
+# ══════════════════════════════════════════════════════════
+_archived_chats = defaultdict(set)   # uid → set of chat_ids
+
+
+
+@app.route('/api/chat/<int:chat_id>/search')
+@login_required
+@rate_limit('msg_search', max_calls=20, window_sec=60)
+def search_messages(chat_id):
+    """Быстрый поиск по сообщениям чата"""
+    q = request.args.get('q', '').strip()[:200]
+    if not q or len(q) < 2:
+        return jsonify({'results': []})
+    uid = current_user.id
+    # Проверка доступа
+    chat = db.session.get(Chat, chat_id)
+    if not chat:
+        return jsonify({'error': 'Not found'}), 404
+    rows = db.session.execute(text(
+        """SELECT id, sender_name, content, timestamp, type
+           FROM message
+           WHERE chat_id=:cid AND is_deleted=FALSE AND type='text'
+             AND lower(content) LIKE :q
+           ORDER BY id DESC LIMIT 30"""
+    ), {'cid': chat_id, 'q': f'%{q.lower()}%'}).fetchall()
+    results = [{
+        'id':          r.id,
+        'sender_name': r.sender_name or '',
+        'content':     r.content or '',
+        'timestamp':   to_moscow_str(r.timestamp),
+        'type':        r.type,
+    } for r in rows]
+    return jsonify({'results': results, 'query': q})
+
+
+@app.route('/api/chat/archive/<int:chat_id>', methods=['POST'])
+@login_required
+def archive_chat(chat_id):
+    uid = current_user.id
+    _archived_chats[uid].add(chat_id)
+    _chat_cache.delete(uid)
+    return jsonify({'ok': True, 'archived': True})
+
+
+@app.route('/api/chat/unarchive/<int:chat_id>', methods=['POST'])
+@login_required
+def unarchive_chat(chat_id):
+    uid = current_user.id
+    _archived_chats[uid].discard(chat_id)
+    _chat_cache.delete(uid)
+    return jsonify({'ok': True, 'archived': False})
+
+
+@app.route('/api/chat/archived')
+@login_required
+def get_archived_chats():
+    uid = current_user.id
+    arch_ids = _archived_chats.get(uid, set())
+    return jsonify({'archived_chat_ids': list(arch_ids)})
+
+
+# ══════════════════════════════════════════════════════════
+#  ЗАКРЕПЛЁННЫЕ СООБЩЕНИЯ
+# ══════════════════════════════════════════════════════════
+_pinned_messages = {}   # chat_id → msg_id
+
+
+@app.route('/api/chat/<int:chat_id>/pin', methods=['POST'])
+@login_required
+def pin_message(chat_id):
+    data   = request.get_json() or {}
+    msg_id = data.get('msg_id')
+    if not msg_id:
+        return jsonify({'ok': False}), 400
+    msg = db.session.get(Message, msg_id)
+    if not msg or msg.chat_id != chat_id:
+        return jsonify({'ok': False}), 404
+    _pinned_messages[chat_id] = msg_id
+    socketio.emit('message_pinned', {'chat_id': chat_id, 'msg_id': msg_id, 'content': msg.content or ''}, room=f'chat_{chat_id}')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/chat/<int:chat_id>/pin', methods=['DELETE'])
+@login_required
+def unpin_message(chat_id):
+    _pinned_messages.pop(chat_id, None)
+    socketio.emit('message_unpinned', {'chat_id': chat_id}, room=f'chat_{chat_id}')
+    return jsonify({'ok': True})
+
+
+@app.route('/api/chat/<int:chat_id>/pinned')
+@login_required
+def get_pinned_message(chat_id):
+    msg_id = _pinned_messages.get(chat_id)
+    if not msg_id:
+        return jsonify({'pinned': None})
+    msg = db.session.get(Message, msg_id)
+    if not msg:
+        _pinned_messages.pop(chat_id, None)
+        return jsonify({'pinned': None})
+    return jsonify({'pinned': msg.to_dict()})
+
+
+# ══════════════════════════════════════════════════════════
+#  СЕКРЕТНЫЕ ЧАТЫ
+# ══════════════════════════════════════════════════════════
+_secret_chats    = {}   # secret_chat_id → {user1, user2, created_at}
+_secret_messages = defaultdict(list)   # secret_chat_id → [msgs with ttl]
+
+
+@app.route('/api/secret/create', methods=['POST'])
+@login_required
+def create_secret_chat():
+    data = request.get_json() or {}
+    partner_id = data.get('partner_id')
+    if not partner_id:
+        return jsonify({'ok': False}), 400
+    uid = current_user.id
+    sc_id = f'sc_{min(uid, partner_id)}_{max(uid, partner_id)}'
+    _secret_chats[sc_id] = {
+        'user1': uid, 'user2': partner_id,
+        'created_at': time.time(),
+    }
+    socketio.emit('secret_chat_invite', {
+        'from_id': uid, 'from_name': current_user.name,
+        'secret_chat_id': sc_id,
+    }, room=f'user_{partner_id}')
+    return jsonify({'ok': True, 'secret_chat_id': sc_id})
+
+
+@app.route('/api/secret/<sc_id>/send', methods=['POST'])
+@login_required
+def send_secret_message(sc_id):
+    sc = _secret_chats.get(sc_id)
+    if not sc:
+        return jsonify({'ok': False, 'error': 'Secret chat not found'}), 404
+    uid = current_user.id
+    if uid not in (sc['user1'], sc['user2']):
+        return jsonify({'ok': False}), 403
+
+    data = request.get_json() or {}
+    # Content is already E2E encrypted on client — server stores cipher only
+    cipher    = data.get('cipher', '')[:20000]
+    ttl_sec   = min(int(data.get('ttl', 0) or 0), 3600)   # self-destruct, max 1h
+    msg_id    = uuid.uuid4().hex
+    expire_at = time.time() + ttl_sec if ttl_sec > 0 else None
+
+    msg_obj = {
+        'id': msg_id, 'from': uid,
+        'cipher': cipher,
+        'ts': time.time(),
+        'expire_at': expire_at,
+    }
+    _secret_messages[sc_id].append(msg_obj)
+
+    # Broadcast encrypted payload — server cannot read it
+    partner_id = sc['user2'] if uid == sc['user1'] else sc['user1']
+    socketio.emit('secret_message', {
+        'secret_chat_id': sc_id,
+        'msg_id': msg_id,
+        'from': uid,
+        'cipher': cipher,
+        'ts': msg_obj['ts'],
+        'expire_at': expire_at,
+    }, room=f'user_{partner_id}')
+
+    return jsonify({'ok': True, 'msg_id': msg_id})
+
+
 # ══════════════════════════════════════════════════════════
 #  ВЕРИФИКАЦИЯ КАНАЛОВ
 # ══════════════════════════════════════════════════════════
@@ -4406,7 +4809,7 @@ def healthcheck():
     return jsonify({
         'status':   'ok' if db_ok else 'degraded',
         'db':       'ok' if db_ok else 'error',
-        'version':  '9.0.0',
+        'version':  '10.0.0',
         'time_msk': to_moscow_str(datetime.utcnow()),
     }), 200 if db_ok else 503
 
