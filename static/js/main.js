@@ -496,6 +496,79 @@ const AvatarCache = (() => {
 // ══════════════════════════════════════════════════════════
 //  SVG ИКОНКИ — нарисованные, не эмодзи
 // ══════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════
+//  JWT TOKEN MANAGER — refresh tokens (промт #8)
+// ══════════════════════════════════════════════════════════
+const TokenMgr = (() => {
+    const _KEY_ACCESS  = 'wc_access_token';
+    const _KEY_REFRESH = 'wc_refresh_token';
+
+    function getAccess()  { try { return localStorage.getItem(_KEY_ACCESS)  || ''; } catch(e) { return ''; } }
+    function getRefresh() { try { return localStorage.getItem(_KEY_REFRESH) || ''; } catch(e) { return ''; } }
+    function setTokens(access, refresh) {
+        try {
+            if (access)  localStorage.setItem(_KEY_ACCESS,  access);
+            if (refresh) localStorage.setItem(_KEY_REFRESH, refresh);
+        } catch(e) {}
+    }
+    function clear() {
+        try { localStorage.removeItem(_KEY_ACCESS); localStorage.removeItem(_KEY_REFRESH); } catch(e) {}
+    }
+
+    function isExpired(token) {
+        if (!token) return true;
+        try {
+            const parts = token.split('.');
+            if (parts.length !== 3) return true;
+            const payload = JSON.parse(atob(parts[1]));
+            // Expire 60s early to avoid edge cases
+            return payload.exp && (payload.exp - 60) < (Date.now() / 1000);
+        } catch(e) { return true; }
+    }
+
+    async function refresh() {
+        const rt = getRefresh();
+        if (!rt) return false;
+        try {
+            const r = await fetch('/api/token/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refresh_token: rt }),
+            });
+            if (!r.ok) { clear(); return false; }
+            const data = await r.json();
+            setTokens(data.access_token, data.refresh_token);
+            return true;
+        } catch(e) { return false; }
+    }
+
+    async function ensureValid() {
+        const access = getAccess();
+        if (!access || isExpired(access)) {
+            return await refresh();
+        }
+        return true;
+    }
+
+    // Issue initial tokens on page load (async, non-blocking)
+    async function init() {
+        try {
+            const r = await fetch('/api/token/issue', { method: 'POST' });
+            if (r.ok) {
+                const data = await r.json();
+                setTokens(data.access_token, data.refresh_token);
+                console.log('[JWT] tokens issued');
+            }
+        } catch(e) {}
+    }
+
+    return { getAccess, getRefresh, setTokens, clear, refresh, ensureValid, init };
+})();
+
+// Initialize JWT on load
+document.addEventListener('DOMContentLoaded', () => { TokenMgr.init(); }, { once: true });
+
 const ICONS = {
     send: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     back: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M5 12L12 19M5 12L12 5" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
@@ -507,7 +580,7 @@ const ICONS = {
     search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="rgba(255,255,255,0.35)" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-linecap="round"/></svg>`,
     plus: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>`,
     check: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    checkDouble: `<svg width="16" height="12" viewBox="0 0 24 16" fill="none"><polyline points="1 8 6 13 15 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="9 8 14 13 23 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    checkDouble: `<svg width="18" height="11" viewBox="0 0 18 11" fill="none"><path d="M1 10.5L6 1.5L11 10.5H1Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.15"/><path d="M7 10.5L12 1.5L17 10.5H7Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="currentColor" fill-opacity="0.15"/></svg>`,
     settings: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     chats: `<svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     moments: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" stroke="currentColor" stroke-width="2"/><line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
@@ -825,17 +898,193 @@ function _handleMediaReady(data) {
     el.style.opacity = '1';
 }
 
-function insertEmoji() {
+function insertEmoji(emoji) {
     const inp = document.getElementById('msg-input');
     if (!inp) return;
-    const emojis = ['😊','😂','❤️','👍','🔥','🎉','😎','🥰','🫡','💯','😍','🤣'];
-    const pick = emojis[Math.floor(Math.random() * emojis.length)];
-    const start = inp.selectionStart || inp.value.length;
-    inp.value = inp.value.slice(0, start) + pick + inp.value.slice(inp.selectionEnd || start);
-    inp.setSelectionRange(start + pick.length, start + pick.length);
+    if (!emoji) { toggleEmojiPicker(); return; }
+    const start = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
+    const end   = inp.selectionEnd   != null ? inp.selectionEnd   : start;
+    inp.value = inp.value.slice(0, start) + emoji + inp.value.slice(end);
+    inp.setSelectionRange(start + emoji.length, start + emoji.length);
     inp.focus();
     updateSendButton();
     autoResize(inp);
+}
+
+// ══════════════════════════════════════════════════════════
+//  EMOJI PICKER — полноценный с категориями (промт #6)
+// ══════════════════════════════════════════════════════════
+const EMOJI_CATEGORIES = {
+    '🕐 Недавние': [],
+    '😀 Смайлы':   ['😀','😃','😄','😁','😆','😅','🤣','😂','🙂','🙃','😉','😊','😇','🥰','😍','🤩','😘','😗','😚','😙','😋','😛','😜','🤪','😝','🤑','🤗','🤭','🤫','🤔','🤐','🤨','😐','😑','😶','😏','😒','🙄','😬','🤥','😌','😔','😪','🤤','😴','😷','🤒','🤕','🤢','🤮','🤧','🥵','🥶','🥴','😵','🤯','🤠','🥳','😎','🤓','🧐','😕','😟','🙁','☹️','😮','😯','😲','😳','🥺','😦','😧','😨','😰','😥','😢','😭','😱','😖','😣','😞','😓','😩','😫','🥱','😤','😡','😠','🤬','😈','👿','💀','☠️','💩','🤡','👹','👺','👻','👽','👾','🤖'],
+    '👍 Жесты':    ['👋','🤚','🖐','✋','🖖','👌','🤌','🤏','✌️','🤞','🤟','🤘','🤙','👈','👉','👆','🖕','👇','☝️','👍','👎','✊','👊','🤛','🤜','👏','🙌','👐','🤲','🤝','🙏','✍️','💅','🤳','💪','🦾','🦵','🦶','👂','🦻','👃','🧠','🫀','🫁','🦷','🦴','👀','👁','👅','👄'],
+    '❤️ Сердца':   ['❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎','💔','❣️','💕','💞','💓','💗','💖','💘','💝','💟','☮️','✝️','☪️','🔯','🕉','☸️','🛐','⛎','♈','♉','♊','♋','♌','♍','♎','♏','♐','♑','♒','♓','🆔','⚛️','🉑','☢️','☣️','📴','📳','🈶','🈚','🈸','🈺','🈷️','✴️','🆚','💮','🉐','㊙️','㊗️','🈴','🈵','🈹','🈲','🅰️','🅱️','🆎','🆑','🅾️','🆘','❌'],
+    '🎉 Активность':['⚽','🏀','🏈','⚾','🥎','🎾','🏐','🏉','🥏','🎱','🪀','🏓','🏸','🏒','🏑','🥍','🏏','🪃','🥅','⛳','🪁','🏹','🎣','🤿','🥊','🥋','🎽','🛹','🛼','🛷','⛸','🥌','🎿','⛷','🏂','🪂','🏋️','🤼','🤸','⛹️','🤺','🏇','🧘','🏄','🏊','🤽','🚣','🧗','🚵','🚴','🏆','🥇','🥈','🥉','🏅','🎖','🏵','🎗','🎫','🎟','🎪','🤹','🎭','🎨','🎬','🎤','🎧','🎼','🎵','🎶','🥁','🪘','🎷','🎺','🎸','🪕','🎻','🎹','🪗','🎲','♟','🎯','🎳','🎮','🎰','🧩'],
+    '🍎 Еда':       ['🍏','🍎','🍊','🍋','🍌','🍉','🍇','🍓','🫐','🍈','🍒','🍑','🥭','🍍','🥥','🥝','🍅','🍆','🥑','🥦','🥬','🥒','🌶','🫑','🧄','🧅','🥔','🍠','🥐','🥯','🍞','🥖','🥨','🧀','🥚','🍳','🧈','🥞','🧇','🥓','🥩','🍗','🍖','🌭','🍔','🍟','🍕','🫓','🥪','🥙','🧆','🌮','🌯','🫔','🥗','🥘','🫕','🥫','🍝','🍜','🍲','🍛','🍣','🍱','🥟','🦪','🍤','🍙','🍚','🍘','🍥','🥮','🍢','🧁','🍰','🎂','🍮','🍭','🍬','🍫','🍿','🍩','🍪','🌰','🥜','🍯','🧃','🥤','🧋','☕','🫖','🍵','🧉','🍺','🍻','🥂','🍷','🥃','🍸','🍹','🍾'],
+    '🚀 Путешествия':['🚗','🚕','🚙','🚌','🚎','🏎','🚓','🚑','🚒','🚐','🛻','🚚','🚛','🚜','🏍','🛵','🛺','🚲','🛴','🛹','🛼','🚏','🛣','🛤','⛽','🛞','🚨','🚥','🚦','🛑','🚧','⚓','⛵','🚤','🛥','🛳','⛴','🚢','✈️','🛩','🛫','🛬','🪂','💺','🚁','🚟','🚠','🚡','🛰','🚀','🛸','🪐','🌍','🌎','🌏','🌐','🗺','🧭','🌋','⛰','🏔','🗻','🏕','🏖','🏗','🏘','🏙','🏚','🏛','🏟','🏠','🏡','🏢','🏣','🏤','🏥','🏦','🏨','🏩','🏪','🏫','🏬','🏭','🏯','🏰','💒','🗼','🗽','⛪','🕌','🛕','🕍','⛩','🕋','⛲','⛺','🌁','🌃','🌄','🌅','🌆','🌇','🌉','♨️','🎠','🛝','🎡','🎢','🎪'],
+    '💡 Объекты':   ['⌚','📱','📲','💻','⌨️','🖥','🖨','🖱','🖲','🕹','🗜','💽','💾','💿','📀','📷','📸','📹','🎥','📽','🎞','📞','☎️','📟','📠','📺','📻','🧭','⏱','⏲','⏰','🕰','⌛','⏳','📡','🔋','🪫','🔌','💡','🔦','🕯','🪔','🧱','🪞','🪟','🛏','🛋','🪑','🚽','🪠','🚿','🛁','🪤','🪒','🧴','🧷','🧹','🧺','🧻','🪣','🧼','🫧','🪥','🧽','🧯','🛒','🚪','🪞','🪟','🛏','🖼','🪆','🪅','🎎','🎏','🎐','🎑','🧧','🎁','🎀','🎊','🎉','🎋','🎍','🎃','🎄','🎆','🎇','🧨','✨','🎈','🎌','🏮','🪔','💎','🔑','🗝','🔐','🔏','🔒','🔓'],
+    '🔣 Символы':   ['#️⃣','*️⃣','0️⃣','1️⃣','2️⃣','3️⃣','4️⃣','5️⃣','6️⃣','7️⃣','8️⃣','9️⃣','🔟','🔠','🔡','🔢','🔣','🔤','🅰️','🆎','🅱️','🆑','🆒','🆓','ℹ️','🆔','Ⓜ️','🆕','🆖','🅾️','🆗','🅿️','🆘','🆙','🆚','🈶','🈯','🉐','🈹','🈚','🈲','🈵','🈴','🈳','㊗️','㊙️','🈺','🈷️','✴️','🆚','💮','🉑','🈸','🈶','🚫','⛔','📵','🔞','🔃','🔄','🔙','🔚','🔛','🔜','🔝','🔰','♻️','✅','🈶','💲','💱','➕','➖','➗','✖️','🟰','♾','💢','💥','💫','💦','🔊','🔔','🎵','🎶','⁉️','❓','❔','❕','❗','〰️','💤','🔅','🔆','🔱','⚜️','🔰','♻️'],
+};
+
+const _emojiRecent = (() => {
+    try { return JSON.parse(localStorage.getItem('wc_emoji_recent') || '[]'); } catch(e) { return []; }
+})();
+
+function _saveEmojiRecent(em) {
+    const idx = _emojiRecent.indexOf(em);
+    if (idx > -1) _emojiRecent.splice(idx, 1);
+    _emojiRecent.unshift(em);
+    if (_emojiRecent.length > 24) _emojiRecent.length = 24;
+    try { localStorage.setItem('wc_emoji_recent', JSON.stringify(_emojiRecent)); } catch(e) {}
+}
+
+let _emojiPickerOpen = false;
+
+function toggleEmojiPicker() {
+    const existing = document.getElementById('_wc_emoji_picker');
+    if (existing) { existing.remove(); _emojiPickerOpen = false; return; }
+    _emojiPickerOpen = true;
+
+    // Build picker
+    const picker = document.createElement('div');
+    picker.id = '_wc_emoji_picker';
+    picker.style.cssText = [
+        'position:absolute',
+        'bottom:calc(100% + 8px)',
+        'left:0',
+        'right:0',
+        'z-index:9999',
+        'background:rgba(22,22,30,0.98)',
+        'backdrop-filter:blur(30px)',
+        '-webkit-backdrop-filter:blur(30px)',
+        'border:0.5px solid rgba(255,255,255,0.1)',
+        'border-radius:18px',
+        'box-shadow:0 8px 40px rgba(0,0,0,0.6)',
+        'overflow:hidden',
+        'animation:_epIn 0.2s cubic-bezier(0.34,1.56,0.64,1)',
+        'display:flex',
+        'flex-direction:column',
+        'height:320px',
+    ].join(';');
+
+    if (!document.getElementById('_ep_style')) {
+        const s = document.createElement('style'); s.id = '_ep_style';
+        s.textContent = `
+            @keyframes _epIn { from{opacity:0;transform:scale(0.92) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
+            #_wc_emoji_picker .ep-cat-tabs { display:flex;gap:2px;padding:8px 8px 6px;border-bottom:0.5px solid rgba(255,255,255,0.08);flex-shrink:0;overflow-x:auto;scrollbar-width:none; }
+            #_wc_emoji_picker .ep-cat-tabs::-webkit-scrollbar { display:none }
+            #_wc_emoji_picker .ep-tab { font-size:18px;padding:6px 8px;border-radius:10px;cursor:pointer;border:none;background:none;transition:background 0.1s;flex-shrink:0; }
+            #_wc_emoji_picker .ep-tab:hover,.ep-tab.active { background:rgba(255,255,255,0.12); }
+            #_wc_emoji_picker .ep-search { margin:8px;padding:8px 12px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:12px;color:#fff;font-size:14px;outline:none;font-family:inherit; }
+            #_wc_emoji_picker .ep-search::placeholder { color:rgba(255,255,255,0.3); }
+            #_wc_emoji_picker .ep-grid { display:grid;grid-template-columns:repeat(auto-fill,minmax(36px,1fr));gap:2px;padding:6px 8px;overflow-y:auto;flex:1; }
+            #_wc_emoji_picker .ep-grid::-webkit-scrollbar { width:3px; }
+            #_wc_emoji_picker .ep-grid::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.15);border-radius:2px; }
+            #_wc_emoji_picker .ep-em { font-size:22px;padding:4px;border-radius:8px;cursor:pointer;text-align:center;border:none;background:none;transition:transform 0.1s,background 0.1s;line-height:1.3; }
+            #_wc_emoji_picker .ep-em:hover { background:rgba(255,255,255,0.1);transform:scale(1.2); }
+            #_wc_emoji_picker .ep-em:active { transform:scale(0.9); }
+            #_wc_emoji_picker .ep-cat-label { font-size:10px;font-weight:700;color:rgba(255,255,255,0.35);letter-spacing:0.6px;text-transform:uppercase;padding:6px 2px 2px;grid-column:1/-1; }
+        `;
+        document.head.appendChild(s);
+    }
+
+    // Search bar
+    const searchBar = document.createElement('input');
+    searchBar.className = 'ep-search';
+    searchBar.placeholder = '🔍 Поиск emoji...';
+    searchBar.setAttribute('autocomplete', 'off');
+
+    // Category tabs (emoji only, no text)
+    const tabs = document.createElement('div');
+    tabs.className = 'ep-cat-tabs';
+    const catKeys = Object.keys(EMOJI_CATEGORIES);
+    let activeCat = catKeys[1]; // default: smileys
+
+    // Emoji grid
+    const grid = document.createElement('div');
+    grid.className = 'ep-grid';
+
+    function renderGrid(cat, query) {
+        grid.innerHTML = '';
+        if (query) {
+            // Search across all categories
+            const q = query.toLowerCase();
+            const all = Object.values(EMOJI_CATEGORIES).flat();
+            const results = all.filter(e => e.includes(q) || e.codePointAt(0).toString(16).includes(q));
+            results.slice(0, 120).forEach(em => appendEmoji(em));
+            return;
+        }
+        if (cat === catKeys[0]) {
+            // Recent
+            const recent = _emojiRecent.length > 0 ? _emojiRecent : ['😊','😂','❤️','👍','🔥','🎉','🥰','😎','💯','🙏','🤝','👋'];
+            recent.forEach(em => appendEmoji(em));
+        } else {
+            const emojis = EMOJI_CATEGORIES[cat] || [];
+            emojis.forEach(em => appendEmoji(em));
+        }
+    }
+
+    function appendEmoji(em) {
+        const btn = document.createElement('button');
+        btn.className = 'ep-em';
+        btn.textContent = em;
+        btn.title = em;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            _saveEmojiRecent(em);
+            insertEmoji(em);
+            // Update recent tab if active
+            if (activeCat === catKeys[0]) renderGrid(catKeys[0], '');
+        });
+        grid.appendChild(btn);
+    }
+
+    catKeys.forEach((cat, i) => {
+        const tab = document.createElement('button');
+        tab.className = 'ep-tab' + (cat === activeCat ? ' active' : '');
+        // Show first emoji of category name as tab icon
+        tab.textContent = cat.split(' ')[0];
+        tab.title = cat.split(' ').slice(1).join(' ');
+        tab.addEventListener('click', () => {
+            activeCat = cat;
+            tabs.querySelectorAll('.ep-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            searchBar.value = '';
+            renderGrid(cat, '');
+        });
+        tabs.appendChild(tab);
+    });
+
+    searchBar.addEventListener('input', () => {
+        renderGrid(activeCat, searchBar.value.trim());
+    });
+
+    picker.appendChild(tabs);
+    picker.appendChild(searchBar);
+    picker.appendChild(grid);
+    renderGrid(activeCat, '');
+
+    // Attach to input-bar (needs position:relative)
+    const inputBar = document.querySelector('.input-bar');
+    if (inputBar) {
+        inputBar.style.position = 'relative';
+        inputBar.appendChild(picker);
+    } else {
+        document.body.appendChild(picker);
+    }
+
+    // Close on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function _closeEP(e) {
+            if (!picker.contains(e.target)) {
+                picker.remove();
+                _emojiPickerOpen = false;
+                document.removeEventListener('click', _closeEP);
+            }
+        });
+    }, 100);
+
+    searchBar.focus();
 }
 
 // Scroll-down button — автоматически создаётся при открытии чата
@@ -1070,20 +1319,30 @@ function initSocket() {
         wsReconnected = true;
     });
 
-    socket.on('disconnect', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('connect_error', () => { wsConnected = false; updateConnStatus(false); });
+    socket.on('disconnect', (reason) => {
+        wsConnected = false;
+        updateConnStatus(false);
+        // Don't show toast for intentional disconnects
+        if (reason !== 'io client disconnect') {
+            showToast('⚡ Переподключение...', 'warning', 3000);
+        }
+    });
+    socket.on('connect_error', () => {
+        wsConnected = false;
+        updateConnStatus(false);
+    });
     socket.on('reconnect', () => {
         wsConnected = true;
         updateConnStatus(true);
-        // FIX Task 5e: re-join rooms and load missed messages on reconnect
+        showToast('✅ Соединение восстановлено', 'success', 2000);
+        // Re-join rooms and load missed messages — auto, no user action needed (промт #10)
         socket.emit('join', { user_id: currentUser.id });
         if (currentChatId) {
             socket.emit('enter_chat', { chat_id: currentChatId });
-            // OPT: load messages that arrived while disconnected
             var lastId = _getLastMsgId(currentChatId);
             if (lastId) loadMessagesSince(currentChatId, lastId);
         }
-        // Flush offline message queue (Task 5f)
+        // Flush offline message queue automatically (промт #10)
         _flushOfflineQueue();
         loadChats();
     loadMoments(); // INIT: загружаем моменты при старте
@@ -1696,8 +1955,23 @@ body {
 /* ── v9.0: ВРЕМЯ INLINE как в Telegram ── */
 .msg-time { display:none !important; }
 .bubble { padding:8px 12px 6px !important; position:relative; }
-.msg-row { margin-bottom:1px !important; }
+.msg-row { margin-bottom:1px !important; position:relative; }
+/* Message grouping — последовательные от одного отправителя */
+.msg-row.grouped-top    .bubble { border-radius:22px 22px 22px 6px !important; margin-bottom:0 !important; }
+.msg-row.grouped-mid    .bubble { border-radius:6px 22px 22px 6px !important; margin-bottom:0 !important; }
+.msg-row.grouped-bot    .bubble { border-radius:6px 22px 22px 22px !important; }
+.msg-row.out.grouped-top .bubble { border-radius:22px 22px 6px 22px !important; }
+.msg-row.out.grouped-mid .bubble { border-radius:22px 6px 6px 22px !important; }
+.msg-row.out.grouped-bot .bubble { border-radius:22px 6px 22px 22px !important; }
+/* Hide avatar for grouped messages */
+.msg-row.grouped-top > img,
+.msg-row.grouped-mid > img { visibility:hidden; }
+/* Mountain status icon */
+.status-icon svg path { transition:fill 0.2s,stroke 0.2s; }
 .msg-meta-inline { display:inline-flex;align-items:center;gap:3px;float:right;margin-left:6px;margin-bottom:-3px;margin-top:2px;font-size:11px;opacity:0.6;white-space:nowrap;pointer-events:none;vertical-align:bottom;line-height:1; }
+/* Mountain status icons — белая (отправлено), синяя (прочитано) */
+.status-mountain { display:inline-flex;align-items:center;vertical-align:middle; }
+.status-mountain svg { transition:color 0.3s; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
@@ -2414,6 +2688,15 @@ body {
         <div style="font-size:11px;color:var(--text-2);margin-bottom:4px" id="typing-name-label"></div>
     </div>
     <div class="input-bar glass" style="border-top:0.5px solid var(--sep)">
+        <!-- REPLY BLOCK — появляется при свайпе/ответе -->
+        <div id="reply-block" style="display:none;align-items:center;gap:8px;padding:8px 12px 4px;border-bottom:0.5px solid rgba(255,255,255,0.07);animation:replyBlockIn 0.2s ease">
+            <div style="width:3px;height:36px;background:var(--accent);border-radius:2px;flex-shrink:0"></div>
+            <div style="flex:1;min-width:0">
+                <div id="reply-name" style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:2px"></div>
+                <div id="reply-text" style="font-size:13px;color:rgba(255,255,255,0.6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px"></div>
+            </div>
+            <button onclick="cancelReply()" style="width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:rgba(255,255,255,0.6);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:14px">✕</button>
+        </div>
         <div class="tg-input-row">
             <button class="tg-attach-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -3598,6 +3881,12 @@ async function loadMessages(initial = false, retryCount = 0) {
         }
 
         const url = `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}${beforeId ? `&before_id=${beforeId}` : ''}`;
+
+        // Show skeleton UI while loading (промт #2)
+        if (initial && container && !container.querySelector('[data-msg-id]')) {
+            container.innerHTML = _buildSkeletonHTML();
+        }
+
         const res  = await apiFetch(url);
 
         // Проверяем что чат не сменился пока грузили
@@ -3617,7 +3906,11 @@ async function loadMessages(initial = false, retryCount = 0) {
             return;
         }
 
-        const msgs = await res.json();
+        const _rawData = await res.json();
+        // Support both old array format and new {messages, pinned} format
+        const msgs    = Array.isArray(_rawData) ? _rawData : (_rawData.messages || []);
+        const _pinned = Array.isArray(_rawData) ? null : (_rawData.pinned || null);
+        if (_pinned) showPinnedBanner(_pinned);
         if (!Array.isArray(msgs)) { console.error('[loadMessages] not array'); return; }
         if (currentChatId !== _savedChatId) return; // чат сменился
 
@@ -3714,6 +4007,36 @@ function buildMessageRow(msg, animate = true) {
     row.style.containIntrinsicSize = '0 72px'; // estimated height hint
     row.setAttribute('data-msg-id', msg.id || '');
     if (animate) row.classList.add('animate-msg');
+
+    // Message grouping — добавляем класс если предыдущее сообщение от того же отправителя
+    const container = document.getElementById('messages');
+    if (container) {
+        const prevRows = container.querySelectorAll('.msg-row');
+        const prevRow  = prevRows.length ? prevRows[prevRows.length - 1] : null;
+        if (prevRow) {
+            const prevSenderId = prevRow.dataset.senderId;
+            const currSenderId = String(msg.sender_id || '');
+            const prevIsMe     = prevRow.classList.contains('out');
+            const sameDir      = (isMe === prevIsMe);
+            const sameUser     = prevSenderId === currSenderId;
+            // Check time proximity (within 3 minutes)
+            const prevMsgTime  = parseInt(prevRow.dataset.ts || '0');
+            const currMsgTime  = msg.raw_timestamp ? new Date(msg.raw_timestamp).getTime() : Date.now();
+            const withinWindow = !prevMsgTime || (currMsgTime - prevMsgTime) < 180000;
+
+            if (sameDir && sameUser && withinWindow) {
+                if (!prevRow.classList.contains('grouped-top') && !prevRow.classList.contains('grouped-mid')) {
+                    prevRow.classList.add('grouped-top');
+                } else {
+                    prevRow.classList.remove('grouped-top');
+                    prevRow.classList.add('grouped-mid');
+                }
+                row.classList.add('grouped-bot');
+            }
+        }
+        row.dataset.senderId = String(msg.sender_id || '');
+        row.dataset.ts       = msg.raw_timestamp ? new Date(msg.raw_timestamp).getTime() : Date.now();
+    }
 
     // Долгое нажатие (мобайл)
     let lpTimer;
@@ -3860,7 +4183,8 @@ function buildMessageRow(msg, animate = true) {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="flex-shrink:0;opacity:0.6"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5 5-5-5M12 3v13" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </a>`;
     } else if (type === 'audio') {
-        contentHtml = renderAudioPlayer(msg.file_url);
+        // FIXED: голосовое сообщение теперь всегда показывает время
+        contentHtml = renderAudioPlayer(msg.file_url, displayTime, isMe, msg.is_read);
     } else {
         const text = msg.content || msg.text || '';
         const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -3868,8 +4192,16 @@ function buildMessageRow(msg, animate = true) {
         const linked = safe.replace(/(https?:\/\/[^\s<]+)/g,
             `<a href="$1" target="_blank" rel="noopener noreferrer"
                 style="color:${linkedColor};text-decoration:none;border-bottom:1px solid ${linkedColor}40;word-break:break-all;font-weight:500">$1</a>`);
-        const _inlineMeta = `<span class="msg-meta-inline">${displayTime}${isMe ? '&nbsp;<span class="status-icon" style="color:' + (msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)') + ';">' + (msg.is_read ? ICONS.checkDouble : ICONS.check) + '</span>' : ''}</span>`;
-        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${linked}${_inlineMeta}</div>`;
+        const _inlineMeta = `<span class="msg-meta-inline">${displayTime}${isMe ? '&nbsp;<span class="status-icon" style="color:' + (msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)') + ';">' + (msg.is_read ? ICONS.checkDouble : ICONS.checkDouble) + '</span>' : ''}</span>`;
+        // Reply quote block
+        const _replyHtml = msg.reply_to_id ? `
+            <div onclick="scrollToMsg(${msg.reply_to_id})" style="cursor:pointer;display:flex;gap:6px;margin-bottom:6px;padding:6px 8px;background:rgba(255,255,255,0.07);border-radius:10px;border-left:3px solid var(--accent)">
+                <div style="flex:1;min-width:0">
+                    <div style="font-size:11px;font-weight:700;color:var(--accent);margin-bottom:2px">${escHtml(msg.reply_to_name||'')}</div>
+                    <div style="font-size:12px;color:rgba(255,255,255,0.6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(msg.reply_to_text||'')}</div>
+                </div>
+            </div>` : '';
+        contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5">${_replyHtml}${linked}${_inlineMeta}</div>`;
     }
 
     // Аватар — кэшированный, для групп берём по sender_id
@@ -3918,6 +4250,9 @@ function buildMessageRow(msg, animate = true) {
             </div>
             <div class="reactions-bar" id="reactions-${msg.id}"></div>
         </div>`;
+
+    // Setup per-message swipe-to-reply
+    _setupMsgSwipeReply(row, msg);
 
     return row;
 }
@@ -4367,30 +4702,74 @@ function showMsgContextMenu(row, msg) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
+// Collect all visible chat images for swipe-between-photos
+function _collectChatImages() {
+    const imgs = document.querySelectorAll('#messages .img-bubble img[src]');
+    return Array.from(imgs).map(i => i.src).filter(s => s && !s.startsWith('data:'));
+}
+
+let _viewerImgList = [];
+let _viewerImgIdx  = 0;
+
 function openImgZoom(src) {
     if (!src) return;
+    _viewerImgList = _collectChatImages();
+    _viewerImgIdx  = _viewerImgList.indexOf(src);
+    if (_viewerImgIdx < 0) { _viewerImgList = [src]; _viewerImgIdx = 0; }
+
     let viewer = document.getElementById('wc-img-viewer');
     if (!viewer) {
         viewer = document.createElement('div');
         viewer.id = 'wc-img-viewer';
+
+        // Inject enhanced viewer CSS once
+        if (!document.getElementById('_viewer_css')) {
+            const s = document.createElement('style'); s.id = '_viewer_css';
+            s.textContent = `
+                #wc-img-viewer { position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0);display:flex;align-items:center;justify-content:center;transition:background 0.22s; }
+                #wc-img-viewer.open { background:rgba(0,0,0,0.96); }
+                #wc-img-viewer-img { max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;user-select:none;transition:transform 0.28s cubic-bezier(0.34,1.56,0.64,1),opacity 0.18s;opacity:0; }
+                #wc-img-viewer-img.loaded { opacity:1; }
+                #wc-img-viewer-close { position:absolute;top:max(env(safe-area-inset-top,0px),14px);right:16px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(12px);border:0.5px solid rgba(255,255,255,0.2);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10;-webkit-tap-highlight-color:transparent;transition:background 0.15s; }
+                #wc-img-viewer-close:hover { background:rgba(255,255,255,0.25); }
+                .wc-viewer-nav { position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.15);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background 0.15s,opacity 0.2s;z-index:10; }
+                .wc-viewer-nav:hover { background:rgba(255,255,255,0.22); }
+                .wc-viewer-nav.prev { left:16px; }
+                .wc-viewer-nav.next { right:16px; }
+                .wc-viewer-nav:disabled { opacity:0.2;cursor:default; }
+                #wc-viewer-counter { position:absolute;top:max(env(safe-area-inset-top,0px),14px);left:50%;transform:translateX(-50%);font-size:13px;font-weight:600;color:rgba(255,255,255,0.7);background:rgba(0,0,0,0.4);padding:4px 12px;border-radius:20px;backdrop-filter:blur(8px); }
+                #wc-viewer-blur { position:absolute;inset:0;z-index:0;filter:blur(20px);opacity:0.25;background-size:cover;background-position:center;transition:opacity 0.3s; }
+            `;
+            document.head.appendChild(s);
+        }
+
         viewer.innerHTML = `
+            <div id="wc-viewer-blur"></div>
             <button id="wc-img-viewer-close" aria-label="Закрыть" onclick="closeImgZoom()">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
             </button>
-            <a id="wc-img-dl" download="photo.jpg" style="position:absolute;top:max(env(safe-area-inset-top,0px),12px);right:60px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
+            <div id="wc-viewer-counter"></div>
+            <a id="wc-img-dl" download="photo.jpg" style="position:absolute;top:max(env(safe-area-inset-top,0px),14px);right:64px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </a>
-            <img id="wc-img-viewer-img" src="" alt="" draggable="false">`;
+            <button class="wc-viewer-nav prev" id="wc-viewer-prev" onclick="_viewerNav(-1)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+            <img id="wc-img-viewer-img" src="" alt="" draggable="false">
+            <button class="wc-viewer-nav next" id="wc-viewer-next" onclick="_viewerNav(1)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 18l6-6-6-6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>`;
         document.body.appendChild(viewer);
         viewer.addEventListener('click', function(e) { if (e.target === viewer) closeImgZoom(); });
     }
-    const img = viewer.querySelector('#wc-img-viewer-img');
-    const dl  = viewer.querySelector('#wc-img-dl');
-    img.src = src;
-    if (dl) dl.href = src;
+    _viewerLoadImg(src);
     viewer.classList.add('open');
     document.body.style.overflow = 'hidden';
-    const onKey = (e) => { if (e.key === 'Escape') { closeImgZoom(); document.removeEventListener('keydown', onKey); } };
+    const onKey = (e) => {
+        if (e.key === 'Escape') { closeImgZoom(); document.removeEventListener('keydown', onKey); }
+        if (e.key === 'ArrowLeft')  _viewerNav(-1);
+        if (e.key === 'ArrowRight') _viewerNav(1);
+    };
     document.addEventListener('keydown', onKey);
     // Swipe down to close
     let _sy = 0, _dragging = false;
@@ -4419,6 +4798,61 @@ function openImgZoom(src) {
         viewer.removeEventListener('touchmove', onTM);
         viewer.removeEventListener('touchend', onTE);
     };
+}
+
+function _viewerLoadImg(src) {
+    const img     = document.getElementById('wc-img-viewer-img');
+    const dl      = document.getElementById('wc-img-dl');
+    const blur    = document.getElementById('wc-viewer-blur');
+    const counter = document.getElementById('wc-viewer-counter');
+    const prev    = document.getElementById('wc-viewer-prev');
+    const next    = document.getElementById('wc-viewer-next');
+    if (!img) return;
+
+    // Blur background
+    if (blur) { blur.style.backgroundImage = `url(${src})`; blur.style.opacity = '0.25'; }
+
+    // Blur → fade in image
+    img.classList.remove('loaded');
+    img.onload = () => { img.classList.add('loaded'); };
+    img.onerror = () => { img.classList.add('loaded'); };
+    img.src = src;
+    if (dl) dl.href = src;
+
+    // Counter
+    if (counter && _viewerImgList.length > 1) {
+        counter.textContent = `${_viewerImgIdx + 1} / ${_viewerImgList.length}`;
+        counter.style.display = '';
+    } else if (counter) {
+        counter.style.display = 'none';
+    }
+
+    // Nav buttons
+    if (prev) prev.disabled = _viewerImgIdx <= 0;
+    if (next) next.disabled = _viewerImgIdx >= _viewerImgList.length - 1;
+    if (_viewerImgList.length <= 1) {
+        if (prev) prev.style.display = 'none';
+        if (next) next.style.display = 'none';
+    } else {
+        if (prev) prev.style.display = '';
+        if (next) next.style.display = '';
+    }
+}
+
+function _viewerNav(dir) {
+    const newIdx = _viewerImgIdx + dir;
+    if (newIdx < 0 || newIdx >= _viewerImgList.length) return;
+    _viewerImgIdx = newIdx;
+    const img = document.getElementById('wc-img-viewer-img');
+    if (img) {
+        img.style.transform = `translateX(${dir > 0 ? '-40px' : '40px'}) scale(0.95)`;
+        img.style.opacity = '0';
+        setTimeout(() => {
+            img.style.transform = '';
+            _viewerLoadImg(_viewerImgList[_viewerImgIdx]);
+        }, 120);
+    }
+    vibrate(6);
 }
 
 function closeImgZoom() {
@@ -4643,18 +5077,29 @@ function confirmDeleteMessage(msgId) { _confirmDeleteForAll(msgId); }
 // ══════════════════════════════════════════════════════════
 //  АУДИО ПЛЕЕР — с волновой формой
 // ══════════════════════════════════════════════════════════
-function renderAudioPlayer(src) {
+function renderAudioPlayer(src, displayTime, isMe, isRead) {
     const uid = `au_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+    // FIXED: время и статус всегда показываются у голосовых сообщений
+    const readColor = isRead ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)';
+    const statusIcon = isMe
+        ? `&nbsp;<span style="color:${readColor};display:inline-flex;align-items:center">${isRead ? ICONS.checkDouble : ICONS.checkDouble}</span>`
+        : '';
+    const timeMeta = displayTime
+        ? `<div class="audio-time-meta" style="display:flex;align-items:center;justify-content:flex-end;gap:2px;font-size:10px;opacity:0.6;margin-top:3px;white-space:nowrap">${displayTime}${statusIcon}</div>`
+        : '';
     return `
-    <div class="audio-player" data-src="${src}">
+    <div class="audio-player" data-src="${src}" style="min-width:200px">
         <button class="audio-play-btn" onclick="toggleAudio('${uid}')">
             <svg id="play-icon-${uid}" width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         </button>
-        <div class="audio-progress-wrap">
+        <div class="audio-progress-wrap" style="flex:1;min-width:0">
             <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:24px;flex:1;cursor:pointer" onclick="seekAudio(event,'${uid}')">
                 ${Array(30).fill(0).map(() => `<div style="width:2px;background:rgba(255,255,255,0.3);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*20))}px;transition:background 0.1s"></div>`).join('')}
             </div>
-            <div class="audio-dur" id="dur_${uid}">0:00</div>
+            <div style="display:flex;align-items:center;justify-content:space-between">
+                <div class="audio-dur" id="dur_${uid}">0:00</div>
+                ${timeMeta}
+            </div>
         </div>
         <audio id="${uid}" src="${src}" ontimeupdate="updateAudio('${uid}')" onended="onAudioEnd('${uid}')" onloadedmetadata="setAudioDur('${uid}');drawWaveform('${uid}')"></audio>
     </div>`;
@@ -4834,6 +5279,256 @@ function addReactionToMsg(msgId, emoji, isMe) {
     }
 }
 
+
+// ══════════════════════════════════════════════════════════
+//  SCROLL TO MSG + HIGHLIGHT (промт #5)
+// ══════════════════════════════════════════════════════════
+function scrollToMsg(msgId) {
+    if (!msgId) return;
+    const el = document.querySelector('[data-msg-id="' + msgId + '"]');
+    if (!el) { showToast('Прокрутите вверх чтобы найти сообщение', 'info', 2000); return; }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.style.transition = 'background 0.2s';
+    el.style.background = 'rgba(16,185,129,0.18)';
+    el.style.borderRadius = '14px';
+    setTimeout(() => {
+        el.style.background = '';
+        setTimeout(() => { el.style.transition = ''; el.style.borderRadius = ''; }, 300);
+    }, 1400);
+}
+
+// ══════════════════════════════════════════════════════════
+//  PINNED MESSAGE BANNER (промт #11)
+// ══════════════════════════════════════════════════════════
+function showPinnedBanner(msg) {
+    document.getElementById('_wc_pinned_banner')?.remove();
+    if (!msg) return;
+    const banner = document.createElement('div');
+    banner.id = '_wc_pinned_banner';
+    banner.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:100;background:rgba(22,22,30,0.97);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:0.5px solid rgba(255,255,255,0.08);padding:8px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;animation:_pinIn 0.2s ease;';
+    if (!document.getElementById('_pin_style')) {
+        const s = document.createElement('style'); s.id = '_pin_style';
+        s.textContent = '@keyframes _pinIn{from{transform:translateY(-100%)}to{transform:translateY(0)}}';
+        document.head.appendChild(s);
+    }
+    const preview = (msg.content || '').slice(0, 80) || '📎 Вложение';
+    banner.innerHTML = `<div style="flex-shrink:0;color:var(--accent)">📌</div><div style="flex:1;min-width:0"><div style="font-size:11px;font-weight:700;color:var(--accent)">Закреплено</div><div style="font-size:13px;color:rgba(255,255,255,0.7);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(preview)}</div></div><button onclick="document.getElementById('_wc_pinned_banner')?.remove()" style="width:24px;height:24px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:rgba(255,255,255,0.5);cursor:pointer;flex-shrink:0">✕</button>`;
+    banner.addEventListener('click', e => { if (e.target.tagName !== 'BUTTON') scrollToMsg(msg.id); });
+    const header = document.getElementById('chat-header');
+    if (header) { header.style.position = 'relative'; header.after(banner); }
+}
+
+// ══════════════════════════════════════════════════════════
+//  UNREAD DIVIDER (промт #11)
+// ══════════════════════════════════════════════════════════
+function _insertUnreadDivider(container) {
+    if (container.querySelector('._unread_divider')) return;
+    const div = document.createElement('div');
+    div.className = '_unread_divider';
+    div.style.cssText = 'text-align:center;padding:8px 0;';
+    div.innerHTML = '<span style="display:inline-block;background:rgba(16,185,129,0.15);border:0.5px solid rgba(16,185,129,0.3);color:var(--accent);font-size:11px;font-weight:700;padding:3px 14px;border-radius:12px;letter-spacing:0.3px">Непрочитанные</span>';
+    container.appendChild(div);
+}
+
+
+
+// ══════════════════════════════════════════════════════════
+//  СЕКРЕТНЫЕ ЧАТЫ — UI (промт #9)
+// ══════════════════════════════════════════════════════════
+function openSecretChat(partnerId, partnerName) {
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay';
+    ov.onclick = e => { if (e.target === ov) ov.remove(); };
+
+    const sh = document.createElement('div');
+    sh.className = 'modal-sheet';
+    sh.innerHTML = `
+        <div class="modal-handle"></div>
+        <div style="padding:0 4px 20px">
+            <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+                <div style="width:44px;height:44px;border-radius:14px;background:rgba(99,102,241,0.2);display:flex;align-items:center;justify-content:center;font-size:22px">🕶</div>
+                <div>
+                    <div style="font-size:18px;font-weight:700">Секретный чат</div>
+                    <div style="font-size:13px;color:rgba(255,255,255,0.45);margin-top:2px">E2E шифрование · самоудаление</div>
+                </div>
+            </div>
+            <div style="background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.2);border-radius:16px;padding:14px 16px;margin-bottom:20px;font-size:13px;color:rgba(255,255,255,0.7);line-height:1.6">
+                🔐 Сообщения шифруются на вашем устройстве<br>
+                🚫 Сервер не видит содержимое<br>
+                💥 Поддерживает самоудаление сообщений
+            </div>
+            <div style="margin-bottom:16px">
+                <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.4);margin-bottom:8px;letter-spacing:0.5px;text-transform:uppercase">Автоудаление</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap" id="_sc_ttl_picker">
+                    ${[['Выкл','0'],['1 мин','60'],['5 мин','300'],['1 час','3600'],['24 ч','86400']].map(([l,v]) =>
+                        `<button data-ttl="${v}" onclick="_scSelectTTL(this)" style="padding:8px 14px;border-radius:20px;border:1px solid rgba(255,255,255,0.15);background:${v==='0'?'rgba(16,185,129,0.2)':'rgba(255,255,255,0.06)'};color:#fff;font-size:13px;cursor:pointer;font-family:inherit;transition:all 0.15s">${l}</button>`
+                    ).join('')}
+                </div>
+            </div>
+            <button onclick="_startSecretChat(${partnerId},'${escHtml(partnerName)}')" style="width:100%;padding:14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:16px;color:#fff;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit">
+                🕶 Начать секретный чат
+            </button>
+        </div>`;
+    ov.appendChild(sh);
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        sh.style.transform = 'translateY(0)';
+    }));
+}
+
+window._scSelectedTTL = 0;
+function _scSelectTTL(btn) {
+    window._scSelectedTTL = parseInt(btn.dataset.ttl || '0');
+    document.querySelectorAll('#_sc_ttl_picker button').forEach(b => {
+        b.style.background = b === btn ? 'rgba(16,185,129,0.25)' : 'rgba(255,255,255,0.06)';
+        b.style.borderColor = b === btn ? 'var(--accent)' : 'rgba(255,255,255,0.15)';
+    });
+}
+
+async function _startSecretChat(partnerId, partnerName) {
+    document.querySelector('.modal-overlay')?.remove();
+    try {
+        const r = await apiFetch('/api/secret/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ partner_id: partnerId }),
+        });
+        if (!r || !r.ok) throw new Error('Failed');
+        const data = await r.json();
+        if (data.ok) {
+            showToast(`🕶 Секретный чат с ${partnerName} создан`, 'success', 3000);
+            // Open a local secret chat view
+            _openSecretChatView(data.secret_chat_id, partnerName, window._scSelectedTTL);
+        }
+    } catch(e) {
+        showToast('Ошибка создания секретного чата', 'error');
+    }
+}
+
+function _openSecretChatView(scId, partnerName, ttl) {
+    // Mark current view as secret mode
+    const chatWin = document.getElementById('chat-window');
+    if (!chatWin) return;
+    chatWin.dataset.secretChatId = scId;
+    chatWin.dataset.secretTtl    = ttl;
+
+    // Show secret mode banner
+    const existing = document.getElementById('_sc_banner');
+    if (!existing) {
+        const banner = document.createElement('div');
+        banner.id = '_sc_banner';
+        banner.style.cssText = 'background:linear-gradient(90deg,rgba(99,102,241,0.15),rgba(139,92,246,0.15));border-bottom:0.5px solid rgba(99,102,241,0.25);padding:6px 16px;text-align:center;font-size:12px;font-weight:600;color:rgba(139,92,246,1);letter-spacing:0.3px;';
+        banner.textContent = '🕶 Секретный чат · E2E · ' + (ttl > 0 ? `Удаление через ${fmtSec(ttl)}` : 'Без автоудаления');
+        const header = document.getElementById('chat-header');
+        if (header) header.after(banner);
+    }
+}
+
+// Listen for incoming secret chat invites
+socket.on('secret_chat_invite', (data) => {
+    const { from_id, from_name, secret_chat_id } = data;
+    showToast(`🕶 ${from_name} приглашает в секретный чат`, 'info', 6000);
+});
+
+// ══════════════════════════════════════════════════════════
+//  ПОИСК СООБЩЕНИЙ (промт #11)
+// ══════════════════════════════════════════════════════════
+let _searchOpen = false;
+
+function toggleChatSearch() {
+    _searchOpen = !_searchOpen;
+    let panel = document.getElementById('_msg_search_panel');
+    if (!_searchOpen) {
+        if (panel) { panel.style.opacity='0'; panel.style.transform='translateY(-8px)'; setTimeout(()=>panel.remove(),200); }
+        // Remove highlights
+        document.querySelectorAll('._search_hl').forEach(el => {
+            el.outerHTML = el.textContent;
+        });
+        return;
+    }
+    if (!panel) {
+        panel = document.createElement('div');
+        panel.id = '_msg_search_panel';
+        panel.style.cssText = 'position:absolute;top:0;left:0;right:0;z-index:200;background:rgba(22,22,30,0.98);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:10px 12px;display:flex;align-items:center;gap:8px;border-bottom:0.5px solid rgba(255,255,255,0.08);transition:opacity 0.2s,transform 0.2s;opacity:0;transform:translateY(-8px);';
+        panel.innerHTML = `
+            <input id="_msg_search_input" placeholder="🔍 Поиск в переписке..." autocomplete="off" style="flex:1;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:8px 12px;color:#fff;font-size:14px;outline:none;font-family:inherit;">
+            <span id="_msg_search_count" style="font-size:12px;color:rgba(255,255,255,0.4);white-space:nowrap;min-width:40px;text-align:center"></span>
+            <button onclick="toggleChatSearch()" style="width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,0.08);border:none;color:rgba(255,255,255,0.6);cursor:pointer;font-size:16px">✕</button>`;
+        const header = document.getElementById('chat-header');
+        if (header) { header.style.position='relative'; header.after(panel); }
+        panel.querySelector('#_msg_search_input').addEventListener('input', _doMsgSearch);
+        panel.querySelector('#_msg_search_input').addEventListener('keydown', e => {
+            if (e.key === 'Enter') _doMsgSearch();
+            if (e.key === 'Escape') toggleChatSearch();
+        });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+            panel.style.opacity='1'; panel.style.transform='translateY(0)';
+            panel.querySelector('#_msg_search_input').focus();
+        }));
+    }
+}
+
+let _searchDebounce = null;
+let _searchResults  = [];
+let _searchResultIdx = 0;
+
+function _doMsgSearch() {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(async () => {
+        const q = (document.getElementById('_msg_search_input')?.value || '').trim();
+        const countEl = document.getElementById('_msg_search_count');
+
+        // Remove old highlights
+        document.querySelectorAll('._search_hl').forEach(el => { el.outerHTML = el.textContent; });
+        _searchResults = [];
+
+        if (q.length < 2) { if (countEl) countEl.textContent = ''; return; }
+
+        // Search DOM first (fast)
+        const domMatches = [];
+        document.querySelectorAll('#messages .bubble').forEach(bubble => {
+            const text = bubble.textContent || '';
+            if (text.toLowerCase().includes(q.toLowerCase())) {
+                domMatches.push(bubble);
+                // Highlight
+                const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+                let node;
+                while ((node = walker.nextNode())) {
+                    const idx = node.textContent.toLowerCase().indexOf(q.toLowerCase());
+                    if (idx < 0) continue;
+                    const span = document.createElement('span');
+                    span.innerHTML =
+                        escHtml(node.textContent.slice(0, idx)) +
+                        `<span class="_search_hl" style="background:rgba(255,200,0,0.35);border-radius:3px;padding:0 1px">${escHtml(node.textContent.slice(idx, idx+q.length))}</span>` +
+                        escHtml(node.textContent.slice(idx+q.length));
+                    node.parentNode.replaceChild(span, node);
+                }
+            }
+        });
+
+        // Also search server
+        if (currentChatId) {
+            try {
+                const r = await apiFetch(`/api/chat/${currentChatId}/search?q=${encodeURIComponent(q)}`);
+                if (r && r.ok) {
+                    const data = await r.json();
+                    _searchResults = data.results || [];
+                }
+            } catch(e) {}
+        }
+
+        if (countEl) {
+            const total = Math.max(domMatches.length, _searchResults.length);
+            countEl.textContent = total > 0 ? `${total} совп.` : 'Не найдено';
+        }
+
+        // Scroll to first DOM match
+        if (domMatches.length > 0) {
+            domMatches[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, 300);
+}
+
 // ══════════════════════════════════════════════════════════
 //  ОТПРАВКА СООБЩЕНИЙ
 // ══════════════════════════════════════════════════════════
@@ -4870,11 +5565,20 @@ function sendText() {
     renderNewMessage(tempMsg, true);
 
     // FIX Task 5f: queue message if socket is disconnected
+    // Include reply data if set
+    const _replyData = _currentReplyMsg ? {
+        reply_to_id:   _currentReplyMsg.id   || null,
+        reply_to_name: _currentReplyMsg.sender_name || _currentReplyMsg.name || '',
+        reply_to_text: (_currentReplyMsg.content || _currentReplyMsg.text || '').slice(0, 100),
+    } : {};
+    if (_currentReplyMsg) cancelReply();
+
     const _msgPayload = {
         chat_id:   currentChatId,
         content:   text,
         type_msg:  'text',
         sender_id: currentUser.id,
+        ..._replyData,
     };
     if (wsConnected) {
         // OPT Task 5c: emit with ACK — server returns {ok, msg_id}
@@ -7452,6 +8156,28 @@ function _renderMomentsTab() {
         row.appendChild(infoDiv);
         row.onclick = () => openUserMomentsViewer(uid);
         row.addEventListener('touchend', (e) => { e.preventDefault(); openUserMomentsViewer(uid); }, { passive: false });
+
+        // Swipe actions row — repost/share buttons (промт #12)
+        const actRow = document.createElement('div');
+        actRow.style.cssText = 'display:flex;gap:8px;padding:0 16px 6px;';
+        if (!isMe) {
+            const repostBtn = document.createElement('button');
+            repostBtn.style.cssText = 'flex:1;padding:7px;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);border-radius:12px;color:rgba(255,255,255,0.7);font-size:12px;cursor:pointer;font-family:inherit;display:flex;align-items:center;justify-content:center;gap:5px;';
+            repostBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><polyline points="17 1 21 5 17 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11V9a4 4 0 014-4h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polyline points="7 23 3 19 7 15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M21 13v2a4 4 0 01-4 4H3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg> Репост';
+            repostBtn.onclick = (e) => { e.stopPropagation(); _repostMoment(userMoments[0]); };
+
+            const sendBtn = document.createElement('button');
+            sendBtn.style.cssText = repostBtn.style.cssText;
+            sendBtn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none"><line x1="22" y1="2" x2="11" y2="13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><polygon points="22 2 15 22 11 13 2 9 22 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg> В чат';
+            sendBtn.onclick = (e) => { e.stopPropagation(); _sendMomentToChat(userMoments[0]); };
+
+            actRow.appendChild(repostBtn);
+            actRow.appendChild(sendBtn);
+            container.appendChild(row);
+            container.appendChild(actRow);
+        } else {
+            container.appendChild(row);
+        }
         container.appendChild(row);
     });
 }
@@ -8231,26 +8957,166 @@ function _resetSwipe(el) {
 
 function _triggerQuickReply(el) {
     vibrate([10, 20]);
-    el.style.transition = 'transform 0.18s ease';
-    el.style.transform = 'translateX(12px)';
-    setTimeout(() => _resetSwipe(el), 200);
-    // Открываем чат
-    el.click();
+    el.style.transition = 'transform 0.22s cubic-bezier(0.34,1.56,0.64,1)';
+    el.style.transform = 'translateX(16px)';
+    setTimeout(() => _resetSwipe(el), 280);
+    // Ищем данные сообщения из el (chat-item) или из msg row
+    const msgId  = el.dataset.msgId;
+    const sender = el.dataset.partnerName || el.querySelector('[class*="chat-name"]')?.textContent || '';
+    const text   = el.dataset.lastMsg     || el.querySelector('[class*="preview"]')?.textContent || '';
+    if (msgId || sender) {
+        _setReplyMsg({ id: msgId, sender_name: sender, content: text });
+    }
+}
+
+// ══════════════════════════════════════════════════════════
+//  REPLY SYSTEM — ответ на сообщение (промт #5)
+// ══════════════════════════════════════════════════════════
+let _currentReplyMsg = null;
+
+function _setReplyMsg(msg) {
+    _currentReplyMsg = msg;
+    const block = document.getElementById('reply-block');
+    const nameEl = document.getElementById('reply-name');
+    const textEl = document.getElementById('reply-text');
+    if (!block || !nameEl || !textEl) return;
+
+    nameEl.textContent = msg.sender_name || msg.name || 'Сообщение';
+    const preview = msg.content || msg.text || (msg.type === 'audio' ? '🎙 Голосовое сообщение' : msg.type === 'image' ? '🖼 Фото' : '...');
+    textEl.textContent = preview.slice(0, 100);
+    block.style.display = 'flex';
+
+    // Animate in
+    if (!document.getElementById('_reply_anim_style')) {
+        const s = document.createElement('style'); s.id = '_reply_anim_style';
+        s.textContent = '@keyframes replyBlockIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}';
+        document.head.appendChild(s);
+    }
+    block.style.animation = 'none';
+    requestAnimationFrame(() => { block.style.animation = 'replyBlockIn 0.2s ease'; });
+
+    // Focus input
+    document.getElementById('msg-input')?.focus();
+    vibrate(8);
+}
+
+function cancelReply() {
+    _currentReplyMsg = null;
+    const block = document.getElementById('reply-block');
+    if (!block) return;
+    block.style.transition = 'opacity 0.15s, transform 0.15s';
+    block.style.opacity = '0';
+    block.style.transform = 'translateY(-4px)';
+    setTimeout(() => {
+        block.style.display = 'none';
+        block.style.opacity = '';
+        block.style.transform = '';
+    }, 150);
+}
+
+// Swipe-to-reply on individual message rows
+function _setupMsgSwipeReply(row, msg) {
+    let startX = 0, startY = 0, dx = 0, swiping = false, triggered = false;
+    const THRESHOLD = 60;
+
+    row.addEventListener('touchstart', e => {
+        startX   = e.touches[0].clientX;
+        startY   = e.touches[0].clientY;
+        dx       = 0;
+        swiping  = false;
+        triggered = false;
+    }, { passive: true });
+
+    row.addEventListener('touchmove', e => {
+        const cx = e.touches[0].clientX;
+        const cy = e.touches[0].clientY;
+        const xd = cx - startX;
+        const yd = cy - startY;
+
+        // Only horizontal swipe
+        if (!swiping && Math.abs(xd) < 8 && Math.abs(yd) > 8) return;
+        if (!swiping) swiping = true;
+
+        dx = xd;
+        // Only right-swipe for reply
+        if (dx > 0 && dx < THRESHOLD * 1.5) {
+            const progress = Math.min(dx / THRESHOLD, 1);
+            row.style.transform = `translateX(${dx * 0.5}px)`;
+            row.style.transition = 'none';
+
+            // Show reply indicator
+            let indicator = row.querySelector('._reply_indicator');
+            if (!indicator) {
+                indicator = document.createElement('div');
+                indicator.className = '_reply_indicator';
+                indicator.style.cssText = [
+                    'position:absolute',
+                    'left:8px',
+                    'top:50%',
+                    'transform:translateY(-50%)',
+                    'width:32px',
+                    'height:32px',
+                    'border-radius:50%',
+                    'background:var(--accent)',
+                    'display:flex',
+                    'align-items:center',
+                    'justify-content:center',
+                    'pointer-events:none',
+                    'z-index:10',
+                    'transition:opacity 0.1s,transform 0.1s',
+                ].join(';');
+                indicator.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M9 17H5a2 2 0 01-2-2V5a2 2 0 012-2h11l4 4v5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 21l-4-4 4-4" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 17h8" stroke="white" stroke-width="2.2" stroke-linecap="round"/></svg>';
+                row.style.position = 'relative';
+                row.appendChild(indicator);
+            }
+            indicator.style.opacity = String(progress);
+            indicator.style.transform = `translateY(-50%) scale(${0.6 + progress * 0.4})`;
+
+            if (dx >= THRESHOLD && !triggered) {
+                triggered = true;
+                vibrate([8, 20]);
+            }
+        }
+    }, { passive: true });
+
+    row.addEventListener('touchend', () => {
+        if (triggered && dx >= THRESHOLD) {
+            _setReplyMsg(msg);
+        }
+        // Spring back
+        row.style.transition = 'transform 0.3s cubic-bezier(0.34,1.56,0.64,1)';
+        row.style.transform = '';
+        const indicator = row.querySelector('._reply_indicator');
+        if (indicator) {
+            indicator.style.opacity = '0';
+            setTimeout(() => indicator.remove(), 200);
+        }
+        swiping  = false;
+        triggered = false;
+        dx = 0;
+    }, { passive: true });
 }
 
 function _triggerArchive(el) {
+    const chatId = el.dataset.chatId || el.dataset.partnerId;
     vibrate([10, 20]);
-    el.style.transition = 'transform 0.18s ease, opacity 0.18s ease';
+    el.style.transition = 'transform 0.22s ease, opacity 0.22s ease';
     el.style.transform = 'translateX(-100%)';
     el.style.opacity = '0';
     setTimeout(() => {
         el.style.maxHeight = el.offsetHeight + 'px';
-        el.style.transition += ', max-height 0.22s ease, padding 0.22s ease';
-        el.style.maxHeight = '0';
-        el.style.padding = '0';
-        setTimeout(() => el.remove(), 240);
-    }, 180);
-    showToast('Чат архивирован', 'info', 1800);
+        el.style.transition += ', max-height 0.25s ease, padding 0.25s ease, margin 0.25s ease';
+        requestAnimationFrame(() => {
+            el.style.maxHeight = '0';
+            el.style.padding   = '0';
+            el.style.margin    = '0';
+        });
+        setTimeout(() => el.remove(), 260);
+    }, 200);
+    if (chatId) {
+        apiFetch(`/api/chat/archive/${chatId}`, { method: 'POST' }).catch(() => {});
+    }
+    showToast('Архивировано', 'success', 2000);
 }
 
 // ══════════════════════════════════════════════════════════
