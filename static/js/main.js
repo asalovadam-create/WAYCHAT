@@ -111,18 +111,26 @@ const WCCache = (() => {
     const st = document.createElement('style');
     st.id = 'wc-ios10';
     st.textContent = `
-        /* Высота = реальный viewport без клавиатуры */
+        /* Высота = весь экран включая safe-area зону снизу */
         #app {
-            height: var(--vh, 100dvh) !important;
-            max-height: var(--vh, 100dvh) !important;
+            height: 100dvh !important;
+            min-height: 100dvh !important;
+            max-height: 100dvh !important;
             overflow: hidden !important;
+            padding-bottom: 0 !important;
+            background: var(--bg, #1d1d1e) !important;
+        }
+        /* УБИВАЕМ серую полосу снизу: любой дочерний блок #app не может
+           иметь padding-bottom основанный на safe-area кроме input-bar */
+        #app > * {
+            padding-bottom: 0 !important;
         }
         /* chat-view: flex-колонка на весь экран */
         .chat-view {
             position: fixed !important;
             top: 0 !important; left: 0 !important;
             right: 0 !important; bottom: 0 !important;
-            height: var(--vh, 100dvh) !important;
+            height: 100dvh !important;
             display: flex !important;
             flex-direction: column !important;
             overflow: hidden !important;
@@ -137,13 +145,12 @@ const WCCache = (() => {
             -webkit-overflow-scrolling: touch !important;
             overscroll-behavior-y: contain !important;
         }
-        /* input-bar: в потоке flex, НЕ position:fixed */
+        /* input-bar: ЕДИНСТВЕННОЕ место где safe-area разрешена */
         .input-bar {
             flex-shrink: 0 !important;
             position: relative !important;
             transform: none !important;
             z-index: 10 !important;
-            /* ЕДИНСТВЕННОЕ место для safe-area */
             padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
         }
         /* header: не сжимается */
@@ -153,6 +160,8 @@ const WCCache = (() => {
             pointer-events: all !important;
             z-index: 950 !important;
             touch-action: manipulation !important;
+            /* FAB опускается к реальному низу экрана */
+            bottom: max(env(safe-area-inset-bottom, 0px), 4px) !important;
         }
         .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
         .fab-menu  { z-index: 952 !important; }
@@ -1322,6 +1331,53 @@ function initSocket() {
 
     // v9.0: async upload events
     socket.on('media_ready', _handleMediaReady);
+
+    // ── chat_deleted: партнёр удалил переписку — чистим у себя тоже ──
+    socket.on('chat_deleted', function(d) {
+        const cid = d && d.chat_id;
+        if (!cid) return;
+        // Помечаем удалённым — loadChats будет игнорировать
+        _deletedChatIds.add(cid);
+        _persistDeletedChatIds();
+        // Чистим память
+        recentChats = recentChats.filter(ch => ch.chat_id !== cid);
+        // Чистим localStorage
+        try {
+            const cached = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
+            localStorage.setItem('waychat_chats_cache', JSON.stringify(cached.filter(ch => ch.chat_id !== cid)));
+        } catch(e) {}
+        // Чистим кэш сообщений из IndexedDB
+        const chat = recentChats.find(ch => ch.chat_id === cid);
+        if (chat) {
+            const _ck1 = `p_${chat.partner_id}`;
+            const _ck2 = `g_${chat.group_id}`;
+            delete messagesByChatCache[_ck1];
+            delete messagesByChatCache[_ck2];
+            MsgDB.delete(_ck1).catch(() => {});
+            MsgDB.delete(_ck2).catch(() => {});
+        }
+        // Убираем из DOM
+        const container = document.getElementById('chat-list');
+        if (container) {
+            // ищем по data-chat-key (формат p_ID или g_ID)
+            const all = container.querySelectorAll('[data-chat-key]');
+            all.forEach(el => {
+                const key = el.getAttribute('data-chat-key');
+                if (key) {
+                    const ch = recentChats.find(c =>
+                        (`p_${c.partner_id}` === key || `g_${c.group_id}` === key) && c.chat_id === cid
+                    );
+                    if (ch) el.remove();
+                }
+            });
+        }
+        // Закрываем чат если открыт
+        if (currentChatId === cid) {
+            document.getElementById('chat-window')?.classList.remove('active');
+            currentChatId = null;
+            currentPartnerId = null;
+        }
+    });
     socket.on('media_upload_error', (data) => {
         const el = document.querySelector(`[data-msg-id="${data.temp_id}"]`);
         if (!el) return;
@@ -1734,9 +1790,10 @@ body {
 .prof-sheet-wrap{position:fixed;inset:0;z-index:8500;display:none;align-items:flex-end}
 .prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:max(env(safe-area-inset-bottom,20px),20px)}
 
-/* ПОИСК — сильно скруглённый */
-.search-box { display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:9px 14px;transition:background 0.2s; }
-.search-box:focus-within { background:rgba(255,255,255,0.10); }
+/* ПОИСК — серый фон как у TG */
+.search-box { display:flex;align-items:center;gap:10px;background:#2c2c2e;border:none;border-radius:12px;padding:9px 14px;transition:background 0.2s; }
+.search-box:focus-within { background:#333335; }
+#chat-search-bar { border-bottom:none !important; box-shadow:none !important; }
 
 /* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
 .fab-plus {
@@ -1858,8 +1915,8 @@ body {
 #wc-img-viewer img { max-width:100vw;max-height:100vh;object-fit:contain;user-select:none;-webkit-user-select:none;touch-action:pinch-zoom; }
 #wc-img-viewer-close { position:absolute;top:max(env(safe-area-inset-top,0px),12px);right:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10;-webkit-tap-highlight-color:transparent; }
 #wc-img-viewer-close:active { background:rgba(255,255,255,0.22); }
-.img-bubble { border-radius:18px !important;overflow:hidden !important;border:none !important; }
-.img-bubble img { display:block;width:100%;height:auto;max-height:380px;object-fit:cover; }
+.img-bubble { border-radius:18px !important;overflow:hidden !important;border:none !important;box-shadow:none !important; }
+.img-bubble img { display:block;width:100%;height:auto;max-height:380px;object-fit:cover;border:none !important; }
 .wc-img-sk { position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;pointer-events:none; }
 
 /* ПЕЧАТЬ */
@@ -1917,8 +1974,8 @@ body {
 .settings-row:last-child { border-bottom:none; }
 .settings-row:active { background:rgba(255,255,255,0.05); }
 .settings-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0; }
-.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:0.5px solid rgba(255,255,255,0.08); }
-.img-bubble img { display:block;width:100%; }
+.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:none !important;box-shadow:none !important; }
+.img-bubble img { display:block;width:100%;border:none !important; }
 
 /* МОДАЛЬНЫЕ */
 .modal-overlay { position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end;animation:fadeIn 0.2s ease; }
@@ -2151,7 +2208,7 @@ body {
 }
 </style>
 
-<div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:var(--vh,100dvh);max-height:var(--vh,100dvh)">
+<div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:100dvh;min-height:100dvh;max-height:100dvh;background:var(--bg,#1d1d1e)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
     <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:0">
 
@@ -4054,9 +4111,9 @@ function buildMessageRow(msg, animate = true) {
         </div>`;
     } else if (type === 'video') {
         // FIXED: preload=metadata для мгновенного thumb, controls видны сразу
-        contentHtml = `<div style="overflow:hidden;border-radius:14px;max-width:260px;background:transparent;position:relative">
+        contentHtml = `<div style="overflow:hidden;border-radius:14px;max-width:260px;background:transparent;position:relative;border:none">
             <video src="${msg.file_url}" controls playsinline preload="metadata"
-                   style="display:block;width:100%;max-height:380px;object-fit:cover"
+                   style="display:block;width:100%;max-height:380px;object-fit:cover;border:none;outline:none"
                    onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
