@@ -7505,8 +7505,9 @@ function _showMomentEditor(file) {
     ov.appendChild(capTag);
 
     // ── Нижняя панель iOS 26 стиль ──
-    const panel = document.createElement('div');
-    panel.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:10;padding:16px 16px max(calc(env(safe-area-inset-bottom,0px)+16px),28px)';
+    //const panel = document.createElement('div');
+
+    //panel.style.display = 'none';
 
     // Строка: аватар + "Ваша история" + кнопка Опубликовать
     const bottomRow = document.createElement('div');
