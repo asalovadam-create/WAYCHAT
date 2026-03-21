@@ -66,132 +66,404 @@ const WCCache = (() => {
 })();
 // ══ iOS SAFARI FIX v10 — единственный механизм (FIXED) ═════════
 (function(){
-    'use strict';
 
-    // ── ОДИН источник правды для высоты viewport ──
-    // index.html уже устанавливает --app-height через visualViewport.
-    // Этот блок синхронизирует --vh для совместимости с остальным кодом.
-    function syncVH() {
-        const h = window.visualViewport
-            ? window.visualViewport.height
-            : window.innerHeight;
-        const root = document.documentElement;
-        root.style.setProperty('--vh',         h + 'px');
-        root.style.setProperty('--app-height', h + 'px');
-        root.style.setProperty('--dvh',        (h * 0.01) + 'px');
-    }
+'use strict';
 
-    if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', function() {
+
+function syncVH(){
+
+    const h =
+        window.visualViewport
+        ? window.visualViewport.height
+        : window.innerHeight;
+
+    const root =
+        document.documentElement;
+
+    root.style.setProperty(
+        '--vh',
+        h + 'px'
+    );
+
+    root.style.setProperty(
+        '--app-height',
+        h + 'px'
+    );
+
+    root.style.setProperty(
+        '--dvh',
+        (h * 0.01) + 'px'
+    );
+
+}
+
+
+if (window.visualViewport){
+
+    window.visualViewport.addEventListener(
+
+        'resize',
+
+        function(){
+
             syncVH();
-            // При открытой клавиатуре — только скроллим вниз.
-            // НЕ трогаем chatWin.style.height — flex layout справляется сам.
-            const vv   = window.visualViewport;
-            const kbH  = Math.max(0, window.innerHeight - vv.height);
-            const chat = document.getElementById('chat-window');
-            const msgs = document.getElementById('messages');
-            // BUG-G FIX: only scroll if user was already at the bottom
-            if (chat && chat.classList.contains('active') && kbH > 60 && msgs) {
-                if (_isNearBottom(msgs)) {
-                    requestAnimationFrame(function() {
-                        msgs.scrollTop = msgs.scrollHeight;
-                    });
-                }
-            }
-        }, { passive: true });
-        window.visualViewport.addEventListener('scroll', syncVH, { passive: true });
-    }
-    window.addEventListener('resize', syncVH, { passive: true });
-    window.addEventListener('orientationchange', function() {
-        setTimeout(syncVH, 150);
-    }, { passive: true });
-    syncVH();
 
-    // ── CSS исправления (патч поверх основных стилей) ──
-    const st = document.createElement('style');
-    st.id = 'wc-ios10';
-    st.textContent = `
-        /* Высота = реальный viewport без клавиатуры */
-        #app {
-            height: var(--vh, 100dvh) !important;
-            max-height: var(--vh, 100dvh) !important;
-            overflow: hidden !important;
-        }
-        /* chat-view: flex-колонка на весь экран */
-        .chat-view {
-            position: fixed !important;
-            top: 0 !important; left: 0 !important;
-            right: 0 !important; bottom: 0 !important;
-            height: var(--vh, 100dvh) !important;
-            display: flex !important;
-            flex-direction: column !important;
-            overflow: hidden !important;
-        }
-        .chat-view.active { transform: translateX(0) !important; }
-        /* messages: flex:1 + min-height:0 — ключевая пара для overflow */
-        #messages {
-            flex: 1 1 0% !important;
-            min-height: 0 !important;
-            overflow-y: auto !important;
-            overflow-x: hidden !important;
-            -webkit-overflow-scrolling: touch !important;
-            overscroll-behavior-y: contain !important;
-        }
-        /* input-bar: в потоке flex, НЕ position:fixed */
-        .input-bar {
-            flex-shrink: 0 !important;
-            position: relative !important;
-            transform: none !important;
-            z-index: 10 !important;
-            /* ЕДИНСТВЕННОЕ место для safe-area */
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
-        }
-        /* header: не сжимается */
-        #chat-header { flex-shrink: 0 !important; }
-        /* FAB: всегда поверх и кликабельна */
-        .fab-btn {
-            pointer-events: all !important;
-            z-index: 950 !important;
-            touch-action: manipulation !important;
-        }
-        .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
-        .fab-menu  { z-index: 952 !important; }
-        .fab-bd    { z-index: 948 !important; }
-        /* main-content: padding-bottom = 0, safe-area только в input-bar */
-        #main-content {
-            padding-bottom: 0 !important;
-            -webkit-overflow-scrolling: touch;
-            overscroll-behavior: contain;
-        }
-        /* sticky search */
-        #chat-search-bar {
-            position: sticky !important;
-            top: 0 !important;
-            z-index: 100 !important;
-            background: var(--bg, #1d1d1e) !important;
-        }
-        /* iOS: минимум 16px предотвращает авто-зум при фокусе */
-        input, textarea, select { font-size: max(16px, 1em) !important; }
-        body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-        *, button, a, [onclick], [data-msg-id] { -webkit-tap-highlight-color: transparent; }
-        .vl-ph { flex-shrink: 0; width: 100%; pointer-events: none; }
-        #app, #main-content, .prof-sheet-inner { touch-action: pan-x pan-y; }
-        /* Offline banner */
-        #wc-off {
-            position: fixed;
-            top: max(env(safe-area-inset-top,0px),0px);
-            left: 0; right: 0; z-index: 99997;
-            background: rgba(239,68,68,.97); color: #fff;
-            padding: 8px 16px; text-align: center;
-            font-size: 13px; font-weight: 700;
-            transform: translateY(-100%); transition: transform .3s ease;
-        }
-        #wc-off.v { transform: translateY(0); }
-        /* Skeleton animation */
-        @keyframes wcSkPulse { 0%,100%{opacity:.35} 50%{opacity:.75} }
-        .wc-skeleton { animation: wcSkPulse 1.5s ease-in-out infinite; background: rgba(255,255,255,0.07); }
-    `;
-    document.head.appendChild(st);
+
+            const vv =
+                window.visualViewport;
+
+            const kbH =
+                Math.max(
+                    0,
+                    window.innerHeight - vv.height
+                );
+
+            const chat =
+                document.getElementById(
+                    'chat-window'
+                );
+
+            const msgs =
+                document.getElementById(
+                    'messages'
+                );
+
+
+            if (
+
+                chat &&
+                chat.classList.contains('active') &&
+                kbH > 60 &&
+                msgs
+
+            ){
+
+                if (_isNearBottom(msgs)){
+
+                    requestAnimationFrame(
+
+                        function(){
+
+                            msgs.scrollTop =
+                                msgs.scrollHeight;
+
+                        }
+
+                    );
+
+                }
+
+            }
+
+        },
+
+        { passive:true }
+
+    );
+
+
+    window.visualViewport.addEventListener(
+
+        'scroll',
+
+        syncVH,
+
+        { passive:true }
+
+    );
+
+}
+
+
+window.addEventListener(
+
+    'resize',
+
+    syncVH,
+
+    { passive:true }
+
+);
+
+
+window.addEventListener(
+
+    'orientationchange',
+
+    function(){
+
+        setTimeout(
+
+            syncVH,
+
+            120
+
+        );
+
+    },
+
+    { passive:true }
+
+);
+
+
+syncVH();
+
+
+
+// ОБНОВЛЕННЫЕ СТИЛИ
+const st =
+    document.createElement(
+        'style'
+    );
+
+st.id = 'wc-ios10-clean';
+
+
+
+st.textContent = `
+
+
+#app {
+
+    height:
+        var(--vh)
+        !important;
+
+    max-height:
+        var(--vh)
+        !important;
+
+    overflow:
+        hidden
+        !important;
+
+}
+
+
+
+.chat-view {
+
+    position: fixed
+        !important;
+
+    inset: 0
+        !important;
+
+    height:
+        var(--vh)
+        !important;
+
+    display: flex
+        !important;
+
+    flex-direction: column
+        !important;
+
+    overflow: hidden
+        !important;
+
+}
+
+
+
+#chat-header {
+
+    flex-shrink: 0
+        !important;
+
+}
+
+
+
+#messages {
+
+    flex: 1 1 auto
+        !important;
+
+    min-height: 0
+        !important;
+
+    overflow-y: auto
+        !important;
+
+    overflow-x: hidden
+        !important;
+
+    -webkit-overflow-scrolling: touch
+        !important;
+
+    overscroll-behavior-y: contain
+        !important;
+
+}
+
+
+
+/* ПОЛНОСТЬЮ УБРАНА СЕРАЯ ПАНЕЛЬ */
+
+.input-bar {
+
+    background:
+        transparent
+        !important;
+
+    border:
+        none
+        !important;
+
+    box-shadow:
+        none
+        !important;
+
+    padding:
+
+        6px 10px
+        max(
+            env(
+                safe-area-inset-bottom,
+                0px
+            ),
+            6px
+        )
+        6px
+        10px
+
+        !important;
+
+}
+
+
+
+/* минималистичный input */
+
+.input-bar textarea,
+.input-bar input {
+
+    background:
+        transparent
+        !important;
+
+    border:
+        none
+        !important;
+
+    outline:
+        none
+        !important;
+
+    box-shadow:
+        none
+        !important;
+
+    font-size:
+        16px
+        !important;
+
+}
+
+
+
+/* компактные сообщения */
+
+[data-msg-id] {
+
+    margin:
+        4px 0
+        !important;
+
+}
+
+
+
+/* медиа без рамок */
+
+[data-msg-id] img,
+[data-msg-id] video {
+
+    border:
+        none
+        !important;
+
+    outline:
+        none
+        !important;
+
+    box-shadow:
+        none
+        !important;
+
+    padding:
+        0
+        !important;
+
+    margin:
+        0
+        !important;
+
+    display:
+        block;
+
+    max-width:
+        100%;
+
+    border-radius:
+        12px;
+
+}
+
+
+
+/* поиск закреплен сверху */
+
+#chat-search-bar {
+
+    position:
+        sticky
+        !important;
+
+    top:
+        0
+        !important;
+
+    z-index:
+        50
+        !important;
+
+}
+
+
+
+/* убрать лишние эффекты на мобильных */
+
+*, button, a {
+
+    -webkit-tap-highlight-color:
+        transparent;
+
+}
+
+
+
+/* убрать лишние отступы */
+
+#main-content {
+
+    padding-bottom:
+        0
+        !important;
+
+}
+
+
+
+`;
+
+
+document.head.appendChild(st);
+
+
+})();
 
     // ── Offline banner ──
     const ob = () => {
@@ -828,89 +1100,423 @@ const THEMES = {
 
 // ══ OPTIMISTIC MEDIA UI — мгновенный blob preview при отправке ═══════════
 function _sendMediaOptimistic(file, chatId) {
-    const blobUrl = URL.createObjectURL(file);
-    const tempId  = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    const isVideo = file.type.startsWith('video/');
-    const isImage = file.type.startsWith('image/');
-    const isAudio = file.type.startsWith('audio/');
-    const msgType = isVideo ? 'video' : isImage ? 'image' : isAudio ? 'audio' : 'file';
 
-    // Optimistic сообщение — показываем сразу с blob URL
+    const blobUrl =
+        URL.createObjectURL(file);
+
+    const tempId =
+        'tmp_' +
+        Date.now() +
+        '_' +
+        Math.random()
+            .toString(36)
+            .slice(2,6);
+
+
+    const isVideo =
+        file.type.startsWith('video/');
+
+    const isImage =
+        file.type.startsWith('image/');
+
+    const isAudio =
+        file.type.startsWith('audio/');
+
+
+    const msgType =
+        isVideo ? 'video'
+        : isImage ? 'image'
+        : isAudio ? 'audio'
+        : 'file';
+
+
+
     const optimMsg = {
-        id: tempId, type: msgType, type_msg: msgType,
-        file_url: blobUrl, content: file.name,
-        sender_id: currentUser?.id, sender_name: currentUser?.name || '',
-        timestamp: new Date().toLocaleTimeString('ru', {hour:'2-digit',minute:'2-digit'}),
-        _optimistic: true, _temp_id: tempId,
-    };
-    if (VirtualList && VirtualList.appendMessage) VirtualList.appendMessage(optimMsg);
-    else if (VirtualList && VirtualList.append) VirtualList.append(optimMsg);
 
-    // Прогресс-индикатор
-    const _setProgress = (pct) => {
-        const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+        id: tempId,
+
+        type: msgType,
+        type_msg: msgType,
+
+        file_url: blobUrl,
+        content: file.name,
+
+        sender_id:
+            currentUser?.id,
+
+        sender_name:
+            currentUser?.name || '',
+
+        timestamp:
+            new Date()
+                .toLocaleTimeString(
+                    'ru',
+                    {
+                        hour:'2-digit',
+                        minute:'2-digit'
+                    }
+                ),
+
+        _optimistic: true,
+        _temp_id: tempId
+    };
+
+
+
+    if (VirtualList?.appendMessage)
+        VirtualList.appendMessage(optimMsg);
+
+    else if (VirtualList?.append)
+        VirtualList.append(optimMsg);
+
+
+
+    // делаем медиа аккуратным (без рамок)
+    setTimeout(() => {
+
+        const el =
+            document.querySelector(
+                `[data-msg-id="${tempId}"]`
+            );
+
         if (!el) return;
-        let prog = el.querySelector('.wc-upld-p');
+
+
+        el.style.margin = '4px 0';
+        el.style.padding = '2px';
+        el.style.background = 'transparent';
+        el.style.boxShadow = 'none';
+        el.style.border = 'none';
+
+
+        const media =
+            el.querySelector(
+                'img,video,audio'
+            );
+
+        if (media) {
+
+            media.style.display = 'block';
+
+            media.style.maxWidth = '100%';
+
+            media.style.border = 'none';
+            media.style.outline = 'none';
+            media.style.boxShadow = 'none';
+
+            media.style.padding = '0';
+            media.style.margin = '0';
+
+            media.style.background =
+                'transparent';
+
+            if (isImage || isVideo)
+                media.style.borderRadius = '12px';
+
+        }
+
+    }, 60);
+
+
+
+    const _setProgress = (pct) => {
+
+        const el =
+            document.querySelector(
+                `[data-msg-id="${tempId}"]`
+            );
+
+        if (!el) return;
+
+
+        let prog =
+            el.querySelector('.wc-upld-p');
+
+
         if (!prog) {
-            prog = document.createElement('div');
-            prog.className = 'wc-upld-p';
-            prog.style.cssText = 'position:absolute;bottom:6px;right:8px;font-size:10px;color:rgba(255,255,255,.9);background:rgba(0,0,0,.5);padding:2px 6px;border-radius:8px;z-index:5;backdrop-filter:blur(4px)';
-            el.style.position = 'relative';
+
+            prog =
+                document.createElement('div');
+
+            prog.className =
+                'wc-upld-p';
+
+
+            prog.style.cssText = `
+
+                position:absolute;
+                bottom:6px;
+                right:8px;
+
+                font-size:10px;
+                color:white;
+
+                background:rgba(0,0,0,.45);
+
+                padding:2px 6px;
+
+                border-radius:8px;
+
+                z-index:5;
+
+                backdrop-filter:blur(4px)
+
+            `;
+
+            el.style.position =
+                'relative';
+
             el.appendChild(prog);
         }
-        prog.textContent = pct < 100 ? pct + '%' : '✓';
-        if (pct >= 100) setTimeout(() => prog?.remove(), 1500);
+
+
+        prog.textContent =
+            pct < 100
+                ? pct + '%'
+                : '✓';
+
+
+        if (pct >= 100)
+
+            setTimeout(
+                () =>
+                    prog?.remove(),
+                1200
+            );
     };
+
+
 
     const _markFailed = () => {
+
         URL.revokeObjectURL(blobUrl);
-        const el = document.querySelector(`[data-msg-id="${tempId}"]`);
+
+
+        const el =
+            document.querySelector(
+                `[data-msg-id="${tempId}"]`
+            );
+
         if (!el) return;
+
+
         el.style.opacity = '0.45';
-        if (!el.querySelector('.wc-fail')) {
-            const e = document.createElement('div');
-            e.className = 'wc-fail';
-            e.style.cssText = 'font-size:11px;color:#ef4444;margin-top:3px;cursor:pointer;padding:2px 4px';
-            e.textContent = '⚠️ Ошибка — нажмите для повтора';
-            e.onclick = () => { e.remove(); el.style.opacity='1'; _sendMediaOptimistic(file, chatId); };
-            el.appendChild(e);
+
+
+        if (
+            !el.querySelector('.wc-fail')
+        ) {
+
+            const err =
+                document.createElement('div');
+
+
+            err.className =
+                'wc-fail';
+
+
+            err.style.cssText = `
+
+                font-size:11px;
+
+                color:#ef4444;
+
+                margin-top:3px;
+
+                cursor:pointer;
+
+                padding:2px 4px
+
+            `;
+
+
+            err.textContent =
+                'Ошибка — нажмите для повтора';
+
+
+            err.onclick = () => {
+
+                err.remove();
+
+                el.style.opacity = '1';
+
+                _sendMediaOptimistic(
+                    file,
+                    chatId
+                );
+
+            };
+
+
+            el.appendChild(err);
         }
+
     };
 
-    const fd = new FormData();
+
+
+    const fd =
+        new FormData();
+
     fd.append('file', file);
     fd.append('chat_id', chatId);
 
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload');
+
+
+    const xhr =
+        new XMLHttpRequest();
+
+
+    xhr.open(
+        'POST',
+        '/api/upload'
+    );
+
     xhr.withCredentials = true;
 
-    xhr.upload.addEventListener('progress', (e) => {
-        if (!e.lengthComputable) return;
-        _setProgress(Math.round(e.loaded / e.total * 100));
-    });
 
-    xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-            try {
-                const resp = JSON.parse(xhr.responseText);
-                if (!resp.success) { _markFailed(); return; }
-                _setProgress(100);
-                // Polling fallback если WS media_ready не пришёл за 8 сек
-                setTimeout(() => {
-                    const el = document.querySelector(`[data-msg-id="${tempId}"]`);
-                    if (el && el.dataset.mediaReady !== '1' && resp.temp_id) {
-                        fetch(`/api/upload_status/${resp.temp_id}`, { credentials: 'include' })
-                            .then(r => r.json())
-                            .then(s => { if (s.status === 'done' && s.url) _handleMediaReady({ temp_id: tempId, url: s.url }); })
-                            .catch(() => {});
+
+    xhr.upload.addEventListener(
+        'progress',
+        (e) => {
+
+            if (!e.lengthComputable)
+                return;
+
+
+            _setProgress(
+
+                Math.round(
+
+                    e.loaded /
+                    e.total *
+                    100
+
+                )
+
+            );
+
+        }
+    );
+
+
+
+    xhr.addEventListener(
+        'load',
+        () => {
+
+            if (
+                xhr.status >= 200 &&
+                xhr.status < 300
+            ) {
+
+                try {
+
+                    const resp =
+                        JSON.parse(
+                            xhr.responseText
+                        );
+
+
+                    if (!resp.success) {
+
+                        _markFailed();
+
+                        return;
                     }
-                }, 8000);
-            } catch(e) { _markFailed(); }
-        } else { _markFailed(); }
-    });
-    xhr.addEventListener('error', _markFailed);
+
+
+                    _setProgress(100);
+
+
+
+                    setTimeout(() => {
+
+                        const el =
+                            document.querySelector(
+                                `[data-msg-id="${tempId}"]`
+                            );
+
+
+                        if (
+
+                            el &&
+                            el.dataset.mediaReady !== '1' &&
+                            resp.temp_id
+
+                        ) {
+
+                            fetch(
+
+                                `/api/upload_status/${resp.temp_id}`,
+
+                                {
+                                    credentials:
+                                        'include'
+                                }
+
+                            )
+
+                            .then(
+                                r => r.json()
+                            )
+
+                            .then(
+
+                                s => {
+
+                                    if (
+                                        s.status === 'done' &&
+                                        s.url
+                                    )
+
+                                        _handleMediaReady({
+
+                                            temp_id: tempId,
+                                            url: s.url
+
+                                        });
+
+                                }
+
+                            )
+
+                            .catch(()=>{});
+
+                        }
+
+                    }, 8000);
+
+
+                }
+                catch {
+
+                    _markFailed();
+
+                }
+
+            }
+            else {
+
+                _markFailed();
+
+            }
+
+        }
+    );
+
+
+
+    xhr.addEventListener(
+        'error',
+        _markFailed
+    );
+
+
+
     xhr.send(fd);
+
+
     return tempId;
 }
 
