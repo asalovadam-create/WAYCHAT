@@ -6333,20 +6333,37 @@ function createBottomSheet(htmlContent, opts = {}) {
     ov.style.cssText = 'position:fixed;inset:0;z-index:8000;display:flex;align-items:flex-end;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
 
     const sh = document.createElement('div');
-    sh.className = 'modal-sheet';
-    sh.style.cssText = [
-        'width:100%', 'max-width:480px', 'margin:0 auto',
-        'background:rgba(22,22,28,0.98)',
-        'backdrop-filter:blur(40px)', '-webkit-backdrop-filter:blur(40px)',
-        'border-radius:24px 24px 0 0',
-        'border-top:0.5px solid rgba(255,255,255,0.1)',
-        'padding:16px 20px calc(max(env(safe-area-inset-bottom,20px),20px))',
-        'transform:translateY(100%)',
-        'transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)',
-        'max-height:90dvh', 'overflow-y:auto',
-        '-webkit-overflow-scrolling:touch',
-    ].join(';');
-    sh.innerHTML = htmlContent;
+
+sh.className = 'modal-sheet';
+
+sh.style.cssText = [
+
+'width:100%',
+'max-width:480px',
+'margin:0 auto',
+
+'background:rgba(29,22,99,10.98)',
+
+'backdrop-filter:blur(40px)',
+'-webkit-backdrop-filter:blur(40px)',
+
+'border-radius:24px 24px 0 0',
+
+'border-top:0.5px solid rgba(255,255,255,0.1)',
+
+'padding:16px 20px 10px',
+
+'transform:translateY(100%)',
+
+'transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)',
+
+'max-height:90dvh',
+
+'overflow-y:auto',
+
+'-webkit-overflow-scrolling:touch',
+
+].join(';');
 
     ov.appendChild(sh);
 
