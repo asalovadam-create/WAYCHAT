@@ -171,6 +171,87 @@
         .border-white\/10 { border-color: rgba(255,255,255,0.1); }
         .border-white\/5  { border-color: rgba(255,255,255,0.05); }
         .cursor-pointer { cursor: pointer; }
+
+        /* ══ SAFE AREA FIX — убиваем серую полосу снизу на iPhone ══════
+           Причина: main.js добавляет padding-bottom: env(safe-area-inset-bottom)
+           к оберткам. Здесь глобально зануляем на уровне корневых контейнеров.
+           Только input-bar получает safe-area через свой собственный CSS. */
+        #root,
+        #root > div,
+        #root > div > div {
+            padding-bottom: 0 !important;
+        }
+        /* Если input-bar единственный элемент которому нужен safe-area —
+           он сам прописывает его внутри. Всё остальное — 0. */
+        body::after {
+            display: none !important;
+            content: none !important;
+        }
+        /* Убиваем любой element с классом safe-area или bottom-bar кроме input */
+        [class*="safe-area"]:not([class*="input"]),
+        [class*="bottom-bar"]:not([class*="input"]),
+        [class*="nav-bar"],
+        [class*="tab-bar"] {
+            padding-bottom: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        /* Тотальное обнуление safe-area-inset на #root потомках */
+        #root * {
+            padding-bottom: revert;
+        }
+        /* Финальный override только для #root прямых детей (screens/views) */
+        #root > [class] {
+            padding-bottom: 0 !important;
+        }
+
+        /* ══ SEARCH BAR — серый фон, только текст "Поиск", без рамок ══ */
+        [class*="search"] input,
+        [class*="search-bar"] input,
+        input[placeholder*="оиск"],
+        input[placeholder*="earch"] {
+            background: #2c2c2e !important;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+            border-radius: 10px !important;
+            color: #fff !important;
+        }
+        [class*="search-wrap"],
+        [class*="search-bar"],
+        [class*="search-container"] {
+            background: #1d1d1e !important;
+            border: none !important;
+            box-shadow: none !important;
+            border-bottom: none !important;
+            border-top: none !important;
+        }
+        /* Убираем полоску-разделитель под/над поиском */
+        [class*="search"]::before,
+        [class*="search"]::after {
+            display: none !important;
+        }
+
+        /* ══ MEDIA без рамок — фото/видео в сообщениях как в TG ══════ */
+        [class*="msg"] img,
+        [class*="message"] img,
+        [class*="bubble"] img,
+        [class*="msg"] video,
+        [class*="message"] video,
+        [class*="bubble"] video {
+            border: none !important;
+            border-radius: 12px !important;
+            box-shadow: none !important;
+            outline: none !important;
+        }
+        /* Убираем padding/border у обёрток медиа */
+        [class*="media-wrap"],
+        [class*="media-preview"],
+        [class*="img-wrap"],
+        [class*="photo-wrap"] {
+            padding: 0 !important;
+            border: none !important;
+            background: transparent !important;
+        }
     </style>
 </head>
 <body>
