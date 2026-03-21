@@ -2886,12 +2886,39 @@ def delete_chat_route(cid):
     chat = db.session.get(Chat, cid)
     if not chat:
         return jsonify({'success': False}), 404
-    if not (uid in chat.room_key.replace('chat_', '').split('_') or chat.room_key.startswith('group_')):
+
+    room_key = chat.room_key
+    is_private = room_key.startswith('chat_') and not room_key.startswith('group_')
+
+    # Проверка доступа
+    if not (uid in room_key.replace('chat_', '').split('_') or room_key.startswith('group_')):
         return jsonify({'success': False, 'error': 'Нет доступа'}), 403
-    Message.query.filter_by(chat_id=cid).delete()
+
+    # Собираем ID всех участников чтобы потом чистить кэши и уведомить
+    participant_ids = []
+    if is_private:
+        try:
+            parts = room_key.replace('chat_', '').split('_')
+            participant_ids = [int(p) for p in parts if p.isdigit()]
+        except Exception:
+            participant_ids = [int(uid)]
+    else:
+        participant_ids = [int(uid)]
+
+    # Удаляем сообщения и чат одним bulk-запросом
+    Message.query.filter_by(chat_id=cid).delete(synchronize_session=False)
     db.session.delete(chat)
     db.session.commit()
-    _chat_cache.delete(int(uid))
+
+    # Чистим кэши всех участников
+    for pid in participant_ids:
+        _chat_cache.delete(pid)
+        _partner_cache.invalidate_prefix(pid)
+
+    # Уведомляем всех участников через сокет — их UI убирает чат без перезагрузки
+    for pid in participant_ids:
+        emit_to_user(pid, 'chat_deleted', {'chat_id': cid, 'room_key': room_key})
+
     return jsonify({'success': True})
 
 
