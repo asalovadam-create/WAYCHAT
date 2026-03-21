@@ -1335,18 +1335,28 @@ function initSocket() {
     socket.on('chat_deleted', function(d) {
         const cid = d && d.chat_id;
         if (!cid) return;
-        // Помечаем удалённым — loadChats будет игнорировать
+
+        // Сначала находим чат ДО фильтрации recentChats
+        const chat = recentChats.find(ch => ch.chat_id === cid);
+
+        // Запоминаем partner_id чтобы блокировать показ кэша при открытии через поиск
+        if (chat && chat.partner_id) {
+            _deletedPartnerIds.add(chat.partner_id);
+            _persistDeletedPartnerIds();
+        }
+
+        // Помечаем чат удалённым
         _deletedChatIds.add(cid);
         _persistDeletedChatIds();
-        // Чистим память
+
+        // Чистим память и localStorage
         recentChats = recentChats.filter(ch => ch.chat_id !== cid);
-        // Чистим localStorage
         try {
-            const cached = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
-            localStorage.setItem('waychat_chats_cache', JSON.stringify(cached.filter(ch => ch.chat_id !== cid)));
+            const ls = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
+            localStorage.setItem('waychat_chats_cache', JSON.stringify(ls.filter(ch => ch.chat_id !== cid)));
         } catch(e) {}
-        // Чистим кэш сообщений из IndexedDB
-        const chat = recentChats.find(ch => ch.chat_id === cid);
+
+        // Полная очистка кэша сообщений
         if (chat) {
             const _ck1 = `p_${chat.partner_id}`;
             const _ck2 = `g_${chat.group_id}`;
@@ -1355,21 +1365,19 @@ function initSocket() {
             MsgDB.delete(_ck1).catch(() => {});
             MsgDB.delete(_ck2).catch(() => {});
         }
+
         // Убираем из DOM
         const container = document.getElementById('chat-list');
         if (container) {
-            // ищем по data-chat-key (формат p_ID или g_ID)
             const all = container.querySelectorAll('[data-chat-key]');
             all.forEach(el => {
                 const key = el.getAttribute('data-chat-key');
-                if (key) {
-                    const ch = recentChats.find(c =>
-                        (`p_${c.partner_id}` === key || `g_${c.group_id}` === key) && c.chat_id === cid
-                    );
-                    if (ch) el.remove();
-                }
+                if (chat && key && (
+                    `p_${chat.partner_id}` === key || `g_${chat.group_id}` === key
+                )) el.remove();
             });
         }
+
         // Закрываем чат если открыт
         if (currentChatId === cid) {
             document.getElementById('chat-window')?.classList.remove('active');
@@ -1458,8 +1466,14 @@ async function init() {
         if (cachedChats) {
             const parsed = JSON.parse(cachedChats);
             if (Array.isArray(parsed) && parsed.length > 0) {
-                recentChats = parsed;
-                renderChatList(parsed); // МГНОВЕННЫЙ рендер
+                // КРИТИЧНО: фильтруем удалённые чаты ДО рендера
+                const filtered = parsed.filter(ch => !_deletedChatIds.has(ch.chat_id));
+                recentChats = filtered;
+                renderChatList(filtered);
+                // Обновляем кэш без удалённых чатов
+                if (filtered.length !== parsed.length) {
+                    try { localStorage.setItem('waychat_chats_cache', JSON.stringify(filtered)); } catch(e) {}
+                }
             }
         }
     } catch(e) {}
@@ -3628,14 +3642,14 @@ async function openChat(id, name, avatar) {
     msgs.innerHTML = '';
     const cacheKey = `p_${id}`;
 
-    // Если переписка с этим юзером была удалена — сбрасываем весь кэш,
-    // чтобы старые сообщения не показывались при повторном открытии через поиск
+    // Если переписка с этим юзером была удалена — сбрасываем весь кэш СИНХРОННО
+    // (ждём IndexedDB, иначе старые сообщения успевают прочитаться)
     if (_deletedPartnerIds.has(id)) {
         delete messagesByChatCache[cacheKey];
-        MsgDB.delete(cacheKey).catch(() => {});
+        try { await MsgDB.delete(cacheKey); } catch(e) {}
     }
 
-    const cached   = messagesByChatCache[cacheKey];
+    const cached = messagesByChatCache[cacheKey];
 
     if (cached?.messages?.length) {
         // Есть в памяти — рендерим мгновенно
@@ -3643,18 +3657,23 @@ async function openChat(id, name, avatar) {
         scrollDown(false);
         if (elStatus) elStatus.textContent = 'обновление...';
     } else {
-        // Пробуем IndexedDB
-        _showChatSkeleton(msgs);
-        MsgDB.load(cacheKey).then(idb => {
-            if (_chatOpenId !== _myOpenId) return; // чат уже сменился
-            if (idb?.length) {
-                messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
-                msgs.innerHTML = '';
-                renderMessagesFromCache(idb);
-                scrollDown(false);
-                if (elStatus) elStatus.textContent = 'обновление...';
-            }
-        }).catch(() => {});
+        // Пробуем IndexedDB — только если переписка НЕ была удалена
+        if (!_deletedPartnerIds.has(id)) {
+            _showChatSkeleton(msgs);
+            MsgDB.load(cacheKey).then(idb => {
+                if (_chatOpenId !== _myOpenId) return;
+                if (idb?.length) {
+                    messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
+                    msgs.innerHTML = '';
+                    renderMessagesFromCache(idb);
+                    scrollDown(false);
+                    if (elStatus) elStatus.textContent = 'обновление...';
+                }
+            }).catch(() => {});
+        } else {
+            // Удалённая переписка — показываем пустой экран, ждём сервер
+            msgs.innerHTML = '';
+        }
     }
 
     // ── 6. Получаем chat_id и грузим свежие сообщения ───────────
