@@ -90,10 +90,13 @@ const WCCache = (() => {
             const kbH  = Math.max(0, window.innerHeight - vv.height);
             const chat = document.getElementById('chat-window');
             const msgs = document.getElementById('messages');
+            // BUG-G FIX: only scroll if user was already at the bottom
             if (chat && chat.classList.contains('active') && kbH > 60 && msgs) {
-                requestAnimationFrame(function() {
-                    msgs.scrollTop = msgs.scrollHeight;
-                });
+                if (_isNearBottom(msgs)) {
+                    requestAnimationFrame(function() {
+                        msgs.scrollTop = msgs.scrollHeight;
+                    });
+                }
             }
         }, { passive: true });
         window.visualViewport.addEventListener('scroll', syncVH, { passive: true });
@@ -284,7 +287,13 @@ const VirtualList=(()=>{
         }
         _updateScrollBtn(el);
     }}
-    function prepend(arr){if(!el||!arr.length)return;ms=[...arr,...ms];const nh=new Map();hc.forEach((v,k)=>nh.set(k+arr.length,v));hc=nh;s+=arr.length;e+=arr.length;const ph=el.scrollHeight;win(Math.max(0,s-arr.length),e,false);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-ph;});}
+    function prepend(arr){
+        if(!el||!arr.length)return;
+        // BUG-E FIX: deduplicate by message ID before prepend
+        const existIds = new Set(ms.map(m => m.id));
+        arr = arr.filter(m => !existIds.has(m.id));
+        if(!arr.length) return;
+        ms=[...arr,...ms];const nh=new Map();hc.forEach((v,k)=>nh.set(k+arr.length,v));hc=nh;s+=arr.length;e+=arr.length;const ph=el.scrollHeight;win(Math.max(0,s-arr.length),e,false);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-ph;});}
     function toBottom(a){if(!el)return;a?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):(el.scrollTop=el.scrollHeight);}
     function destroy(){if(!el)return;el.removeEventListener('scroll',onsc);if(rf)cancelAnimationFrame(rf);ms=[];hc.clear();el=ts=bs=tp=bp=null;}
     return{mount,setMessages,appendMessage:append,prependMessages:prepend,scrollToBottom:toBottom,destroy};
@@ -611,12 +620,89 @@ let _viewedMomentUsers = (() => {
 // ── Кеш медиа в памяти ──
 const _mediaCache = new Map();
 // ══ RESTORED GLOBAL VARS ══
-const MsgDB=(()=>{
-    const DB='wc_m2',V=1,ST='m',TTL=7*864e5;let _db=null;
-    function op(){if(_db)return Promise.resolve(_db);return new Promise((r,j)=>{const q=indexedDB.open(DB,V);q.onupgradeneeded=e=>{const d=e.target.result;if(!d.objectStoreNames.contains(ST))d.createObjectStore(ST);};q.onsuccess=e=>{_db=e.target.result;r(_db);};q.onerror=()=>j(q.error);});}
-    async function load(k){try{const db=await op();const row=await new Promise(r=>{const tx=db.transaction(ST,'readonly');const q=tx.objectStore(ST).get(k);q.onsuccess=()=>r(q.result??null);q.onerror=()=>r(null);});if(!row||Date.now()-row.ts>TTL)return null;return row.msgs;}catch{return null;}}
-    async function save(k,msgs){try{const db=await op();return new Promise(r=>{const tx=db.transaction(ST,'readwrite');tx.objectStore(ST).put({msgs:msgs.slice(-300),ts:Date.now()},k);tx.oncomplete=()=>r(true);tx.onerror=()=>r(false);});}catch{return false;}}
-    return{load,save};
+const MsgDB = (() => {
+    const DB = 'wc_m2', V = 1, ST = 'm', TTL = 7 * 864e5;
+    let _db = null;
+
+    function op() {
+        if (_db) return Promise.resolve(_db);
+        return new Promise((r, j) => {
+            const q = indexedDB.open(DB, V);
+            q.onupgradeneeded = e => {
+                const d = e.target.result;
+                if (!d.objectStoreNames.contains(ST)) d.createObjectStore(ST);
+            };
+            q.onsuccess = e => { _db = e.target.result; r(_db); };
+            q.onerror   = () => j(q.error);
+        });
+    }
+
+    async function load(k) {
+        try {
+            const db  = await op();
+            const row = await new Promise(r => {
+                const tx = db.transaction(ST, 'readonly');
+                const q  = tx.objectStore(ST).get(k);
+                q.onsuccess = () => r(q.result ?? null);
+                q.onerror   = () => r(null);
+            });
+            if (!row || Date.now() - row.ts > TTL) return null;
+            return row.msgs;
+        } catch { return null; }
+    }
+
+    async function save(k, msgs) {
+        try {
+            const db = await op();
+            return new Promise(r => {
+                const tx = db.transaction(ST, 'readwrite');
+                tx.objectStore(ST).put({ msgs: msgs.slice(-300), ts: Date.now() }, k);
+                tx.oncomplete = () => r(true);
+                tx.onerror    = () => r(false);
+            });
+        } catch { return false; }
+    }
+
+    // FIX: delete specific chat messages from IndexedDB
+    async function del(k) {
+        try {
+            const db = await op();
+            return new Promise(r => {
+                const tx = db.transaction(ST, 'readwrite');
+                tx.objectStore(ST).delete(k);
+                tx.oncomplete = () => r(true);
+                tx.onerror    = () => r(false);
+            });
+        } catch { return false; }
+    }
+
+    // FIX: wipe all cached messages (logout / reset)
+    async function clear() {
+        try {
+            const db = await op();
+            return new Promise(r => {
+                const tx = db.transaction(ST, 'readwrite');
+                tx.objectStore(ST).clear();
+                tx.oncomplete = () => r(true);
+                tx.onerror    = () => r(false);
+            });
+        } catch { return false; }
+    }
+
+    // FIX: list all keys currently in store
+    async function keys() {
+        try {
+            const db = await op();
+            return new Promise(r => {
+                const tx  = db.transaction(ST, 'readonly');
+                const req = tx.objectStore(ST).getAllKeys();
+                req.onsuccess = () => r(req.result || []);
+                req.onerror   = () => r([]);
+            });
+        } catch { return []; }
+    }
+
+    return { load, save, delete: del, clear, keys };
 })();
 const _viewersCache = {};
 let _currentFacingMode = 'user';  // для flip
@@ -1151,14 +1237,7 @@ function initSocket() {
         });
     });
 
-    socket.on('messages_read_bulk', (d) => {
-        if (+d.chat_id === currentChatId) {
-            document.querySelectorAll('.msg-row.out .status-icon').forEach(el => {
-                el.innerHTML = ICONS.checkDouble;
-                el.style.color = 'rgba(147,197,253,1)';
-            });
-        }
-    });
+    // BUG-B FIX: second duplicate 'messages_read_bulk' listener removed
 
     socket.on('message_reaction', (d) => {
         addReactionToMsg(d.msg_id, d.emoji, +d.user_id === currentUser.id);
@@ -1172,10 +1251,13 @@ function initSocket() {
     socket.on('message_deleted', (d) => {
         _markMsgDeleted(d.msg_id);
         _animDeleteMsgRow(d.msg_id);
-        // Удаляем из кэша
-        if (messagesByChatCache[d.chat_id]) {
-            messagesByChatCache[d.chat_id].messages = messagesByChatCache[d.chat_id].messages.filter(m => m.id !== d.msg_id);
-        }
+        // BUG-C FIX: messagesByChatCache uses 'p_id'/'g_id' keys, NOT raw chat_id
+        // Scan all cache entries for this message ID and remove it
+        Object.values(messagesByChatCache).forEach(entry => {
+            if (entry?.messages) {
+                entry.messages = entry.messages.filter(m => m.id !== d.msg_id);
+            }
+        });
     });
 
     // Группы
@@ -2735,7 +2817,7 @@ async function loadChats(force = false) {
                 const parsed = JSON.parse(cached);
                 if (Array.isArray(parsed) && parsed.length) {
                     recentChats = parsed;
-                    renderChatList(parsed);
+                    renderChatList(parsed.filter(ch => !_deletedChatIds.has(ch.chat_id)));
                 } else { showChatSkeleton(); }
             } else { showChatSkeleton(); }
         } catch(e) { showChatSkeleton(); }
@@ -2944,11 +3026,22 @@ function _confirmDeleteChat(chatId, name) {
     btns.appendChild(ca); btns.appendChild(ok);
     sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
 }
-// Чаты, помеченные удалёнными — не возвращаем через loadChats
-const _deletedChatIds = new Set();
+// Чаты, помеченные удалёнными — персистентны через localStorage
+const _WC_DEL_CHATS_KEY = '_wc_del_chat_ids';
+const _deletedChatIds = new Set(
+    JSON.parse(localStorage.getItem(_WC_DEL_CHATS_KEY) || '[]')
+);
+function _persistDeletedChatIds() {
+    try {
+        // Keep last 200 to avoid bloat
+        const arr = Array.from(_deletedChatIds).slice(-200);
+        localStorage.setItem(_WC_DEL_CHATS_KEY, JSON.stringify(arr));
+    } catch(e) {}
+}
 
 async function _doDeleteChat(chatId) {
     _deletedChatIds.add(chatId);  // сразу помечаем — loadChats их игнорирует
+    _persistDeletedChatIds();       // FIX: persist so reload doesn't bring chat back
 
     const container = document.getElementById('chat-list');
     const chat = recentChats.find(ch => ch.chat_id === chatId);
@@ -2982,6 +3075,14 @@ async function _doDeleteChat(chatId) {
             document.getElementById('chat-window')?.classList.remove('active');
             currentChatId = null; currentPartnerId = null;
         }
+        // FIX: purge from message cache so chat can't be reloaded from memory
+        const _ck1 = `p_${chat.partner_id}`;
+        const _ck2 = `g_${chat.group_id}`;
+        delete messagesByChatCache[_ck1];
+        delete messagesByChatCache[_ck2];
+        // FIX: also remove from IndexedDB so it doesn't resurface on reconnect
+        MsgDB.delete(_ck1).catch(() => {});
+        MsgDB.delete(_ck2).catch(() => {});
     }
     try {
         await apiFetch('/delete_chat/' + chatId, { method: 'POST' });
@@ -2989,6 +3090,7 @@ async function _doDeleteChat(chatId) {
         // НЕ вызываем loadChats — иначе чат вернётся до ответа сервера
     } catch(e) {
         _deletedChatIds.delete(chatId);
+        _persistDeletedChatIds();  // sync after rollback
         showToast('Ошибка удаления', 'error');
         loadChats(true);
     }
@@ -3185,9 +3287,26 @@ function renderChatList(chats) {
         frag.appendChild(div);
     });
 
-    // Один DOM-update — заменяем содержимое контейнера целиком
-    container.innerHTML = '';
-    container.appendChild(frag);
+    // BUG-A FIX: surgical DOM update — NO innerHTML wipe
+    // Move/insert items in server-defined order without destroying existing elements
+    const fragItems = Array.from(frag.childNodes);
+    let refNode = container.firstChild;
+    fragItems.forEach(node => {
+        const key = node.dataset?.chatKey;
+        const existing = key ? container.querySelector(`[data-chat-key="${key}"]`) : null;
+        if (existing) {
+            // Item already in DOM — move to correct position if needed
+            if (existing !== refNode) {
+                container.insertBefore(existing, refNode || null);
+            } else {
+                refNode = refNode.nextSibling;
+            }
+        } else {
+            // Truly new item — insert at correct position
+            container.insertBefore(node, refNode || null);
+        }
+    });
+    // Remove any leftover items not in new list (already handled above via existingMap diff)
 
     updateUnreadBadge(totalUnread);
     } finally { _renderingChats = false; }
@@ -3388,6 +3507,10 @@ async function openChat(id, name, avatar) {
     currentChatType  = 'private';
     loadingMessages  = false;
     hasMoreMessages  = true;
+    _loadMsgsReqId++; // FIX: invalidate any in-flight loadMessages
+    // FIX: clear scroll-to-bottom badge on chat open
+    const _badge = document.getElementById('wc-scroll-badge');
+    if (_badge) { _badge.textContent = ''; _badge.style.display = 'none'; }
 
     // ── 2. Показываем окно чата мгновенно ───────────────────────
     const win  = document.getElementById('chat-window');
@@ -3505,8 +3628,9 @@ async function openChat(id, name, avatar) {
             if (_chatOpenId === _myOpenId) {
                 _ensureScrollBtn();
                 _initScrollDownBtn();
-                // Дополнительный принудительный скролл если VirtualList ещё грузится
-                if (msgs && msgs.scrollHeight > msgs.clientHeight) {
+                // BUG-I FIX: only scroll if VirtualList hasn't already done it
+                // Check if at bottom already (VL sets scrollTop in _scrollAfterRender)
+                if (msgs && msgs.scrollHeight > msgs.clientHeight && !_isNearBottom(msgs)) {
                     msgs.scrollTop = msgs.scrollHeight;
                 }
             }
@@ -3648,13 +3772,18 @@ function _showChatError(container, retryFn) {
 
 const MESSAGES_PER_PAGE = 35;
 
+// FIX: global request counter — each loadMessages call gets a unique ID
+// If a newer call starts, the older one's response is silently dropped
+let _loadMsgsReqId = 0;
+
 async function loadMessages(initial = false, retryCount = 0) {
     if (!currentChatId) return;
     if (loadingMessages && !initial) return;
     if (!initial && !hasMoreMessages) return;
 
     loadingMessages = true;
-    const _savedChatId = currentChatId; // защита от смены чата во время загрузки
+    const _reqId       = ++_loadMsgsReqId;  // FIX: unique request ID
+    const _savedChatId = currentChatId;
     const container    = document.getElementById('messages');
     const cacheKey     = currentChatType === 'group'
         ? `g_${currentPartnerId}`
@@ -3670,6 +3799,8 @@ async function loadMessages(initial = false, retryCount = 0) {
         const url = `/get_messages/${currentChatId}?limit=${MESSAGES_PER_PAGE}${beforeId ? `&before_id=${beforeId}` : ''}`;
         const res  = await apiFetch(url);
 
+        // FIX: drop stale response — newer request already in flight
+        if (_reqId !== _loadMsgsReqId) return;
         // Проверяем что чат не сменился пока грузили
         if (currentChatId !== _savedChatId) return;
 
@@ -3715,11 +3846,14 @@ async function loadMessages(initial = false, retryCount = 0) {
         } else {
             // Пагинация — добавляем в начало
             const existing = messagesByChatCache[cacheKey]?.messages || [];
+            // FIX: deduplicate by message ID — prevents duplicates on reconnect
+            const existingIds = new Set(existing.map(m => m.id));
+            const newMsgs = msgs.filter(m => !existingIds.has(m.id));
             messagesByChatCache[cacheKey] = {
-                messages:  [...msgs, ...existing],
+                messages:  [...newMsgs, ...existing],
                 lastFetch: messagesByChatCache[cacheKey]?.lastFetch || 0,
             };
-            VirtualList.prependMessages(msgs);
+            if (newMsgs.length > 0) VirtualList.prependMessages(newMsgs);
         }
         currentPage++;
 
@@ -3741,10 +3875,17 @@ async function loadMessages(initial = false, retryCount = 0) {
 
 
 function renderMessagesFromCache(msgs) {
-    msgs = msgs.filter(m => !_deletedMsgIds.has(String(m.id)));
+    // FIX: filter deleted + deduplicate by ID (server may send dupes on reconnect)
+    const seen = new Set();
+    msgs = msgs
+        .filter(m => !_deletedMsgIds.has(String(m.id)))
+        .filter(m => {
+            if (!m.id || seen.has(m.id)) return false;
+            seen.add(m.id);
+            return true;
+        });
     const container = document.getElementById('messages');
     if (!container) return;
-    // mount пересоздаёт структуру — нужно до setMessages
     if (!container.querySelector('.vl-ph')) {
         VirtualList.mount(container);
     }
@@ -3779,6 +3920,8 @@ function setupScrollPagination(){/* VirtualList handles it */}
 //  РЕНДЕР СООБЩЕНИЯ
 // ══════════════════════════════════════════════════════════
 function buildMessageRow(msg, animate = true) {
+    // FIX: never render a deleted message
+    if (_deletedMsgIds && _deletedMsgIds.has(String(msg.id))) return null;
     const isMe = msg.sender_id === currentUser.id;
     const type = msg.type || msg.type_msg || 'text';
     const row  = document.createElement('div');
@@ -5044,16 +5187,17 @@ function sendText() {
     input.style.height = 'auto';
     socket.emit('stop_typing', { chat_id: currentChatId });
     vibrate(8);
-    // FIX Task 2a: outgoing message — ALWAYS scroll to bottom instantly
-    var msgsEl = document.getElementById('messages');
+    // BUG-J FIX: use scrollDown() which goes through VirtualList + clears badge
     _scrollUnread = 0;
-    scrollToBottom(msgsEl, true);
+    scrollDown(false);  // false = instant (no animation for own messages)
 }
 
 function _nowMoscow() {
-    const now = new Date();
-    now.setHours(now.getHours() + 3); // UTC→MSK примерно
-    return now.toTimeString().slice(0,5);
+    // BUG-K FIX: use proper UTC+3 offset — setHours(+3) breaks at hour 21+
+    const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
+    const hh  = now.getUTCHours().toString().padStart(2, '0');
+    const mm  = now.getUTCMinutes().toString().padStart(2, '0');
+    return `${hh}:${mm}`;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -5090,11 +5234,34 @@ function onNewMessage(msg) {
         if (document.querySelector(`[data-msg-id="${msg.id}"]`)) return;
 
         hideTypingIndicator();
+        // FIX: preserve scroll if user is reading history (not at bottom)
+        const _msgsEl      = document.getElementById('messages');
+        const _wasAtBottom = !_msgsEl || _isNearBottom(_msgsEl);
         renderNewMessage(msg, true);
+        // Only auto-scroll if user was already at the bottom
+        if (_wasAtBottom) {
+            scrollDown(true);
+        } else {
+            // Show the unread badge on scroll-to-bottom button
+            const badge = document.getElementById('wc-scroll-badge');
+            if (badge) {
+                badge.textContent = (+badge.textContent || 0) + 1;
+                badge.style.display = 'flex';
+            }
+        }
         socket.emit('mark_read', { chat_id: currentChatId });
         _debouncedLoadChats();
-        // OPT Task 5e: track for reconnect missed-message detection
         if (msg.id) _setLastMsgId(currentChatId, msg.id);
+        // FIX: keep memory cache in sync with new incoming message
+        const _ck = currentChatType === 'group'
+            ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
+        if (messagesByChatCache[_ck] && !_deletedMsgIds.has(String(msg.id))) {
+            // Avoid duplicates before pushing
+            const _existing = messagesByChatCache[_ck].messages;
+            if (!_existing.some(m => m.id === msg.id)) {
+                messagesByChatCache[_ck].messages.push(msg);
+            }
+        }
     } else {
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
@@ -8609,6 +8776,11 @@ window.addEventListener('offline', () => updateConnStatus(false));
 //  ЗАПУСК
 // ══════════════════════════════════════════════════════════
 async function doLogout() {
+    // FIX: clear caches on logout
+    try { await MsgDB.clear(); } catch(e) {}
+    try { localStorage.removeItem('_wc_del_chat_ids'); } catch(e) {}
+    try { localStorage.removeItem('_wc_del_ids'); } catch(e) {}
+    try { localStorage.removeItem('waychat_chats_cache'); } catch(e) {}
     try { await fetch('/logout', { method: 'GET', credentials: 'same-origin' }); } catch(e) {}
     window.location.href = '/login';
 }
@@ -12012,7 +12184,12 @@ function requestPermission(type) {
     return Promise.resolve('unknown');
 }
 
-function scrollDown(smooth=true){VirtualList.scrollToBottom(smooth);}
+function scrollDown(smooth = true) {
+    VirtualList.scrollToBottom(smooth);
+    // FIX: clear unread badge when scrolling to bottom
+    const badge = document.getElementById('wc-scroll-badge');
+    if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
+}
 
 function setupCallScreen(type, isIncoming) {
     const screen = document.getElementById('call-screen');
