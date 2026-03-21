@@ -347,44 +347,6 @@ window.currentUser = {{ {
         });
     }
 
-    // ── 5. iOS "Add to Home Screen" hint (shown once) ────────────────────
-    if (/iphone|ipad|ipod/i.test(navigator.userAgent)
-        && !window.navigator.standalone
-        && !localStorage.getItem('wc_ios_hint_v5')) {
-        setTimeout(function() {
-            localStorage.setItem('wc_ios_hint_v5', '1');
-            var d = document.createElement('div');
-            d.style.cssText = [
-                'position:fixed',
-                'bottom:0',
-                'left:0',
-                'right:0',
-                'z-index:99989',
-                'background:rgba(29,29,30,.98)',
-                'backdrop-filter:blur(28px)',
-                '-webkit-backdrop-filter:blur(28px)',
-                // FIX 6a: safe-area-inset-bottom for bottom bars
-                'padding:16px 20px calc(20px + env(safe-area-inset-bottom,0px))',
-                'border-top:.5px solid rgba(255,255,255,.1)',
-                'color:white',
-                'font-family:-apple-system,sans-serif',
-                'animation:slideUpBanner .4s ease forwards',
-            ].join(';');
-            d.innerHTML = [
-                '<div style="font-size:15px;font-weight:700;margin-bottom:6px">Добавить WayChat на экран</div>',
-                '<div style="font-size:13px;color:rgba(255,255,255,.55);margin-bottom:14px">',
-                'Нажми <b>Поделиться</b> → <b>На экран «Домой»</b>',
-                '</div>',
-                '<button style="width:100%;padding:12px;background:#10b981;border:none;',
-                'border-radius:14px;color:#000;font-size:15px;font-weight:700;',
-                'cursor:pointer;font-family:inherit">Понял, спасибо!</button>',
-            ].join('');
-            d.querySelector('button').addEventListener('click', function() { d.remove(); });
-            document.body.appendChild(d);
-            setTimeout(function() { if (d.parentNode) d.remove(); }, 14000);
-        }, 5000);
-    }
-
 })();
 </script>
 
