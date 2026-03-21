@@ -151,7 +151,7 @@ const WCCache = (() => {
             position: relative !important;
             transform: none !important;
             z-index: 10 !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
+            padding-bottom: 8px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; }
@@ -161,7 +161,7 @@ const WCCache = (() => {
             z-index: 950 !important;
             touch-action: manipulation !important;
             /* FAB опускается к реальному низу экрана */
-            bottom: max(env(safe-area-inset-bottom, 0px), 4px) !important;
+            bottom: 4px !important;
         }
         .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
         .fab-menu  { z-index: 952 !important; }
@@ -383,8 +383,7 @@ function _ensureScrollBtn() {
     btn.style.cssText = [
         'position:absolute',
         'right:14px',
-        // FIX 6a: account for safe-area-inset-bottom
-        'bottom:calc(72px + env(safe-area-inset-bottom,0px))',
+        'bottom:72px',
         'width:42px',
         'height:42px',
         'border-radius:50%',
@@ -1753,13 +1752,11 @@ body {
 .glass-card { background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border); }
 
 /* НАВ-БАР */
-/* FAB — максимально внизу, без анимации, без свечения */
+/* FAB — прибит к самому низу экрана */
 .fab-btn{
     position:fixed;
-    /* env(safe-area-inset-bottom) = высота home indicator на iPhone.
-       Добавляем 4px сверху него — кнопка прямо над индикатором */
-    bottom:calc(env(safe-area-inset-bottom, 0px) + 4px);
-    right:16px;
+    bottom:2px;
+    right:14px;
     width:46px;height:46px;
     border-radius:50%;
     background:#10b981;
@@ -1773,7 +1770,7 @@ body {
 .fab-btn:active{transform:scale(.88)}
 .fab-menu{
     position:fixed;
-    bottom:calc(env(safe-area-inset-bottom, 0px) + 60px);
+    bottom:56px;
     right:12px;z-index:901;
     display:flex;flex-direction:column;gap:8px;align-items:flex-end;
     pointer-events:none;opacity:0;
@@ -1788,7 +1785,7 @@ body {
 .fab-bd.open{opacity:1;pointer-events:all}
 .hdr-badge{display:inline-flex;align-items:center;justify-content:center;background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:18px;height:18px;border-radius:9px;padding:0 5px;margin-left:6px}
 .prof-sheet-wrap{position:fixed;inset:0;z-index:8500;display:none;align-items:flex-end}
-.prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:max(env(safe-area-inset-bottom,20px),20px)}
+.prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:20px}
 
 /* ПОИСК — серый фон как у TG */
 .search-box { display:flex;align-items:center;gap:10px;background:#2c2c2e;border:none;border-radius:12px;padding:9px 14px;transition:background 0.2s; }
@@ -1878,7 +1875,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:6px 12px;padding-bottom:max(calc(env(safe-area-inset-bottom,0px)+6px),8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
+.input-bar { padding:6px 12px;padding-bottom:max(6px,8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
 .input-inner:focus-within { border-color:var(--accent-30); }
@@ -1979,7 +1976,7 @@ body {
 
 /* МОДАЛЬНЫЕ */
 .modal-overlay { position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end;animation:fadeIn 0.2s ease; }
-.modal-sheet { background:rgba(18,18,25,0.98);backdrop-filter:blur(40px);border-radius:28px 28px 0 0;border-top:0.5px solid var(--border);width:100%;padding:16px 20px;padding-bottom:max(env(safe-area-inset-bottom),24px);animation:slideUp 0.3s cubic-bezier(0.22,1,0.36,1); }
+.modal-sheet { background:rgba(18,18,25,0.98);backdrop-filter:blur(40px);border-radius:28px 28px 0 0;border-top:0.5px solid var(--border);width:100%;padding:16px 20px;padding-bottom:24px;animation:slideUp 0.3s cubic-bezier(0.22,1,0.36,1); }
 .modal-handle { width:36px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;margin:0 auto 20px; }
 
 /* АУДИО ПЛЕЕР */
@@ -2367,7 +2364,7 @@ body {
             <!-- Список треков -->
             <div style="margin:16px 16px 0">
                 <div style="font-size:12px;font-weight:800;letter-spacing:.6px;color:rgba(255,255,255,.3);margin-bottom:10px">ТРЕКИ</div>
-                <div id="music-track-list" style="padding-bottom:max(env(safe-area-inset-bottom),32px)"></div>
+                <div id="music-track-list" style="padding-bottom:32px"></div>
             </div>
 
             <!-- Пустое состояние -->
@@ -2546,7 +2543,7 @@ body {
 </div>
 
 <!-- ══ МИНИ-ПЛЕЕР (глобальный, поверх всего) ══ -->
-<div id="music-mini-player" style="display:none;position:fixed;bottom:max(env(safe-area-inset-bottom,0px),20px);left:12px;right:12px;z-index:6500;border-radius:18px;overflow:hidden;background:rgba(15,15,20,0.96);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:.5px solid rgba(255,255,255,.1);box-shadow:0 8px 40px rgba(0,0,0,.7);transform:translateY(120%);transition:transform .4s cubic-bezier(.32,.72,0,1)">
+<div id="music-mini-player" style="display:none;position:fixed;bottom:20px;left:12px;right:12px;z-index:6500;border-radius:18px;overflow:hidden;background:rgba(15,15,20,0.96);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border:.5px solid rgba(255,255,255,.1);box-shadow:0 8px 40px rgba(0,0,0,.7);transform:translateY(120%);transition:transform .4s cubic-bezier(.32,.72,0,1)">
     <!-- Прогресс бар сверху -->
     <div style="height:2.5px;background:rgba(255,255,255,.08);position:relative">
         <div id="mmp-prog" style="height:100%;background:var(--accent);width:0%;transition:width .5s linear;border-radius:0 2px 2px 0"></div>
@@ -2675,7 +2672,7 @@ body {
     <!-- Кнопки управления (авто-скрываются через 3с) -->
     <div id="call-controls" style="
         position:absolute;bottom:0;left:0;right:0;
-        padding:20px 20px max(calc(env(safe-area-inset-bottom)+20px),36px);
+        padding:20px 20px max(20px,36px);
         background:linear-gradient(transparent,rgba(0,0,0,0.7));
         transition:opacity 0.4s ease, transform 0.4s ease;
         z-index:50;
@@ -3084,29 +3081,44 @@ function _confirmDeleteChat(chatId, name) {
     sh.appendChild(btns); ov.appendChild(sh); document.body.appendChild(ov);
 }
 // Чаты, помеченные удалёнными — персистентны через localStorage
-const _WC_DEL_CHATS_KEY = '_wc_del_chat_ids';
+const _WC_DEL_CHATS_KEY   = '_wc_del_chat_ids';
+const _WC_DEL_PARTNER_KEY = '_wc_del_partner_ids';
 const _deletedChatIds = new Set(
     JSON.parse(localStorage.getItem(_WC_DEL_CHATS_KEY) || '[]')
 );
+// Партнёры, чьи переписки удалены — при открытии чата кэш игнорируется
+const _deletedPartnerIds = new Set(
+    JSON.parse(localStorage.getItem(_WC_DEL_PARTNER_KEY) || '[]')
+);
 function _persistDeletedChatIds() {
     try {
-        // Keep last 200 to avoid bloat
         const arr = Array.from(_deletedChatIds).slice(-200);
         localStorage.setItem(_WC_DEL_CHATS_KEY, JSON.stringify(arr));
     } catch(e) {}
 }
+function _persistDeletedPartnerIds() {
+    try {
+        const arr = Array.from(_deletedPartnerIds).slice(-200);
+        localStorage.setItem(_WC_DEL_PARTNER_KEY, JSON.stringify(arr));
+    } catch(e) {}
+}
 
 async function _doDeleteChat(chatId) {
-    _deletedChatIds.add(chatId);  // сразу помечаем — loadChats их игнорирует
-    _persistDeletedChatIds();       // FIX: persist so reload doesn't bring chat back
+    _deletedChatIds.add(chatId);
+    _persistDeletedChatIds();
 
     const container = document.getElementById('chat-list');
     const chat = recentChats.find(ch => ch.chat_id === chatId);
     if (chat) {
+        // Запоминаем partner_id — чтобы при поиске этого юзера кэш не показывал старые сообщения
+        if (chat.partner_id) {
+            _deletedPartnerIds.add(chat.partner_id);
+            _persistDeletedPartnerIds();
+        }
+
         const key = chat.is_group ? `g_${chat.group_id}` : `p_${chat.partner_id}`;
         const el  = container?.querySelector(`[data-chat-key="${key}"]`);
         if (el) {
-            // iOS-анимация: fade + slide + collapse
             el.style.transition = 'opacity 0.22s ease, transform 0.22s ease';
             el.style.opacity    = '0';
             el.style.transform  = 'translateX(-32px)';
@@ -3122,7 +3134,6 @@ async function _doDeleteChat(chatId) {
             setTimeout(() => el.remove(), 420);
         }
         recentChats = recentChats.filter(ch => ch.chat_id !== chatId);
-        // Удаляем из localStorage-кеша немедленно
         try {
             const cached = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
             localStorage.setItem('waychat_chats_cache',
@@ -3132,22 +3143,20 @@ async function _doDeleteChat(chatId) {
             document.getElementById('chat-window')?.classList.remove('active');
             currentChatId = null; currentPartnerId = null;
         }
-        // FIX: purge from message cache so chat can't be reloaded from memory
+        // Полная очистка кэша сообщений из памяти и IndexedDB
         const _ck1 = `p_${chat.partner_id}`;
         const _ck2 = `g_${chat.group_id}`;
         delete messagesByChatCache[_ck1];
         delete messagesByChatCache[_ck2];
-        // FIX: also remove from IndexedDB so it doesn't resurface on reconnect
         MsgDB.delete(_ck1).catch(() => {});
         MsgDB.delete(_ck2).catch(() => {});
     }
     try {
         await apiFetch('/delete_chat/' + chatId, { method: 'POST' });
         showToast('Чат удалён', 'success');
-        // НЕ вызываем loadChats — иначе чат вернётся до ответа сервера
     } catch(e) {
         _deletedChatIds.delete(chatId);
-        _persistDeletedChatIds();  // sync after rollback
+        _persistDeletedChatIds();
         showToast('Ошибка удаления', 'error');
         loadChats(true);
     }
@@ -3618,6 +3627,14 @@ async function openChat(id, name, avatar) {
     VirtualList.destroy();
     msgs.innerHTML = '';
     const cacheKey = `p_${id}`;
+
+    // Если переписка с этим юзером была удалена — сбрасываем весь кэш,
+    // чтобы старые сообщения не показывались при повторном открытии через поиск
+    if (_deletedPartnerIds.has(id)) {
+        delete messagesByChatCache[cacheKey];
+        MsgDB.delete(cacheKey).catch(() => {});
+    }
+
     const cached   = messagesByChatCache[cacheKey];
 
     if (cached?.messages?.length) {
@@ -3668,6 +3685,12 @@ async function openChat(id, name, avatar) {
 
         currentChatId = data.chat_id;
         socket.emit('enter_chat', { chat_id: currentChatId });
+
+        // Если партнёр был в списке удалённых — теперь начата новая переписка, убираем
+        if (_deletedPartnerIds.has(id)) {
+            _deletedPartnerIds.delete(id);
+            _persistDeletedPartnerIds();
+        }
 
         // Статус онлайн
         const isOnline = data.partner_online;
@@ -4491,7 +4514,7 @@ function showMsgContextMenu(row, msg) {
         'border-radius:26px 26px 0 0',
         'border-top:0.5px solid rgba(255,255,255,0.09)',
         'overflow:hidden',
-        'padding-bottom:max(env(safe-area-inset-bottom),18px)',
+        'padding-bottom:18px',
         'transform:translateY(100%)',
         'transition:transform 0.3s cubic-bezier(.32,.72,0,1)',
     ].join(';');
@@ -4773,7 +4796,7 @@ function _showMultiSelectBar() {
         'position:fixed;bottom:0;left:0;right:0;z-index:8000',
         'background:rgba(22,22,28,0.97);backdrop-filter:blur(20px)',
         'border-top:0.5px solid rgba(255,255,255,0.1)',
-        'padding:12px 16px;padding-bottom:max(env(safe-area-inset-bottom),12px)',
+        'padding:12px 16px;padding-bottom:12px',
         'display:flex;align-items:center;gap:12px',
     ].join(';');
     bar.innerHTML = `
@@ -4864,7 +4887,7 @@ function _confirmDeleteForAll(msgId) {
         'width:100%;max-width:500px',
         'background:rgba(22,22,28,0.98)',
         'border-radius:26px 26px 0 0',
-        'padding:0 16px max(calc(env(safe-area-inset-bottom)+20px),28px)',
+        'padding:0 16px max(20px,28px)',
         'border-top:0.5px solid rgba(255,255,255,0.09)',
         'transform:translateY(100%)',
         'transition:transform 0.3s cubic-bezier(.32,.72,0,1)',
@@ -5103,7 +5126,7 @@ function openFullImage(src) {
     overlay.onclick = (e) => { if (e.target === overlay || e.target.tagName === 'BUTTON') overlay.remove(); };
     overlay.innerHTML = `<img src="${src}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;user-select:none">
         <button style="position:absolute;top:max(20px,env(safe-area-inset-top));right:20px;background:rgba(255,255,255,0.1);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer">✕</button>
-        <a href="${src}" download style="position:absolute;bottom:max(20px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.1);border:none;color:white;font-size:13px;padding:10px 20px;border-radius:20px;text-decoration:none">⬇ Сохранить</a>`;
+        <a href="${src}" download style="position:absolute;bottom:max(20px,0px);left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.1);border:none;color:white;font-size:13px;padding:10px 20px;border-radius:20px;text-decoration:none">⬇ Сохранить</a>`;
     document.body.appendChild(overlay);
 }
 
@@ -5431,7 +5454,7 @@ async function openPrivacySettings() {
 
     const sh = document.createElement('div');
     sh.className = 'modal-sheet';
-    sh.style.cssText = 'overflow-y:auto;max-height:96vh;padding-bottom:max(env(safe-area-inset-bottom),20px)';
+    sh.style.cssText = 'overflow-y:auto;max-height:96vh;padding-bottom:20px';
 
     function privGroup(title, icon, key, current, hint) {
         const opts = [
@@ -5893,7 +5916,7 @@ function showVoicePreview(blob, ext, duration) {
     overlay.id     = 'voice-preview-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(16px);display:flex;align-items:flex-end;animation:fadeIn 0.2s';
     overlay.innerHTML = `
-    <div style="background:rgba(14,14,20,0.97);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);width:100%;padding:20px 20px calc(env(safe-area-inset-bottom) + 20px)">
+    <div style="background:rgba(14,14,20,0.97);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);width:100%;padding:20px 20px 20px">
         <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 20px"></div>
         <div style="font-size:15px;font-weight:700;text-align:center;margin-bottom:16px">Голосовое сообщение</div>
 
@@ -6397,7 +6420,7 @@ function createBottomSheet(htmlContent, opts = {}) {
         'backdrop-filter:blur(40px)', '-webkit-backdrop-filter:blur(40px)',
         'border-radius:24px 24px 0 0',
         'border-top:0.5px solid rgba(255,255,255,0.1)',
-        'padding:16px 20px calc(max(env(safe-area-inset-bottom,20px),20px))',
+        'padding:16px 20px calc(20px)',
         'transform:translateY(100%)',
         'transition:transform 0.3s cubic-bezier(0.32,0.72,0,1)',
         'max-height:90dvh', 'overflow-y:auto',
@@ -6506,7 +6529,7 @@ function showPartnerProfile() {
         + '</div>'  // end шапка
 
         // === ТЕЛО ===
-        + '<div style="background:#111;flex:1;padding-bottom:max(env(safe-area-inset-bottom),30px)">'
+        + '<div style="background:#111;flex:1;padding-bottom:30px">'
 
         // Кнопки действий
         + (!isGroup ? '<div style="display:flex;gap:10px;padding:16px 16px 4px">'
@@ -8140,7 +8163,7 @@ function _openMomentsOverlay(moments, startIdx) {
         // Текст поверх медиа если есть
         if (m.text && m.media_url) {
             const caption = document.createElement('div');
-            caption.style.cssText = 'position:absolute;bottom:max(env(safe-area-inset-bottom,20px),80px);left:16px;right:16px;text-align:center;color:#fff;font-size:17px;font-weight:600;text-shadow:0 2px 12px rgba(0,0,0,0.9);z-index:15;pointer-events:none';
+            caption.style.cssText = 'position:absolute;bottom:80px;left:16px;right:16px;text-align:center;color:#fff;font-size:17px;font-weight:600;text-shadow:0 2px 12px rgba(0,0,0,0.9);z-index:15;pointer-events:none';
             caption.textContent = m.text;
             mediaWrap.appendChild(caption);
         }
@@ -8148,7 +8171,7 @@ function _openMomentsOverlay(moments, startIdx) {
         // Гео-метка
         if (m.geo_name) {
             const geo = document.createElement('div');
-            geo.style.cssText = 'position:absolute;bottom:max(env(safe-area-inset-bottom,20px),20px);left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:20px;padding:7px 14px;color:rgba(255,255,255,0.8);font-size:13px;white-space:nowrap;z-index:15;pointer-events:none';
+            geo.style.cssText = 'position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:20px;padding:7px 14px;color:rgba(255,255,255,0.8);font-size:13px;white-space:nowrap;z-index:15;pointer-events:none';
             geo.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="10" r="3" stroke="currentColor" stroke-width="2"/></svg>${escHtml(m.geo_name)}`;
             mediaWrap.appendChild(geo);
         }
@@ -8272,7 +8295,7 @@ function _confirmDialog(title, message, confirmText, cancelText) {
         ov.style.cssText = 'position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-end;justify-content:center;background:rgba(0,0,0,0.5);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)';
 
         const sh = document.createElement('div');
-        sh.style.cssText = 'width:100%;max-width:480px;background:rgba(22,22,28,0.98);border-radius:24px 24px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:20px 20px calc(max(env(safe-area-inset-bottom,20px),20px));transform:translateY(100%);transition:transform 0.28s cubic-bezier(0.32,0.72,0,1)';
+        sh.style.cssText = 'width:100%;max-width:480px;background:rgba(22,22,28,0.98);border-radius:24px 24px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:20px 20px calc(20px);transform:translateY(100%);transition:transform 0.28s cubic-bezier(0.32,0.72,0,1)';
         sh.innerHTML = `
             <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 18px"></div>
             <div style="font-size:18px;font-weight:700;text-align:center;margin-bottom:8px;color:#fff">${title}</div>
@@ -8685,7 +8708,7 @@ function _showPushBanner() {
     setTimeout(() => {
         const b = document.createElement('div');
         b.id = 'push-banner';
-        b.style.cssText = 'position:fixed;bottom:max(calc(env(safe-area-inset-bottom,0px)+70px),82px);left:12px;right:12px;z-index:9998;background:var(--surface);border:1px solid rgba(16,185,129,0.25);border-radius:18px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,0.55)';
+        b.style.cssText = 'position:fixed;bottom:max(70px,82px);left:12px;right:12px;z-index:9998;background:var(--surface);border:1px solid rgba(16,185,129,0.25);border-radius:18px;padding:14px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 8px 32px rgba(0,0,0,0.55)';
 
         if (isIOS && !isPWA) {
             // iOS Safari без PWA — только инструкция
@@ -10627,7 +10650,7 @@ async function _confirmDeleteMoment(momentId, momentOv) {
 
     // Шторка
     const sh = document.createElement('div');
-    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 20px max(env(safe-area-inset-bottom),32px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1)';
+    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 20px 32px;animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1)';
 
     // Хэндл
     const handle = document.createElement('div');
@@ -11004,7 +11027,7 @@ function _runMomentsViewer(list, startIdx) {
         ov.appendChild(btmGrad);
 
         const btm = document.createElement('div');
-        btm.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;padding:16px 16px max(calc(env(safe-area-inset-bottom,0px)+16px),28px);display:flex;align-items:flex-end;gap:12px';
+        btm.style.cssText = 'position:absolute;bottom:0;left:0;right:0;z-index:5;padding:16px 16px max(16px,28px);display:flex;align-items:flex-end;gap:12px';
         btm.innerHTML = getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-11 h-11');
         const it = document.createElement('div');
         it.style.cssText = 'flex:1;min-width:0';
@@ -11219,7 +11242,7 @@ async function _showMomentViewers(momentId, momentOv) {
     ov.appendChild(backdrop);
 
     const sh = document.createElement('div');
-    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 0 max(env(safe-area-inset-bottom),28px);animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1);max-height:70vh;display:flex;flex-direction:column';
+    sh.style.cssText = 'position:relative;width:100%;background:rgba(16,16,22,0.97);backdrop-filter:blur(50px) saturate(200%);-webkit-backdrop-filter:blur(50px) saturate(200%);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);padding:0 0 28px;animation:mvSlideUp 0.3s cubic-bezier(0.22,1,0.36,1);max-height:70vh;display:flex;flex-direction:column';
 
     const handle = document.createElement('div');
     handle.style.cssText = 'width:36px;height:4px;background:rgba(255,255,255,0.18);border-radius:2px;margin:12px auto 0;flex-shrink:0';
@@ -11906,7 +11929,7 @@ function openAddParticipant() {
     ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center';
 
     const sh = document.createElement('div');
-    sh.style.cssText = 'background:var(--surface,#111);border-radius:28px 28px 0 0;padding:8px 20px calc(env(safe-area-inset-bottom)+28px);width:100%;max-width:480px;transform:translateY(100%);transition:transform 0.3s cubic-bezier(.32,.72,0,1)';
+    sh.style.cssText = 'background:var(--surface,#111);border-radius:28px 28px 0 0;padding:8px 20px 28px;width:100%;max-width:480px;transform:translateY(100%);transition:transform 0.3s cubic-bezier(.32,.72,0,1)';
 
     const closeSheet = () => { sh.style.transform='translateY(100%)'; setTimeout(()=>ov.remove(),300); };
 
