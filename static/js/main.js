@@ -163,7 +163,7 @@ const WCCache = (() => {
             padding-bottom: 8px !important;
         }
         /* header: не сжимается */
-        #chat-header { flex-shrink: 0 !important; }
+        #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
         /* FAB: всегда поверх и кликабельна */
         .fab-btn {
             pointer-events: all !important;
@@ -181,11 +181,24 @@ const WCCache = (() => {
             -webkit-overflow-scrolling: touch;
             overscroll-behavior: contain;
         }
-        /* sticky search */
+        /* sticky search — NO borders, NO shadow, NO outline */
         #chat-search-bar {
             position: sticky !important;
             top: 0 !important;
             z-index: 100 !important;
+            background: var(--bg, #1d1d1e) !important;
+            border: none !important;
+            box-shadow: none !important;
+            outline: none !important;
+        }
+        #search-box-wrap, #search-box-wrap * {
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+        }
+        /* Input bar — совпадает с фоном, нет линии сверху */
+        .input-bar {
+            border-top: none !important;
             background: var(--bg, #1d1d1e) !important;
         }
         /* iOS: минимум 16px предотвращает авто-зум при фокусе */
@@ -1859,9 +1872,11 @@ body {
 .prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:20px}
 
 /* ПОИСК — пилл как у TG */
-.search-box { display:flex;align-items:center;gap:8px;background:#2c2c2e;border:none;border-radius:9999px;padding:8px 16px;transition:background 0.2s; }
+.search-box { display:flex;align-items:center;gap:8px;background:#2c2c2e;border:none !important;outline:none !important;border-radius:9999px;padding:8px 14px;box-shadow:none !important;-webkit-appearance:none; }
 .search-box:focus-within { background:#363638; }
-#chat-search-bar { border-bottom:none !important; box-shadow:none !important; }
+.search-box * { border:none !important; outline:none !important; box-shadow:none !important; }
+#chat-search-bar { border:none !important; border-bottom:none !important; box-shadow:none !important; outline:none !important; background:var(--bg,#1d1d1e) !important; }
+#search-box-wrap { border:none !important; outline:none !important; box-shadow:none !important; }
 
 /* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
 .fab-plus {
@@ -1921,7 +1936,7 @@ body {
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:8px 8px 12px;scroll-behavior:auto;will-change:scroll-position; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 8px;scroll-behavior:auto;will-change:scroll-position; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
 .msg-row { display:flex;width:100%;margin-bottom:1px; }
@@ -1946,7 +1961,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:6px 12px;padding-bottom:max(6px,8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
+.input-bar { padding:6px 12px 8px;border-top:none;background:var(--bg,#1d1d1e);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
@@ -2283,15 +2298,7 @@ body {
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section">
             <!-- Единая строка: поиск + аватар — sticky, всегда сверху при скролле -->
-            <div id="chat-search-bar" style="
-                display:flex;align-items:center;gap:10px;
-                padding:10px 12px 8px;
-                padding-top:calc(max(env(safe-area-inset-top,0px), 10px) + 4px);
-                position:sticky;
-                top:0;
-                z-index:100;
-                background:var(--bg);
-            ">
+            <div id="chat-search-bar" style="display:flex;align-items:center;gap:10px;padding:10px 12px 8px;position:sticky;top:0;z-index:100;background:var(--bg,#1d1d1e);border:none;box-shadow:none;outline:none">
                 <!-- Поиск -->
                 <div class="search-box" id="search-box-wrap" style="flex:1">
                     <span style="flex-shrink:0;opacity:.4">${ICONS.search}</span>
@@ -3297,6 +3304,10 @@ function renderChatList(chats) {
     _renderingChats = true;
     try {
 
+    // Удаляем скелетон НЕМЕДЛЕННО при рендере реальных чатов
+    const sk = container.querySelector('[data-skeleton]');
+    if (sk) sk.remove();
+
     const makeKey = (chat) => chat.is_group ? `g_${chat.group_id}` : `p_${chat.partner_id}`;
 
     // Собираем карту уже существующих элементов
@@ -3401,7 +3412,7 @@ function renderChatList(chats) {
 
             const info = document.createElement('div');
             info.className = 'chat-info';
-            info.style.cssText = 'flex:1;min-width:0;padding-bottom:9px;border-bottom:1px solid rgba(255,255,255,0.08)';
+            info.style.cssText = 'flex:1;min-width:0;padding-bottom:9px';
 
             div.appendChild(avaWrap);
             div.appendChild(info);
@@ -3778,8 +3789,16 @@ async function openChat(id, name, avatar) {
         currentChatId = data.chat_id;
         socket.emit('enter_chat', { chat_id: currentChatId });
 
-        // Если партнёр был в списке удалённых — теперь начата новая переписка, убираем
+        // Если партнёр в списке удалённых — ПОВТОРНАЯ ядерная очистка прямо здесь
+        // (на случай если кэш успел подгрузиться между шагами 5 и 6)
         if (_deletedPartnerIds.has(id)) {
+            const _ck = `p_${id}`;
+            delete messagesByChatCache[_ck];
+            try { await MsgDB.delete(_ck); } catch(e) {}
+            // Очищаем DOM сообщений полностью
+            const _m = document.getElementById('messages');
+            if (_m) _m.innerHTML = '';
+            // Убираем партнёра из удалённых — новая переписка начнётся чисто
             _deletedPartnerIds.delete(id);
             _persistDeletedPartnerIds();
         }
