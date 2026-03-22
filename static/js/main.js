@@ -111,19 +111,25 @@ const WCCache = (() => {
     const st = document.createElement('style');
     st.id = 'wc-ios10';
     st.textContent = `
-        /* Высота = весь экран включая safe-area зону снизу */
+        /* === УБИВАЕМ СЕРУЮ ПАНЕЛЬ СНИЗУ НАВСЕГДА ===
+           position:fixed + inset:0 — покрывает ВСЁ, включая home indicator */
         #app {
-            height: 100dvh !important;
-            min-height: 100dvh !important;
-            max-height: 100dvh !important;
+            position: fixed !important;
+            inset: 0 !important;
+            height: 100% !important;
+            width: 100% !important;
             overflow: hidden !important;
-            padding-bottom: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
             background: var(--bg, #1d1d1e) !important;
         }
-        /* УБИВАЕМ серую полосу снизу: любой дочерний блок #app не может
-           иметь padding-bottom основанный на safe-area кроме input-bar */
-        #app > * {
-            padding-bottom: 0 !important;
+        /* body тоже должен быть тёмным — нет просветов */
+        html, body {
+            background: #1d1d1e !important;
+            height: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
         }
         /* chat-view: flex-колонка на весь экран */
         .chat-view {
@@ -1801,9 +1807,9 @@ body {
 .prof-sheet-wrap{position:fixed;inset:0;z-index:8500;display:none;align-items:flex-end}
 .prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:20px}
 
-/* ПОИСК — серый фон как у TG */
-.search-box { display:flex;align-items:center;gap:10px;background:#2c2c2e;border:none;border-radius:12px;padding:9px 14px;transition:background 0.2s; }
-.search-box:focus-within { background:#333335; }
+/* ПОИСК — пилл как у TG */
+.search-box { display:flex;align-items:center;gap:8px;background:#2c2c2e;border:none;border-radius:9999px;padding:8px 16px;transition:background 0.2s; }
+.search-box:focus-within { background:#363638; }
 #chat-search-bar { border-bottom:none !important; box-shadow:none !important; }
 
 /* ФАБ КНОПКА — меньше в 2 раза + белая + черный крест */
@@ -2219,7 +2225,7 @@ body {
 }
 </style>
 
-<div id="app" class="h-screen w-screen flex flex-col overflow-hidden" style="height:100dvh;min-height:100dvh;max-height:100dvh;background:var(--bg,#1d1d1e)">
+<div id="app" style="position:fixed;inset:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg,#1d1d1e)">
     <div id="conn-status" class="conn-status" style="opacity:0"></div>
     <div id="main-content" class="flex-1 overflow-y-auto" style="overflow-x:hidden;padding-bottom:0">
 
@@ -5234,10 +5240,34 @@ function autoResize(el) {
     el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
-function sendText() {
+async function sendText() {
     const input = document.getElementById('msg-input');
     const text  = (input?.value || '').trim();
-    if (!text || !currentChatId) return;
+    if (!text) return;
+
+    // Если чата ещё нет (первое сообщение после удаления или новый диалог) — создаём
+    if (!currentChatId && currentPartnerId) {
+        try {
+            const r = await apiFetch(`/create_chat/${currentPartnerId}`, { method: 'POST' });
+            if (!r?.ok) { showToast('Ошибка создания чата', 'error'); return; }
+            const d = await r.json();
+            if (!d.chat_id) { showToast('Ошибка создания чата', 'error'); return; }
+            currentChatId = d.chat_id;
+            socket.emit('enter_chat', { chat_id: currentChatId });
+            // Партнёр больше не "удалённый"
+            if (_deletedPartnerIds.has(currentPartnerId)) {
+                _deletedPartnerIds.delete(currentPartnerId);
+                _persistDeletedPartnerIds();
+            }
+            _deletedChatIds.delete(d.chat_id);
+            _persistDeletedChatIds();
+        } catch(e) {
+            showToast('Нет соединения', 'error');
+            return;
+        }
+    }
+
+    if (!currentChatId) return;
 
     // ── Оптимистичный рендер (мгновенно) ──
     const tempMsg = {
