@@ -170,7 +170,7 @@ const WCCache = (() => {
             z-index: 950 !important;
             touch-action: manipulation !important;
             /* FAB опускается к реальному низу экрана */
-            bottom: 4px !important;
+            bottom: 16px !important;
         }
         .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
         .fab-menu  { z-index: 952 !important; }
@@ -196,10 +196,13 @@ const WCCache = (() => {
             outline: none !important;
             box-shadow: none !important;
         }
-        /* Input bar — совпадает с фоном, нет линии сверху */
+        /* Input bar — прозрачный, как у TG */
         .input-bar {
             border-top: none !important;
-            background: var(--bg, #1d1d1e) !important;
+            border: none !important;
+            background: transparent !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
         }
         /* iOS: минимум 16px предотвращает авто-зум при фокусе */
         input, textarea, select { font-size: max(16px, 1em) !important; }
@@ -1839,7 +1842,7 @@ body {
 /* FAB — прибит к самому низу экрана */
 .fab-btn{
     position:fixed;
-    bottom:2px;
+    bottom:16px;
     right:14px;
     width:46px;height:46px;
     border-radius:50%;
@@ -1854,7 +1857,7 @@ body {
 .fab-btn:active{transform:scale(.88)}
 .fab-menu{
     position:fixed;
-    bottom:56px;
+    bottom:68px;
     right:12px;z-index:901;
     display:flex;flex-direction:column;gap:8px;align-items:flex-end;
     pointer-events:none;opacity:0;
@@ -1894,6 +1897,8 @@ body {
 .chat-item{display:flex;align-items:center;gap:12px;padding:7px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
+/* TG-style divider: тонкая линия снизу, начинается после аватара */
+.chat-item + .chat-item { border-top: 0.33px solid rgba(255,255,255,0.07); }
 .online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 6px var(--accent)}
 
 /* СВАЙП ЖЕСТЫ */
@@ -1936,7 +1941,7 @@ body {
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 8px;scroll-behavior:auto;will-change:scroll-position; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;will-change:scroll-position; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
 .msg-row { display:flex;width:100%;margin-bottom:1px; }
@@ -1961,7 +1966,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:6px 12px 8px;border-top:none;background:var(--bg,#1d1d1e);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
+.input-bar { padding:6px 12px 10px;border-top:none !important;border:none !important;background:var(--chat-bg,#1d1d1e);backdrop-filter:none;-webkit-backdrop-filter:none;flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
@@ -1983,8 +1988,8 @@ body {
 .tg-input-row { display:flex;align-items:flex-end;gap:6px; }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:2px 6px 2px 14px;min-height:40px;transition:border-color 0.2s; }
-.tg-text-wrap:focus-within { border-color:var(--accent-30); }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px; }
+.tg-text-wrap:focus-within { background:#333335; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2687,7 +2692,7 @@ body {
         </div>
         <div style="font-size:11px;color:var(--text-2);margin-bottom:4px" id="typing-name-label"></div>
     </div>
-    <div class="input-bar glass" style="border-top:0.5px solid var(--sep)">
+    <div class="input-bar" style="border-top:none">
         <div class="tg-input-row">
             <button class="tg-attach-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -4014,6 +4019,14 @@ async function loadMessages(initial = false, retryCount = 0) {
         const msgs = await res.json();
         if (!Array.isArray(msgs)) { console.error('[loadMessages] not array'); return; }
         if (currentChatId !== _savedChatId) return; // чат сменился
+        // Финальная проверка: если партнёр был удалён пока грузились — показываем пустой экран
+        if (currentPartnerId && _deletedPartnerIds.has(currentPartnerId)) {
+            if (container) container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2">
+                <div style="font-size:40px;margin-bottom:10px">👋</div>
+                <p>Начните переписку!</p>
+            </div>`;
+            return;
+        }
 
         if (msgs.length < MESSAGES_PER_PAGE) hasMoreMessages = false;
 
