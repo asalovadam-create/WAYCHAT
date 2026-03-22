@@ -1733,9 +1733,30 @@ def get_messages(chat_id):
         db.session.rollback()
     except Exception:
         pass
-    limit     = min(request.args.get('limit', 30, type=int), 60)  # 3: max 30 initial, 60 for pagination
+    limit     = min(request.args.get('limit', 30, type=int), 60)
     before_id = request.args.get('before_id', None, type=int)
     uid       = current_user.id
+
+    # Проверяем что чат существует и пользователь — участник
+    chat = db.session.get(Chat, chat_id)
+    if not chat:
+        return jsonify([])  # чат удалён — возвращаем пустой массив
+
+    # Проверка доступа: пользователь должен быть участником
+    uid_str = str(uid)
+    is_private = chat.room_key.startswith('chat_') and not chat.room_key.startswith('group_')
+    if is_private:
+        parts = chat.room_key.replace('chat_', '').split('_')
+        if uid_str not in parts:
+            return jsonify([])
+    # Для групповых — проверяем членство
+    elif chat.room_key.startswith('group_'):
+        try:
+            group_id = int(chat.room_key.replace('group_', ''))
+            if not GroupMember.query.filter_by(group_id=group_id, user_id=uid).first():
+                return jsonify([])
+        except Exception:
+            pass
 
     db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
@@ -1743,8 +1764,7 @@ def get_messages(chat_id):
     )
     db.session.commit()
 
-    chat = db.session.get(Chat, chat_id)
-    if chat and not chat.room_key.startswith('group_'):
+    if not chat.room_key.startswith('group_'):
         p_id = get_partner_id(chat, uid)
         if p_id:
             emit_to_user(p_id, 'messages_read_bulk', {'chat_id': chat_id})
