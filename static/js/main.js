@@ -111,26 +111,29 @@ const WCCache = (() => {
     const st = document.createElement('style');
     st.id = 'wc-ios10';
     st.textContent = `
-        /* === УБИВАЕМ СЕРУЮ ПАНЕЛЬ СНИЗУ НАВСЕГДА ===
-           position:fixed + inset:0 — покрывает ВСЁ, включая home indicator */
-        #app {
-            position: fixed !important;
-            inset: 0 !important;
-            height: 100% !important;
-            width: 100% !important;
-            overflow: hidden !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: var(--bg, #1d1d1e) !important;
-        }
-        /* body тоже должен быть тёмным — нет просветов */
+        /* ═══ ЯДЕРНОЕ УНИЧТОЖЕНИЕ СЕРОЙ ПОЛОСЫ ═══
+           position:fixed inset:0 — единственный надёжный способ на iOS Safari.
+           100dvh НЕ работает на iPhone с home indicator. */
         html, body {
             background: #1d1d1e !important;
-            height: 100% !important;
-            margin: 0 !important;
-            padding: 0 !important;
+            margin: 0 !important; padding: 0 !important;
+            height: 100% !important; width: 100% !important;
             overflow: hidden !important;
+            -webkit-text-size-adjust: 100% !important;
         }
+        #app {
+            position: fixed !important;
+            top: 0 !important; left: 0 !important;
+            right: 0 !important; bottom: 0 !important;
+            width: 100% !important; height: 100% !important;
+            overflow: hidden !important;
+            padding: 0 !important; margin: 0 !important;
+            background: #1d1d1e !important;
+        }
+        /* Убиваем любой padding-bottom у прямых детей #app */
+        #app > * { padding-bottom: 0 !important; margin-bottom: 0 !important; }
+        /* Убиваем серый фон который может просвечивать под #app */
+        * { -webkit-tap-highlight-color: transparent !important; }
         /* chat-view: flex-колонка на весь экран */
         .chat-view {
             position: fixed !important;
@@ -1337,58 +1340,59 @@ function initSocket() {
     // v9.0: async upload events
     socket.on('media_ready', _handleMediaReady);
 
-    // ── chat_deleted: партнёр удалил переписку — чистим у себя тоже ──
-    socket.on('chat_deleted', function(d) {
+    // ── chat_deleted: удаляем переписку у ОБОИХ участников ──
+    socket.on('chat_deleted', async function(d) {
         const cid = d && d.chat_id;
         if (!cid) return;
 
-        // Сначала находим чат ДО фильтрации recentChats
-        const chat = recentChats.find(ch => ch.chat_id === cid);
+        // Находим чат ДО любых изменений
+        const chat      = recentChats.find(ch => ch.chat_id === cid);
+        const partnerId = chat?.partner_id || null;
+        const groupId   = chat?.group_id   || null;
+        const ck1 = partnerId ? `p_${partnerId}` : null;
+        const ck2 = groupId   ? `g_${groupId}`   : null;
 
-        // Запоминаем partner_id чтобы блокировать показ кэша при открытии через поиск
-        if (chat && chat.partner_id) {
-            _deletedPartnerIds.add(chat.partner_id);
-            _persistDeletedPartnerIds();
-        }
-
-        // Помечаем чат удалённым
+        // Помечаем удалёнными
         _deletedChatIds.add(cid);
         _persistDeletedChatIds();
+        if (partnerId) { _deletedPartnerIds.add(partnerId); _persistDeletedPartnerIds(); }
 
-        // Чистим память и localStorage
-        recentChats = recentChats.filter(ch => ch.chat_id !== cid);
+        // Чистим ВСЕ кэши
+        if (ck1) delete messagesByChatCache[ck1];
+        if (ck2) delete messagesByChatCache[ck2];
+        const tasks = [];
+        if (ck1) tasks.push(MsgDB.delete(ck1));
+        if (ck2) tasks.push(MsgDB.delete(ck2));
+        tasks.push(WCCache.del('chats', String(cid)));
+        if (partnerId) tasks.push(WCCache.del('profiles', String(partnerId)));
+        await Promise.allSettled(tasks);
+
+        // Чистим localStorage
         try {
             const ls = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
-            localStorage.setItem('waychat_chats_cache', JSON.stringify(ls.filter(ch => ch.chat_id !== cid)));
+            localStorage.setItem('waychat_chats_cache',
+                JSON.stringify(ls.filter(ch => ch.chat_id !== cid)));
         } catch(e) {}
-
-        // Полная очистка кэша сообщений
-        if (chat) {
-            const _ck1 = `p_${chat.partner_id}`;
-            const _ck2 = `g_${chat.group_id}`;
-            delete messagesByChatCache[_ck1];
-            delete messagesByChatCache[_ck2];
-            MsgDB.delete(_ck1).catch(() => {});
-            MsgDB.delete(_ck2).catch(() => {});
-        }
+        recentChats = recentChats.filter(ch => ch.chat_id !== cid);
 
         // Убираем из DOM
-        const container = document.getElementById('chat-list');
-        if (container) {
-            const all = container.querySelectorAll('[data-chat-key]');
-            all.forEach(el => {
-                const key = el.getAttribute('data-chat-key');
-                if (chat && key && (
-                    `p_${chat.partner_id}` === key || `g_${chat.group_id}` === key
-                )) el.remove();
-            });
+        if (chat) {
+            const key = chat.is_group ? ck2 : ck1;
+            const el = key && document.querySelector(`[data-chat-key="${key}"]`);
+            if (el) el.remove();
         }
 
         // Закрываем чат если открыт
         if (currentChatId === cid) {
             document.getElementById('chat-window')?.classList.remove('active');
+            document.getElementById('main-content')?.classList.remove('chat-depth');
+            const fab = document.getElementById('fab-btn-el');
+            if (fab) fab.style.display = '';
             currentChatId = null;
             currentPartnerId = null;
+            // Показываем пустой экран
+            const msgs = document.getElementById('messages');
+            if (msgs) msgs.innerHTML = '';
         }
     });
     socket.on('media_upload_error', (data) => {
@@ -1485,6 +1489,53 @@ async function init() {
     } catch(e) {}
 
     // ── 3. Socket + реальные данные в фоне ──
+
+    // ═══ iOS UNIVERSAL COMPATIBILITY (iPhone 6→17 Pro Max) ═══
+    (function() {
+        // Отключаем bounce scroll на iOS (убирает серую область при перетягивании)
+        document.addEventListener('touchmove', function(e) {
+            if (e.target === document.body || e.target === document.documentElement) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        // Фикс для standalone PWA — убираем статус-бар просвет
+        var meta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+        if (meta) meta.content = 'black';
+
+        // Инжектим глобальный CSS для убийства серой полосы на всех iPhone
+        var killGray = document.createElement('style');
+        killGray.textContent = [
+            'html,body{background:#1d1d1e!important;margin:0!important;padding:0!important}',
+            '#app{position:fixed!important;inset:0!important;background:#1d1d1e!important}',
+            // Убираем outline и border у всех input на iOS
+            'input,textarea{-webkit-appearance:none!important;appearance:none!important;border-radius:0}',
+            // Запрещаем выделение текста везде кроме полей ввода
+            '*:not(input):not(textarea){-webkit-user-select:none;user-select:none}',
+            'input,textarea{-webkit-user-select:text!important;user-select:text!important}',
+            // Фикс для viewport на iPhone с notch
+            '@supports(padding-top:env(safe-area-inset-top)){',
+            '.chat-view{top:0!important}',
+            '}',
+        ].join('');
+        document.head.appendChild(killGray);
+
+        // Viewport height fix — только для resize событий (клавиатура)
+        var lastH = 0;
+        function onVV() {
+            var vv = window.visualViewport;
+            if (!vv) return;
+            var h = vv.height;
+            if (Math.abs(h - lastH) < 2) return;
+            lastH = h;
+            document.documentElement.style.setProperty('--app-height', h + 'px');
+            // НЕ меняем высоту #app — он position:fixed inset:0
+        }
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', onVV, { passive: true });
+        }
+    })();
+
     initSocket();
     // Fallback 1: если socket не подключится за 2с — грузим чаты напрямую
     setTimeout(() => {
@@ -1897,8 +1948,8 @@ body {
 /* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
 .input-bar { padding:6px 12px;padding-bottom:max(6px,8px);border-top:0.5px solid var(--sep);background:var(--hdr);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);flex-shrink:0; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
-.input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1);border-radius:22px;padding:4px 4px 4px 14px;transition:border-color 0.2s;min-height:44px; }
-.input-inner:focus-within { border-color:var(--accent-30); }
+.input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
+.input-inner:focus-within { background:#333335; }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
@@ -3124,59 +3175,75 @@ function _persistDeletedPartnerIds() {
 }
 
 async function _doDeleteChat(chatId) {
+    // ─── Находим чат ДО любых изменений ───
+    const chat = recentChats.find(ch => ch.chat_id === chatId);
+    const partnerId  = chat?.partner_id  || null;
+    const groupId    = chat?.group_id    || null;
+    const ck_private = partnerId ? `p_${partnerId}` : null;
+    const ck_group   = groupId   ? `g_${groupId}`   : null;
+
+    // ─── 1. Помечаем удалёнными (ID чата + ID партнёра) ───
     _deletedChatIds.add(chatId);
     _persistDeletedChatIds();
-
-    const container = document.getElementById('chat-list');
-    const chat = recentChats.find(ch => ch.chat_id === chatId);
-    if (chat) {
-        // Запоминаем partner_id — чтобы при поиске этого юзера кэш не показывал старые сообщения
-        if (chat.partner_id) {
-            _deletedPartnerIds.add(chat.partner_id);
-            _persistDeletedPartnerIds();
-        }
-
-        const key = chat.is_group ? `g_${chat.group_id}` : `p_${chat.partner_id}`;
-        const el  = container?.querySelector(`[data-chat-key="${key}"]`);
-        if (el) {
-            el.style.transition = 'opacity 0.22s ease, transform 0.22s ease';
-            el.style.opacity    = '0';
-            el.style.transform  = 'translateX(-32px)';
-            const h = el.offsetHeight;
-            el.style.overflow   = 'hidden';
-            el.style.maxHeight  = h + 'px';
-            setTimeout(() => {
-                el.style.transition += ', max-height 0.28s ease, margin 0.28s ease';
-                el.style.maxHeight  = '0';
-                el.style.marginTop  = '0';
-                el.style.marginBottom = '0';
-            }, 140);
-            setTimeout(() => el.remove(), 420);
-        }
-        recentChats = recentChats.filter(ch => ch.chat_id !== chatId);
-        try {
-            const cached = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
-            localStorage.setItem('waychat_chats_cache',
-                JSON.stringify(cached.filter(ch => ch.chat_id !== chatId)));
-        } catch(e) {}
-        if (currentChatId === chatId) {
-            document.getElementById('chat-window')?.classList.remove('active');
-            currentChatId = null; currentPartnerId = null;
-        }
-        // Полная очистка кэша сообщений из памяти и IndexedDB
-        const _ck1 = `p_${chat.partner_id}`;
-        const _ck2 = `g_${chat.group_id}`;
-        delete messagesByChatCache[_ck1];
-        delete messagesByChatCache[_ck2];
-        MsgDB.delete(_ck1).catch(() => {});
-        MsgDB.delete(_ck2).catch(() => {});
+    if (partnerId) {
+        _deletedPartnerIds.add(partnerId);
+        _persistDeletedPartnerIds();
     }
+
+    // ─── 2. Чистим память СРАЗУ ───
+    if (ck_private) delete messagesByChatCache[ck_private];
+    if (ck_group)   delete messagesByChatCache[ck_group];
+
+    // ─── 3. Чистим IndexedDB (awaited!) ───
+    const delTasks = [];
+    if (ck_private) delTasks.push(MsgDB.delete(ck_private));
+    if (ck_group)   delTasks.push(MsgDB.delete(ck_group));
+    // Также чистим WCCache profiles/chats store
+    delTasks.push(WCCache.del('chats', String(chatId)));
+    if (partnerId) delTasks.push(WCCache.del('profiles', String(partnerId)));
+    await Promise.allSettled(delTasks);
+
+    // ─── 4. Чистим localStorage ───
+    try {
+        const ls = JSON.parse(localStorage.getItem('waychat_chats_cache') || '[]');
+        localStorage.setItem('waychat_chats_cache',
+            JSON.stringify(ls.filter(ch => ch.chat_id !== chatId)));
+    } catch(e) {}
+
+    // ─── 5. Убираем из массива recentChats ───
+    recentChats = recentChats.filter(ch => ch.chat_id !== chatId);
+
+    // ─── 6. Убираем из DOM ───
+    const container = document.getElementById('chat-list');
+    if (container && chat) {
+        const key = chat.is_group ? `g_${groupId}` : `p_${partnerId}`;
+        const el  = container.querySelector(`[data-chat-key="${key}"]`);
+        if (el) {
+            el.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+            el.style.opacity    = '0';
+            el.style.transform  = 'translateX(-40px)';
+            setTimeout(() => el.remove(), 220);
+        }
+    }
+
+    // ─── 7. Закрываем чат если открыт ───
+    if (currentChatId === chatId) {
+        document.getElementById('chat-window')?.classList.remove('active');
+        document.getElementById('main-content')?.classList.remove('chat-depth');
+        document.getElementById('fab-btn-el') && (document.getElementById('fab-btn-el').style.display = '');
+        currentChatId = null;
+        currentPartnerId = null;
+    }
+
+    // ─── 8. Отправляем на сервер ───
     try {
         await apiFetch('/delete_chat/' + chatId, { method: 'POST' });
         showToast('Чат удалён', 'success');
     } catch(e) {
+        // Откат — только если сервер не ответил
         _deletedChatIds.delete(chatId);
         _persistDeletedChatIds();
+        if (partnerId) { _deletedPartnerIds.delete(partnerId); _persistDeletedPartnerIds(); }
         showToast('Ошибка удаления', 'error');
         loadChats(true);
     }
@@ -3643,31 +3710,34 @@ async function openChat(id, name, avatar) {
         }
     }
 
-    // ── 5. Мгновенно показываем кэш (если есть) ─────────────────
+    // ── 5. Кэш сообщений ─────────────────────────────────────
     VirtualList.destroy();
     msgs.innerHTML = '';
     const cacheKey = `p_${id}`;
 
-    // Если переписка с этим юзером была удалена — сбрасываем весь кэш СИНХРОННО
-    // (ждём IndexedDB, иначе старые сообщения успевают прочитаться)
+    // ЯДЕРНАЯ ОЧИСТКА: если партнёр в списке удалённых — убиваем ВСЕ кэши
     if (_deletedPartnerIds.has(id)) {
         delete messagesByChatCache[cacheKey];
+        // Ждём пока IndexedDB реально удалит запись
         try { await MsgDB.delete(cacheKey); } catch(e) {}
-    }
-
-    const cached = messagesByChatCache[cacheKey];
-
-    if (cached?.messages?.length) {
-        // Есть в памяти — рендерим мгновенно
-        renderMessagesFromCache(cached.messages);
-        scrollDown(false);
-        if (elStatus) elStatus.textContent = 'обновление...';
+        try { await WCCache.del('profiles', String(id)); } catch(e) {}
+        // Не показываем НИЧЕГО — только пустой экран
+        msgs.innerHTML = '';
     } else {
-        // Пробуем IndexedDB — только если переписка НЕ была удалена
-        if (!_deletedPartnerIds.has(id)) {
+        const cached = messagesByChatCache[cacheKey];
+        if (cached?.messages?.length) {
+            renderMessagesFromCache(cached.messages);
+            scrollDown(false);
+            if (elStatus) elStatus.textContent = 'обновление...';
+        } else {
             _showChatSkeleton(msgs);
             MsgDB.load(cacheKey).then(idb => {
                 if (_chatOpenId !== _myOpenId) return;
+                // Снова проверяем — вдруг удалили пока загружалось
+                if (_deletedPartnerIds.has(id)) {
+                    msgs.innerHTML = '';
+                    return;
+                }
                 if (idb?.length) {
                     messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
                     msgs.innerHTML = '';
@@ -3676,9 +3746,6 @@ async function openChat(id, name, avatar) {
                     if (elStatus) elStatus.textContent = 'обновление...';
                 }
             }).catch(() => {});
-        } else {
-            // Удалённая переписка — показываем пустой экран, ждём сервер
-            msgs.innerHTML = '';
         }
     }
 
@@ -3883,6 +3950,8 @@ let _loadMsgsReqId = 0;
 
 async function loadMessages(initial = false, retryCount = 0) {
     if (!currentChatId) return;
+    // Блокируем загрузку если партнёр в списке удалённых (переписка удалена)
+    if (currentPartnerId && _deletedPartnerIds.has(currentPartnerId)) return;
     if (loadingMessages && !initial) return;
     if (!initial && !hasMoreMessages) return;
 
