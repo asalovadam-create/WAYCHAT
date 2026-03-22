@@ -160,9 +160,8 @@ const WCCache = (() => {
             overscroll-behavior-y: contain !important;
             margin: 0 !important;
             padding-top: 4px !important;
-            padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
         }
-        /* FIX P2: input-bar выходит из flex-потока → floating над сообщениями */
+        /* FIX P2: input-bar floating над сообщениями, с отступом снизу как у Telegram */
         .input-bar {
             position: absolute !important;
             bottom: 0 !important;
@@ -170,11 +169,15 @@ const WCCache = (() => {
             transform: none !important;
             z-index: 10 !important;
             background: transparent !important;
-            padding: 8px 12px !important;
-            padding-bottom: max(8px, env(safe-area-inset-bottom, 8px)) !important;
+            padding: 6px 10px !important;
+            padding-bottom: max(14px, calc(env(safe-area-inset-bottom, 0px) + 10px)) !important;
             pointer-events: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
+        /* messages: нижний padding = высота capsule + bottom offset */
+        #messages {
+            padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
+        }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
         /* FAB: всегда поверх и кликабельна */
@@ -3816,24 +3819,23 @@ async function openChat(id, name, avatar) {
         currentChatId = data.chat_id;
         socket.emit('enter_chat', { chat_id: currentChatId });
 
-        // Если партнёр в списке удалённых — ПОВТОРНАЯ ядерная очистка прямо здесь
-        // (на случай если кэш успел подгрузиться между шагами 5 и 6)
-        if (_deletedPartnerIds.has(id)) {
-            const _ck = `p_${id}`;
-            delete messagesByChatCache[_ck];
-            try { await MsgDB.delete(_ck); } catch(e) {}
-            // Очищаем DOM сообщений полностью
-            const _m = document.getElementById('messages');
-            if (_m) _m.innerHTML = '';
-            // Убираем партнёра из удалённых — новая переписка начнётся чисто
-            _deletedPartnerIds.delete(id);
-            _persistDeletedPartnerIds();
-        }
-
         // Статус онлайн
         const isOnline = data.partner_online;
         if (elStatus) elStatus.textContent = isOnline ? 'в сети' : 'был(а) недавно';
         if (elDot)    elDot.style.display  = isOnline ? 'block' : 'none';
+
+        // FIX P3 CRITICAL: если партнёр в _deletedPartnerIds — НЕ грузим сообщения с сервера.
+        // _deletedPartnerIds снимается ТОЛЬКО в поиске (явный тап пользователя).
+        // Это закрывает главную дыру: сервер возвращает chat_id → loadMessages тянул старые сообщения.
+        if (_deletedPartnerIds.has(id)) {
+            const _ck = `p_${id}`;
+            delete messagesByChatCache[_ck];
+            try { await MsgDB.delete(_ck); } catch(e) {}
+            const _m = document.getElementById('messages');
+            if (_m) _m.innerHTML = '<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:40px;margin-bottom:10px">\u{1F44B}</div><p>\u{041D}\u{0430}\u{0447}\u{043D}\u{0438}\u{0442}\u{0435} \u{043F}\u{0435}\u{0440}\u{0435}\u{043F}\u{0438}\u{0441}\u{043A}\u{0443}!</p></div>';
+            setupVoiceRecording();
+            return;
+        }
 
         // Грузим сообщения с сервера
         await loadMessages(true);
