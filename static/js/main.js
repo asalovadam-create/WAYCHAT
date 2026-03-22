@@ -135,17 +135,22 @@ const WCCache = (() => {
         /* Убиваем серый фон который может просвечивать под #app */
         * { -webkit-tap-highlight-color: transparent !important; }
         /* chat-view: flex-колонка на весь экран */
+        /* FIX P1: inset:0 + position:fixed уже задаёт 100% — 100dvh избыточен
+           и конфликтует с safe-area на iPhone с home indicator */
         .chat-view {
             position: fixed !important;
+            inset: 0 !important;
             top: 0 !important; left: 0 !important;
             right: 0 !important; bottom: 0 !important;
-            height: 100dvh !important;
+            height: 100% !important;
             display: flex !important;
             flex-direction: column !important;
             overflow: hidden !important;
+            margin: 0 !important; padding: 0 !important;
         }
         .chat-view.active { transform: translateX(0) !important; }
-        /* messages: flex:1 + min-height:0 — ключевая пара для overflow */
+        /* FIX P1+P2: messages занимает всё пространство между header и input-bar;
+           padding-bottom резервирует место для плавающего input-bar (~64px capsule + safe-area) */
         #messages {
             flex: 1 1 0% !important;
             min-height: 0 !important;
@@ -153,15 +158,23 @@ const WCCache = (() => {
             overflow-x: hidden !important;
             -webkit-overflow-scrolling: touch !important;
             overscroll-behavior-y: contain !important;
+            margin: 0 !important;
+            padding-top: 4px !important;
+            padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
         }
-        /* input-bar: ЕДИНСТВЕННОЕ место где safe-area разрешена */
+        /* FIX P2: input-bar выходит из flex-потока → floating над сообщениями */
         .input-bar {
-            flex-shrink: 0 !important;
-            position: relative !important;
+            position: absolute !important;
+            bottom: 0 !important;
+            left: 0 !important; right: 0 !important;
             transform: none !important;
             z-index: 10 !important;
-            padding-bottom: 8px !important;
+            background: transparent !important;
+            padding: 8px 12px !important;
+            padding-bottom: max(8px, env(safe-area-inset-bottom, 8px)) !important;
+            pointer-events: none !important;
         }
+        .input-bar > * { pointer-events: all !important; }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
         /* FAB: всегда поверх и кликабельна */
@@ -196,14 +209,8 @@ const WCCache = (() => {
             outline: none !important;
             box-shadow: none !important;
         }
-        /* Input bar — прозрачный, как у TG */
-        .input-bar {
-            border-top: none !important;
-            border: none !important;
-            background: transparent !important;
-            backdrop-filter: none !important;
-            -webkit-backdrop-filter: none !important;
-        }
+        /* Input bar — прозрачный floating (основные стили уже выше в этом блоке) */
+        .input-bar { border: none !important; }
         /* iOS: минимум 16px предотвращает авто-зум при фокусе */
         input, textarea, select { font-size: max(16px, 1em) !important; }
         body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -1965,8 +1972,8 @@ body {
 .date-divider { text-align:center;padding:12px 0 4px;position:relative; }
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
-/* ИНПУТ — прибит к низу chat-view через flex, НЕ sticky */
-.input-bar { padding:6px 12px 10px;border-top:none !important;border:none !important;background:var(--chat-bg,#1d1d1e);backdrop-filter:none;-webkit-backdrop-filter:none;flex-shrink:0; }
+/* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
+.input-bar { padding:8px 12px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
@@ -1985,7 +1992,8 @@ body {
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
-.tg-input-row { display:flex;align-items:flex-end;gap:6px; }
+/* FIX P2: tg-input-row = стеклянная капсула, плавающая над обоями */
+.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:24px;padding:4px 6px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 2px; }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
 .tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px; }
@@ -2227,8 +2235,9 @@ body {
         padding-top: 10px !important;
     }
 
-    /* Input bar без мобильного safe-area */
-    .input-bar { padding-bottom: 10px !important; }
+    /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
+    .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
+    #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
     #main-content::-webkit-scrollbar { width: 5px; }
@@ -3629,7 +3638,20 @@ function handleSearch() {
             users.forEach(u => {
                 const d = document.createElement('div');
                 d.className = 'user-result';
-                d.onclick = () => { cancelSearch(); openChat(u.id, u.name, u.avatar_url||u.avatar); };
+                d.onclick = () => {
+                    // FIX P3: если партнёр в списке удалённых — снимаем блокировку только явно,
+                    // это значит пользователь сознательно начинает переписку заново
+                    if (typeof _deletedPartnerIds !== 'undefined' && _deletedPartnerIds.has(+u.id)) {
+                        _deletedPartnerIds.delete(+u.id);
+                        if (typeof _persistDeletedPartnerIds === 'function') _persistDeletedPartnerIds();
+                        const _oldChat = recentChats && recentChats.find(c => +c.partner_id === +u.id);
+                        if (_oldChat && typeof _deletedChatIds !== 'undefined') {
+                            _deletedChatIds.delete(_oldChat.chat_id);
+                            if (typeof _persistDeletedChatIds === 'function') _persistDeletedChatIds();
+                        }
+                    }
+                    cancelSearch(); openChat(u.id, u.name, u.avatar_url||u.avatar);
+                };
                 d.innerHTML = `
                     ${getAvatarHtml({id:u.id, name:u.name, avatar:u.avatar_url||u.avatar},'w-12 h-12')}
                     <div style="flex:1">
@@ -5446,6 +5468,10 @@ function _markMsgSeen(id) {
 
 function onNewMessage(msg) {
     if (msg.type_msg) msg.type = msg.type_msg;
+
+    // FIX P3: игнорируем сообщения из удалённых чатов — они не должны воскрешать переписку
+    if (msg.sender_id && typeof _deletedPartnerIds !== 'undefined' && _deletedPartnerIds.has(+msg.sender_id)) return;
+    if (msg.chat_id  && typeof _deletedChatIds    !== 'undefined' && _deletedChatIds.has(msg.chat_id))    return;
 
     // Глобальная защита от дублей (chat_ + user_ rooms шлют одно сообщение)
     if (msg.id && _seenMsgIds.has(msg.id)) return;
@@ -12692,6 +12718,8 @@ window.WayChat = {
      */
     openChatById: function(chatId) {
         if (!chatId) return;
+        // FIX P3: не открывать удалённые чаты из push-уведомлений
+        if (typeof _deletedChatIds !== 'undefined' && _deletedChatIds.has(chatId)) return;
         var found = recentChats && recentChats.find(function(c) {
             return c.chat_id === chatId;
         });
