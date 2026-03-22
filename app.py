@@ -1699,10 +1699,13 @@ def get_chat_id(partner_id):
     if not partner:
         return jsonify({'error': 'User not found'}), 404
     p_online = partner.online_status
-    chat = get_or_create_chat(current_user.id, partner_id)
-    _chat_cache.delete(current_user.id)
-    _chat_cache.delete(partner_id)
-    return jsonify({'chat_id': chat.id, 'partner_online': p_online})
+    # НЕ создаём чат автоматически — только ищем существующий.
+    # Чат создаётся лениво при отправке первого сообщения (send_message).
+    # Это предотвращает "воскрешение" удалённых чатов при открытии через поиск.
+    ids = sorted([current_user.id, partner_id])
+    key = f'chat_{ids[0]}_{ids[1]}'
+    chat = Chat.query.filter_by(room_key=key).first()
+    return jsonify({'chat_id': chat.id if chat else None, 'partner_online': p_online})
 
 
 @app.route('/get_group_chat_id/<int:group_id>')
@@ -2882,30 +2885,30 @@ def get_blocked_users():
 @app.route('/delete_chat/<int:cid>', methods=['POST'])
 @login_required
 def delete_chat_route(cid):
-    uid  = str(current_user.id)
-    chat = db.session.get(Chat, cid)
+    uid      = str(current_user.id)
+    uid_int  = int(uid)
+    chat     = db.session.get(Chat, cid)
     if not chat:
         return jsonify({'success': False}), 404
 
-    room_key = chat.room_key
+    room_key   = chat.room_key
     is_private = room_key.startswith('chat_') and not room_key.startswith('group_')
 
-    # Проверка доступа
     if not (uid in room_key.replace('chat_', '').split('_') or room_key.startswith('group_')):
         return jsonify({'success': False, 'error': 'Нет доступа'}), 403
 
-    # Собираем ID всех участников чтобы потом чистить кэши и уведомить
+    # Собираем всех участников ДО удаления
     participant_ids = []
     if is_private:
         try:
             parts = room_key.replace('chat_', '').split('_')
             participant_ids = [int(p) for p in parts if p.isdigit()]
         except Exception:
-            participant_ids = [int(uid)]
+            participant_ids = [uid_int]
     else:
-        participant_ids = [int(uid)]
+        participant_ids = [uid_int]
 
-    # Удаляем сообщения и чат одним bulk-запросом
+    # Удаляем сообщения и сам чат
     Message.query.filter_by(chat_id=cid).delete(synchronize_session=False)
     db.session.delete(chat)
     db.session.commit()
@@ -2915,9 +2918,10 @@ def delete_chat_route(cid):
         _chat_cache.delete(pid)
         _partner_cache.invalidate_prefix(pid)
 
-    # Уведомляем всех участников через сокет — их UI убирает чат без перезагрузки
+    # Уведомляем всех участников через сокет — их UI убирает чат немедленно
+    payload = {'chat_id': cid, 'room_key': room_key}
     for pid in participant_ids:
-        emit_to_user(pid, 'chat_deleted', {'chat_id': cid, 'room_key': room_key})
+        emit_to_user(pid, 'chat_deleted', payload)
 
     return jsonify({'success': True})
 
@@ -3219,13 +3223,37 @@ def _socket_rate_ok(uid, store, max_calls=20, window_sec=10):
     return True
 
 
+@app.route('/create_chat/<int:partner_id>', methods=['POST'])
+@login_required
+def create_chat_route(partner_id):
+    """Явное создание чата — вызывается клиентом при первом сообщении после удаления."""
+    partner = db.session.get(User, partner_id)
+    if not partner:
+        return jsonify({'ok': False, 'error': 'User not found'}), 404
+    chat = get_or_create_chat(current_user.id, partner_id)
+    _chat_cache.delete(current_user.id)
+    _chat_cache.delete(partner_id)
+    return jsonify({'ok': True, 'chat_id': chat.id})
+
+
 @socketio.on('send_message')
 def handle_msg(data):
     if not current_user.is_authenticated:
         return
     chat_id = data.get('chat_id')
+    # Если chat_id нет но есть partner_id — создаём чат лениво (первое сообщение)
     if not chat_id:
-        return
+        partner_id = data.get('partner_id')
+        if partner_id:
+            try:
+                chat = get_or_create_chat(current_user.id, int(partner_id))
+                chat_id = chat.id
+                _chat_cache.delete(current_user.id)
+                _chat_cache.delete(int(partner_id))
+            except Exception:
+                return
+        else:
+            return
 
     try:
         uid   = current_user.id
