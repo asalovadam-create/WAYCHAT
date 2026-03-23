@@ -123,11 +123,6 @@ _online_cache     = TTLCache(maxsize=8000, ttl=8.0)
 _partner_cache    = TTLCache(maxsize=3000, ttl=60.0)
 _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 
-# FIX: in-memory set of room_keys whose chats were deleted.
-# Prevents get_or_create_chat from resurrecting deleted conversations.
-# Cleared only on server restart — acceptable because DB delete is permanent.
-_deleted_room_keys = set()
-
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _ip_rate_limits  = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
@@ -919,9 +914,6 @@ def get_partner_id(chat, my_id):
 def get_or_create_chat(uid1, uid2):
     ids  = sorted([uid1, uid2])
     key  = f'chat_{ids[0]}_{ids[1]}'
-    # FIX: never recreate a chat that was explicitly deleted
-    if key in _deleted_room_keys:
-        return None
     chat = Chat.query.filter_by(room_key=key).first()
     if not chat:
         chat = Chat(room_key=key)
@@ -2941,16 +2933,10 @@ def delete_chat_route(cid):
     db.session.delete(chat)
     db.session.commit()
 
-    # FIX: persist room_key in _deleted_room_keys — prevents resurrection via send_message
-    _deleted_room_keys.add(room_key)
-
-    # Чистим кэши всех участников (нукируем ВСЕ ключи связанные с участниками)
+    # Чистим кэши всех участников
     for pid in participant_ids:
         _chat_cache.delete(pid)
-        _chat_cache.invalidate_prefix(str(pid))
-        _partner_cache.delete(pid)
-        _partner_cache.invalidate_prefix(str(pid))
-        _user_dict_cache.delete(pid)
+        _partner_cache.invalidate_prefix(pid)
 
     # Уведомляем всех участников через сокет — их UI убирает чат немедленно
     payload = {'chat_id': cid, 'room_key': room_key}
@@ -2958,13 +2944,6 @@ def delete_chat_route(cid):
         emit_to_user(pid, 'chat_deleted', payload)
 
     return jsonify({'success': True})
-
-
-@app.route('/api/chat/<int:cid>', methods=['DELETE'])
-@login_required
-def delete_chat_api(cid):
-    """REST DELETE alias — delegates to the same logic as POST /delete_chat/<cid>"""
-    return delete_chat_route(cid)
 
 
 @app.route('/view_moment/<int:mid>', methods=['POST'])
@@ -3288,9 +3267,6 @@ def handle_msg(data):
         if partner_id:
             try:
                 chat = get_or_create_chat(current_user.id, int(partner_id))
-                # FIX: chat may be None if room_key is in _deleted_room_keys
-                if not chat:
-                    return
                 chat_id = chat.id
                 _chat_cache.delete(current_user.id)
                 _chat_cache.delete(int(partner_id))
