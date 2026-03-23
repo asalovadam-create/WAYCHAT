@@ -160,6 +160,9 @@ const WCCache = (() => {
             overscroll-behavior-y: contain !important;
             margin: 0 !important;
             padding-top: 4px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: flex-end !important;
         }
         /* FIX P2: input-bar floating над сообщениями, с отступом снизу как у Telegram */
         .input-bar {
@@ -170,8 +173,19 @@ const WCCache = (() => {
             z-index: 10 !important;
             background: transparent !important;
             padding: 6px 10px !important;
-            padding-bottom: max(14px, calc(env(safe-area-inset-bottom, 0px) + 10px)) !important;
+            padding-bottom: env(safe-area-inset-bottom, 0px) !important;
             pointer-events: none !important;
+        }
+        .tg-text-wrap, #msg-input, .tg-input-row textarea {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            -webkit-appearance: none !important;
+        }
+        .tg-text-wrap:focus-within {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
         /* messages: нижний padding = высота capsule + bottom offset */
@@ -2694,7 +2708,6 @@ body {
         <div style="display:flex;gap:4px">
             <button onclick="startCall('audio')" class="icon-btn">${ICONS.call}</button>
             <button onclick="startCall('video')" class="icon-btn">${ICONS.video}</button>
-            <button onclick="showChatMenu()" class="icon-btn">${ICONS.more}</button>
         </div>
     </div>
     <div id="messages" class="flex-1 chat-wallpaper msg-container"></div>
