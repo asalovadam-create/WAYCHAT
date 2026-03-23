@@ -161,7 +161,7 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* FIX P2: input-bar в потоке (не absolute), чтобы не перекрывать сообщения */
+        /* INPUT BAR — в потоке flex-колонки, поднят над home indicator, без серой полосы */
         .input-bar {
             position: relative !important;
             bottom: auto !important;
@@ -170,19 +170,28 @@ const WCCache = (() => {
             z-index: 10 !important;
             background: var(--chat-bg, #1d1d1e) !important;
             padding: 6px 10px !important;
-            padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)) !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
+            border-top: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
-        /* messages: padding-bottom минимальный — input-bar теперь в потоке */
-        #messages {
-            padding-bottom: 8px !important;
+        /* Убрать белую обводку у поля ввода */
+        .tg-text-wrap, .tg-text-wrap:focus-within {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            -webkit-appearance: none !important;
         }
-        /* chat-view как flex-column: header → messages → input-bar */
-        #chat-window {
-            display: flex !important;
-            flex-direction: column !important;
+        #msg-input {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            -webkit-appearance: none !important;
+        }
+        /* messages: нижний padding небольшой — input-bar теперь в потоке */
+        #messages {
+            padding-bottom: 4px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
@@ -1957,7 +1966,7 @@ body {
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;will-change:scroll-position; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;will-change:scroll-position;justify-content:flex-end;min-height:100%; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
 .msg-row { display:flex;width:100%;margin-bottom:1px; }
@@ -2005,9 +2014,8 @@ body {
 .tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:24px;padding:4px 6px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 2px; }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px;-webkit-appearance:none; }
-.tg-text-wrap:focus-within { background:#333335;border:none !important;outline:none !important;box-shadow:none !important; }
-.tg-text-wrap textarea, .tg-text-wrap input { border:none !important;outline:none !important;box-shadow:none !important;-webkit-appearance:none !important; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px; }
+.tg-text-wrap:focus-within { background:#333335; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2688,9 +2696,9 @@ body {
     </div>
     <div id="chat-header" class="glass" style="padding:10px 14px;padding-top:max(env(safe-area-inset-top,0px),10px);display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);position:relative;z-index:5;background:var(--hdr);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:10px">
-            <button onclick="closeChat()" class="icon-btn" id="chat-back-btn" style="position:relative">
+            <button onclick="closeChat()" class="icon-btn" style="position:relative">
                 ${ICONS.back}
-                <span id="chat-back-badge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;background:#f59e0b;color:#000;font-size:9px;font-weight:800;border-radius:8px;padding:0 3px;align-items:center;justify-content:center;line-height:1;pointer-events:none"></span>
+                <span id="chat-back-badge" style="display:none;position:absolute;top:-3px;right:-5px;min-width:16px;height:16px;background:#f59e0b;color:#000;font-size:9px;font-weight:800;border-radius:8px;padding:0 3px;align-items:center;justify-content:center;line-height:16px;pointer-events:none"></span>
             </button>
             <div style="position:relative;cursor:pointer" onclick="showPartnerProfile()">
                 <div id="chat-ava-header"></div>
@@ -3567,8 +3575,9 @@ function onSearchFocus() {
 }
 
 function onSearchBlur() {
-    // Не отменяем поиск при потере фокуса — пользователь мог нажать на результат
-    // Отмена только через кнопку "Отмена" или Escape
+    setTimeout(() => {
+        if (!document.getElementById('search-input')?.value.trim()) cancelSearch();
+    }, 150);
 }
 
 function cancelSearch() {
@@ -3741,19 +3750,18 @@ async function openChat(id, name, avatar) {
     if (elStatus) elStatus.textContent = '...';
     if (elDot)    elDot.style.display  = 'none';
 
-    // ── Бейдж на кнопке "назад" ─────────────────────────────────
-    (function() {
-        const badge = document.getElementById('chat-back-badge');
-        if (!badge) return;
-        const chatData = recentChats.find(ch => ch.partner_id === id || ch.chat_id === id);
+    // Бейдж непрочитанных на кнопке "назад"
+    const backBadge = document.getElementById('chat-back-badge');
+    if (backBadge) {
+        const chatData = recentChats.find(ch => ch.partner_id === id);
         const unread = chatData ? (chatData.unread_count || 0) : 0;
         if (unread > 0) {
-            badge.textContent = unread > 99 ? '99+' : unread;
-            badge.style.display = 'inline-flex';
+            backBadge.textContent = unread > 99 ? '99+' : String(unread);
+            backBadge.style.display = 'inline-flex';
         } else {
-            badge.style.display = 'none';
+            backBadge.style.display = 'none';
         }
-    })();
+    }
 
     // ── 4. Аватар ───────────────────────────────────────────────
     const headerBox = document.getElementById('chat-ava-header');
@@ -8132,35 +8140,29 @@ async function _publishMomentEditor(ov, file, url) {
         if (caption) fd.append('text', caption);
         if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
 
-        // Используем XHR вместо fetch для реального прогресса загрузки
         const uploadResult = await new Promise((resolve) => {
             const xhr = new XMLHttpRequest();
             xhr.open('POST', '/create_moment', true);
             xhr.withCredentials = true;
-            xhr.upload.onprogress = (e) => {
-                if (e.lengthComputable) {
-                    const realPct = Math.round((e.loaded / e.total) * 95);
+            xhr.upload.onprogress = (ev) => {
+                if (ev.lengthComputable) {
                     clearInterval(timer);
-                    _updateUploadProgress(realPct);
+                    _updateUploadProgress(Math.round((ev.loaded / ev.total) * 95));
                 }
             };
             xhr.onload = () => {
                 clearInterval(timer);
                 _updateUploadProgress(100);
-                try {
-                    const d = JSON.parse(xhr.responseText);
-                    resolve({ ok: xhr.status >= 200 && xhr.status < 300 && d.success });
-                } catch(e) {
-                    resolve({ ok: xhr.status >= 200 && xhr.status < 300 });
-                }
+                try { const d = JSON.parse(xhr.responseText); resolve({ ok: !!d.success }); }
+                catch(e) { resolve({ ok: xhr.status >= 200 && xhr.status < 300 }); }
             };
             xhr.onerror = () => { clearInterval(timer); resolve({ ok: false }); };
+            xhr.timeout = 90000;
             xhr.ontimeout = () => { clearInterval(timer); resolve({ ok: false }); };
-            xhr.timeout = 60000;
             xhr.send(fd);
         });
 
-        await new Promise(res => setTimeout(res, 400));
+        await new Promise(res => setTimeout(res, 350));
         showToast(uploadResult.ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки — попробуй ещё раз', uploadResult.ok ? 'success' : 'error');
 
     } catch(e) {
@@ -8567,14 +8569,23 @@ function _setupMomentsPullDown() {
     if (!mainContent) return;
 
     let _pullStart = 0, _pulling = false, _momentsShown = false;
+    let _pullIndicator = null;
+
+    function _getPullIndicator() {
+        if (_pullIndicator) return _pullIndicator;
+        _pullIndicator = document.createElement('div');
+        _pullIndicator.style.cssText = 'position:fixed;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#10b981,#34d399);transform:scaleX(0);transform-origin:left;z-index:9999;border-radius:0 0 3px 3px;opacity:0';
+        document.body.appendChild(_pullIndicator);
+        return _pullIndicator;
+    }
 
     mainContent.addEventListener('touchstart', (e) => {
         const chatSec = document.getElementById('chats-section');
         if (!chatSec?.contains(e.target)) return;
-        // только если скролл в самом верху
-        if (mainContent.scrollTop > 10) return;
+        if (mainContent.scrollTop > 5) return;
         _pullStart = e.touches[0].clientY;
         _pulling = true;
+        _momentsShown = _momentsBarVisible;
     }, { passive: true });
 
     mainContent.addEventListener('touchmove', (e) => {
@@ -8582,14 +8593,30 @@ function _setupMomentsPullDown() {
         const chatWin = document.getElementById('chat-window');
         if (chatWin?.classList.contains('active')) { _pulling = false; return; }
         const dy = e.touches[0].clientY - _pullStart;
-        if (dy > 40 && !_momentsShown) {
+        if (dy <= 0) return;
+
+        // Зелёная полоска прогресса
+        const progress = Math.min(dy / 70, 1);
+        const ind = _getPullIndicator();
+        ind.style.opacity = String(progress);
+        ind.style.transform = `scaleX(${progress})`;
+
+        if (dy > 60 && !_momentsShown) {
             _showMomentsBar();
             _momentsShown = true;
-            vibrate(8);
+            vibrate(10);
+            ind.style.transform = 'scaleX(1)';
+            ind.style.opacity = '1';
         }
     }, { passive: true });
 
-    mainContent.addEventListener('touchend', () => { _pulling = false; }, { passive: true });
+    mainContent.addEventListener('touchend', () => {
+        _pulling = false;
+        const ind = _getPullIndicator();
+        ind.style.transition = 'opacity 0.35s ease';
+        ind.style.opacity = '0';
+        setTimeout(() => { ind.style.transition = ''; ind.style.transform = 'scaleX(0)'; }, 380);
+    }, { passive: true });
 }
 
 // ── Показать/скрыть Moments bar ──
