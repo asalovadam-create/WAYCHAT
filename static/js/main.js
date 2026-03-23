@@ -1852,7 +1852,7 @@ body {
 /* FAB — прибит к самому низу экрана */
 .fab-btn{
     position:fixed;
-    bottom:16px;
+    bottom:calc(max(16px, env(safe-area-inset-bottom, 0px)) + 16px);
     right:14px;
     width:46px;height:46px;
     border-radius:50%;
@@ -1867,7 +1867,7 @@ body {
 .fab-btn:active{transform:scale(.88)}
 .fab-menu{
     position:fixed;
-    bottom:68px;
+    bottom:calc(max(16px, env(safe-area-inset-bottom, 0px)) + 62px);
     right:12px;z-index:901;
     display:flex;flex-direction:column;gap:8px;align-items:flex-end;
     pointer-events:none;opacity:0;
@@ -2332,7 +2332,7 @@ body {
             <!-- badge скрытый — нужен для updateUnreadBadge() -->
             <div id="total-unread-badge" style="display:none">0</div>
             <!-- Moments-панель (появляется свайпом вниз) -->
-            <div id="moments-bar" style="display:none;overflow:hidden;max-height:0;transition:max-height 0.3s cubic-bezier(0.22,1,0.36,1),opacity 0.25s ease;opacity:0">
+            <div id="moments-bar" style="display:none;overflow:visible;max-height:0;transition:max-height 0.3s cubic-bezier(0.22,1,0.36,1),opacity 0.25s ease;opacity:0">
                 <div style="padding:8px 12px 4px">
                     <div id="moments-bar-scroll" style="display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;scrollbar-width:none;-webkit-overflow-scrolling:touch"></div>
                 </div>
@@ -2484,7 +2484,7 @@ body {
             <div class="fab-mi-ico">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="7" r="4" stroke="rgba(255,255,255,.75)" stroke-width="2"/><line x1="19" y1="8" x2="19" y2="14" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/><line x1="16" y1="11" x2="22" y2="11" stroke="rgba(255,255,255,.75)" stroke-width="2" stroke-linecap="round"/></svg>
             </div>
-            <span>Новый чат</span>
+            <span>Добавить контакт</span>
         </div>
         <div class="fab-mi" onclick="closeFabMenu();openCreateGroupModal()">
             <div class="fab-mi-ico">
@@ -2499,7 +2499,7 @@ body {
             <span>Создать момент</span>
         </div>
     </div>
-    <button class="fab-btn" onclick="toggleFabMenu()" id="fab-btn-el" aria-label="Новый чат">
+    <button class="fab-btn" onclick="toggleFabMenu()" id="fab-btn-el" aria-label="Добавить контакт">
         <svg id="fab-ico" width="20" height="20" viewBox="0 0 24 24" fill="none" style="transition:transform .25s cubic-bezier(0.34,1.56,0.64,1)">
             <line x1="12" y1="5" x2="12" y2="19" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
             <line x1="5" y1="12" x2="19" y2="12" stroke="white" stroke-width="2.5" stroke-linecap="round"/>
@@ -3461,7 +3461,7 @@ function renderChatList(chats) {
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
                     <p style="font-size:14px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
-                    ${isUnread?`<span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:20px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0">${chat.unread_count}</span>`:''}
+                    ${isUnread?`<span style="width:10px;height:10px;border-radius:50%;background:var(--accent);flex-shrink:0;display:inline-block"></span>`:''}
                 </div>`;
         }
 
