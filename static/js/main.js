@@ -161,28 +161,26 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — явный контроль позиции и высоты */
+        /* INPUT BAR — фиксированная позиция, высота явная, без серого фона и белой обводки */
         .input-bar {
             position: fixed !important;
             bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
             left: 12px !important;
             right: 12px !important;
             min-height: 52px !important;
-            padding: 8px 12px !important;
+            padding: 4px 4px !important;
             display: flex !important;
             align-items: center !important;
-            gap: 8px !important;
-            border-radius: 24px !important;
-            background: rgba(40,40,40,0.6) !important;
-            backdrop-filter: blur(20px) !important;
-            -webkit-backdrop-filter: blur(20px) !important;
+            background: transparent !important;
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+            transform: none !important;
             z-index: 1000 !important;
             pointer-events: all !important;
-            transform: none !important;
-            border: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
-        /* messages: нижний padding = высота input-bar (52px) + bottom (8px) + safe-area */
+        /* messages: padding снизу чтобы не уходить под поле */
         #messages {
             padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
         }
@@ -1959,7 +1957,7 @@ body {
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;will-change:scroll-position; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;will-change:scroll-position;justify-content:flex-end;min-height:100%; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
 .msg-row { display:flex;width:100%;margin-bottom:1px; }
@@ -1984,7 +1982,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { border: none !important; background: rgba(40,40,40,0.6) !important; }
+.input-bar { padding:8px 12px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
@@ -2004,11 +2002,11 @@ body {
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
 /* FIX P2: tg-input-row = стеклянная капсула, плавающая над обоями */
-.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:24px;padding:4px 6px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 2px; }
+.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;border-radius:24px;padding:4px 6px;box-shadow:none;margin:0 2px;border:none; }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px; }
-.tg-text-wrap:focus-within { background:#333335; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px;-webkit-appearance:none; }
+.tg-text-wrap:focus-within { background:#333335;border:none !important;outline:none !important;box-shadow:none !important; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2247,7 +2245,7 @@ body {
     }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding: 8px 12px !important; }
+    .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
@@ -2702,7 +2700,6 @@ body {
         <div style="display:flex;gap:4px">
             <button onclick="startCall('audio')" class="icon-btn">${ICONS.call}</button>
             <button onclick="startCall('video')" class="icon-btn">${ICONS.video}</button>
-            <button onclick="showChatMenu()" class="icon-btn">${ICONS.more}</button>
         </div>
     </div>
     <div id="messages" class="flex-1 chat-wallpaper msg-container"></div>
