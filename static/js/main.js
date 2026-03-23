@@ -168,9 +168,9 @@ const WCCache = (() => {
             left: auto !important; right: auto !important;
             transform: none !important;
             z-index: 10 !important;
-            background: transparent !important;
-            padding: 4px 6px !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 6px) !important;
+            background: var(--chat-bg, #1d1d1e) !important;
+            padding: 6px 10px !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -189,10 +189,9 @@ const WCCache = (() => {
             box-shadow: none !important;
             -webkit-appearance: none !important;
         }
-        /* messages: нижний padding — enough space above input-bar */
+        /* messages: нижний padding небольшой — input-bar теперь в потоке */
         #messages {
-            padding-bottom: 8px !important;
-            min-height: 0 !important;
+            padding-bottom: 4px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
@@ -1243,13 +1242,7 @@ function initSocket() {
         // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
         if (Date.now() - _lastChatsLoad > 5000) loadChats();
     // Предзагружаем моменты сразу при старте
-    setTimeout(async () => {
-        await loadMoments();
-        // Если есть моменты — показываем bar автоматически
-        if (momentsCache && momentsCache.length > 0) {
-            _showMomentsBar();
-        }
-    }, 800);
+    setTimeout(() => loadMoments(), 800);
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
         wsReconnected = true;
     });
@@ -1998,13 +1991,13 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { padding:6px 8px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
+.input-bar { padding:8px 12px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
-.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s,background 0.2s;box-shadow:var(--glow); }
+.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
@@ -2018,12 +2011,11 @@ body {
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
 /* FIX P2: tg-input-row = стеклянная капсула, плавающая над обоями */
-.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(44,44,46,0.55);backdrop-filter:blur(40px) saturate(200%);-webkit-backdrop-filter:blur(40px) saturate(200%);border-radius:22px;padding:4px 6px;box-shadow:0 2px 16px rgba(0,0,0,0.25),0 0.5px 0 rgba(255,255,255,0.08) inset,0 -0.5px 0 rgba(255,255,255,0.03) inset;margin:0 4px;border:0.5px solid rgba(255,255,255,0.12);transition:background 0.2s ease,border-color 0.2s ease; }
-.tg-input-row:focus-within { background:rgba(44,44,46,0.72);border-color:rgba(255,255,255,0.18); }
+.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:24px;padding:4px 6px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 2px; }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:transparent;border:none !important;outline:none !important;box-shadow:none !important;border-radius:18px;padding:2px 6px 2px 10px;min-height:40px; }
-.tg-text-wrap:focus-within { background:transparent; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:52px; }
+.tg-text-wrap:focus-within { background:#333335; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2262,7 +2254,7 @@ body {
     }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: 8px !important; padding-top: 6px !important; }
+    .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
@@ -8590,7 +8582,7 @@ function _setupMomentsPullDown() {
     mainContent.addEventListener('touchstart', (e) => {
         const chatSec = document.getElementById('chats-section');
         if (!chatSec?.contains(e.target)) return;
-        if (mainContent.scrollTop > 20) return;
+        if (mainContent.scrollTop > 5) return;
         _pullStart = e.touches[0].clientY;
         _pulling = true;
         _momentsShown = _momentsBarVisible;
@@ -8609,7 +8601,7 @@ function _setupMomentsPullDown() {
         ind.style.opacity = String(progress);
         ind.style.transform = `scaleX(${progress})`;
 
-        if (dy > 40 && !_momentsShown) {
+        if (dy > 60 && !_momentsShown) {
             _showMomentsBar();
             _momentsShown = true;
             vibrate(10);
