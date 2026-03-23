@@ -161,28 +161,38 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — фиксированная позиция, высота явная, без серого фона и белой обводки */
+        /* INPUT BAR — в потоке flex-колонки, поднят над home indicator, без серой полосы */
         .input-bar {
-            position: fixed !important;
-            bottom: calc(env(safe-area-inset-bottom, 0px) + 8px) !important;
-            left: 12px !important;
-            right: 12px !important;
-            min-height: 52px !important;
-            padding: 4px 4px !important;
-            display: flex !important;
-            align-items: center !important;
-            background: transparent !important;
-            border: none !important;
-            outline: none !important;
-            box-shadow: none !important;
+            position: relative !important;
+            bottom: auto !important;
+            left: auto !important; right: auto !important;
             transform: none !important;
-            z-index: 1000 !important;
+            z-index: 10 !important;
+            background: transparent !important;
+            padding: 4px 6px !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 6px) !important;
             pointer-events: all !important;
+            flex-shrink: 0 !important;
+            border-top: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
-        /* messages: padding снизу чтобы не уходить под поле */
+        /* Убрать белую обводку у поля ввода */
+        .tg-text-wrap, .tg-text-wrap:focus-within {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            -webkit-appearance: none !important;
+        }
+        #msg-input {
+            outline: none !important;
+            border: none !important;
+            box-shadow: none !important;
+            -webkit-appearance: none !important;
+        }
+        /* messages: нижний padding — enough space above input-bar */
         #messages {
-            padding-bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+            padding-bottom: 8px !important;
+            min-height: 0 !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
@@ -1233,7 +1243,13 @@ function initSocket() {
         // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
         if (Date.now() - _lastChatsLoad > 5000) loadChats();
     // Предзагружаем моменты сразу при старте
-    setTimeout(() => loadMoments(), 800);
+    setTimeout(async () => {
+        await loadMoments();
+        // Если есть моменты — показываем bar автоматически
+        if (momentsCache && momentsCache.length > 0) {
+            _showMomentsBar();
+        }
+    }, 800);
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
         wsReconnected = true;
     });
@@ -1982,13 +1998,13 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { padding:8px 12px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
+.input-bar { padding:6px 8px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
-.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
+.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s,background 0.2s;box-shadow:var(--glow); }
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
@@ -2002,11 +2018,12 @@ body {
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
 /* FIX P2: tg-input-row = стеклянная капсула, плавающая над обоями */
-.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;border-radius:24px;padding:4px 6px;box-shadow:none;margin:0 2px;border:none; }
+.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(44,44,46,0.55);backdrop-filter:blur(40px) saturate(200%);-webkit-backdrop-filter:blur(40px) saturate(200%);border-radius:22px;padding:4px 6px;box-shadow:0 2px 16px rgba(0,0,0,0.25),0 0.5px 0 rgba(255,255,255,0.08) inset,0 -0.5px 0 rgba(255,255,255,0.03) inset;margin:0 4px;border:0.5px solid rgba(255,255,255,0.12);transition:background 0.2s ease,border-color 0.2s ease; }
+.tg-input-row:focus-within { background:rgba(44,44,46,0.72);border-color:rgba(255,255,255,0.18); }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:40px;-webkit-appearance:none; }
-.tg-text-wrap:focus-within { background:#333335;border:none !important;outline:none !important;box-shadow:none !important; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:transparent;border:none !important;outline:none !important;box-shadow:none !important;border-radius:18px;padding:2px 6px 2px 10px;min-height:40px; }
+.tg-text-wrap:focus-within { background:transparent; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2245,7 +2262,7 @@ body {
     }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
+    .input-bar { padding-bottom: 8px !important; padding-top: 6px !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
@@ -2687,7 +2704,10 @@ body {
     </div>
     <div id="chat-header" class="glass" style="padding:10px 14px;padding-top:max(env(safe-area-inset-top,0px),10px);display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border);position:relative;z-index:5;background:var(--hdr);flex-shrink:0">
         <div style="display:flex;align-items:center;gap:10px">
-            <button onclick="closeChat()" class="icon-btn">${ICONS.back}</button>
+            <button onclick="closeChat()" class="icon-btn" style="position:relative">
+                ${ICONS.back}
+                <span id="chat-back-badge" style="display:none;position:absolute;top:-3px;right:-5px;min-width:16px;height:16px;background:#f59e0b;color:#000;font-size:9px;font-weight:800;border-radius:8px;padding:0 3px;align-items:center;justify-content:center;line-height:16px;pointer-events:none"></span>
+            </button>
             <div style="position:relative;cursor:pointer" onclick="showPartnerProfile()">
                 <div id="chat-ava-header"></div>
                 <div id="chat-online-dot" class="online-dot" style="display:none"></div>
@@ -3571,10 +3591,11 @@ function onSearchBlur() {
 function cancelSearch() {
     searchMode = false;
     const inp = document.getElementById('search-input');
-    if (inp) inp.value = '';
-    document.getElementById('search-cancel').style.display = 'none';
-    document.getElementById('search-results')?.classList.add('hidden');
-    document.getElementById('search-results').style.display = 'none';
+    if (inp) { inp.value = ''; inp.blur(); }
+    const cancelBtn = document.getElementById('search-cancel');
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    const results = document.getElementById('search-results');
+    if (results) { results.classList.add('hidden'); results.style.display = 'none'; }
     const cl = document.getElementById('chat-list');
     if (cl) cl.style.display = 'block';
 }
@@ -3736,6 +3757,19 @@ async function openChat(id, name, avatar) {
     if (elName)   elName.textContent   = displayName;
     if (elStatus) elStatus.textContent = '...';
     if (elDot)    elDot.style.display  = 'none';
+
+    // Бейдж непрочитанных на кнопке "назад"
+    const backBadge = document.getElementById('chat-back-badge');
+    if (backBadge) {
+        const chatData = recentChats.find(ch => ch.partner_id === id);
+        const unread = chatData ? (chatData.unread_count || 0) : 0;
+        if (unread > 0) {
+            backBadge.textContent = unread > 99 ? '99+' : String(unread);
+            backBadge.style.display = 'inline-flex';
+        } else {
+            backBadge.style.display = 'none';
+        }
+    }
 
     // ── 4. Аватар ───────────────────────────────────────────────
     const headerBox = document.getElementById('chat-ava-header');
@@ -8114,14 +8148,30 @@ async function _publishMomentEditor(ov, file, url) {
         if (caption) fd.append('text', caption);
         if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
 
-        const r = await fetch('/create_moment', { method: 'POST', body: fd, credentials: 'include' });
-        clearInterval(timer);
-        _updateUploadProgress(100);
-        await new Promise(res => setTimeout(res, 500));
+        const uploadResult = await new Promise((resolve) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/create_moment', true);
+            xhr.withCredentials = true;
+            xhr.upload.onprogress = (ev) => {
+                if (ev.lengthComputable) {
+                    clearInterval(timer);
+                    _updateUploadProgress(Math.round((ev.loaded / ev.total) * 95));
+                }
+            };
+            xhr.onload = () => {
+                clearInterval(timer);
+                _updateUploadProgress(100);
+                try { const d = JSON.parse(xhr.responseText); resolve({ ok: !!d.success }); }
+                catch(e) { resolve({ ok: xhr.status >= 200 && xhr.status < 300 }); }
+            };
+            xhr.onerror = () => { clearInterval(timer); resolve({ ok: false }); };
+            xhr.timeout = 90000;
+            xhr.ontimeout = () => { clearInterval(timer); resolve({ ok: false }); };
+            xhr.send(fd);
+        });
 
-        let ok = r.ok;
-        try { const d = await r.json(); ok = d.success; } catch(e) {}
-        showToast(ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки', ok ? 'success' : 'error');
+        await new Promise(res => setTimeout(res, 350));
+        showToast(uploadResult.ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки — попробуй ещё раз', uploadResult.ok ? 'success' : 'error');
 
     } catch(e) {
         clearInterval(timer);
@@ -8527,14 +8577,23 @@ function _setupMomentsPullDown() {
     if (!mainContent) return;
 
     let _pullStart = 0, _pulling = false, _momentsShown = false;
+    let _pullIndicator = null;
+
+    function _getPullIndicator() {
+        if (_pullIndicator) return _pullIndicator;
+        _pullIndicator = document.createElement('div');
+        _pullIndicator.style.cssText = 'position:fixed;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,#10b981,#34d399);transform:scaleX(0);transform-origin:left;z-index:9999;border-radius:0 0 3px 3px;opacity:0';
+        document.body.appendChild(_pullIndicator);
+        return _pullIndicator;
+    }
 
     mainContent.addEventListener('touchstart', (e) => {
         const chatSec = document.getElementById('chats-section');
         if (!chatSec?.contains(e.target)) return;
-        // только если скролл в самом верху
-        if (mainContent.scrollTop > 10) return;
+        if (mainContent.scrollTop > 20) return;
         _pullStart = e.touches[0].clientY;
         _pulling = true;
+        _momentsShown = _momentsBarVisible;
     }, { passive: true });
 
     mainContent.addEventListener('touchmove', (e) => {
@@ -8542,14 +8601,30 @@ function _setupMomentsPullDown() {
         const chatWin = document.getElementById('chat-window');
         if (chatWin?.classList.contains('active')) { _pulling = false; return; }
         const dy = e.touches[0].clientY - _pullStart;
+        if (dy <= 0) return;
+
+        // Зелёная полоска прогресса
+        const progress = Math.min(dy / 70, 1);
+        const ind = _getPullIndicator();
+        ind.style.opacity = String(progress);
+        ind.style.transform = `scaleX(${progress})`;
+
         if (dy > 40 && !_momentsShown) {
             _showMomentsBar();
             _momentsShown = true;
-            vibrate(8);
+            vibrate(10);
+            ind.style.transform = 'scaleX(1)';
+            ind.style.opacity = '1';
         }
     }, { passive: true });
 
-    mainContent.addEventListener('touchend', () => { _pulling = false; }, { passive: true });
+    mainContent.addEventListener('touchend', () => {
+        _pulling = false;
+        const ind = _getPullIndicator();
+        ind.style.transition = 'opacity 0.35s ease';
+        ind.style.opacity = '0';
+        setTimeout(() => { ind.style.transition = ''; ind.style.transform = 'scaleX(0)'; }, 380);
+    }, { passive: true });
 }
 
 // ── Показать/скрыть Moments bar ──
