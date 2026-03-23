@@ -170,7 +170,7 @@ const WCCache = (() => {
             z-index: 10 !important;
             background: transparent !important;
             padding: 4px 6px !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 6px) !important;
+            padding-bottom: 6px !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -222,6 +222,7 @@ const WCCache = (() => {
             border: none !important;
             box-shadow: none !important;
             outline: none !important;
+            padding-top: max(env(safe-area-inset-top, 10px), 10px) !important;
         }
         #search-box-wrap, #search-box-wrap * {
             border: none !important;
@@ -247,6 +248,61 @@ const WCCache = (() => {
             transform: translateY(-100%); transition: transform .3s ease;
         }
         #wc-off.v { transform: translateY(0); }
+        
+        /* ═══ SMOOTH IMAGE LOADING ═══ */
+        /* ═══ SMOOTH IMAGE LOADING — no flicker ═══ */
+        .img-bubble img {
+            transition: filter 0.3s ease, opacity 0.3s ease !important;
+            border: none !important;
+            outline: none !important;
+        }
+        .img-bubble img.loading {
+            filter: blur(8px) !important;
+            opacity: 0.7 !important;
+        }
+        .img-bubble img.loaded {
+            filter: none !important;
+            opacity: 1 !important;
+        }
+        .img-bubble, .vid-bubble {
+            border: none !important;
+            outline: none !important;
+            box-shadow: none !important;
+        }
+        .vid-bubble video {
+            border: none !important;
+            outline: none !important;
+        }
+        /* Upload progress — smooth */
+        .upload-progress-bar {
+            transition: width 0.3s ease !important;
+        }
+
+        /* ═══ SMOOTH ANIMATIONS EVERYWHERE ═══ */
+        .modal-overlay {
+            animation: wcFadeIn 0.2s ease !important;
+        }
+        .modal-sheet {
+            animation: wcSlideUp 0.3s cubic-bezier(0.16,1,0.3,1) !important;
+        }
+        @keyframes wcFadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes wcSlideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
+        .chat-item { transition: transform 0.15s ease, opacity 0.15s ease !important; }
+        .chat-item:active { transform: scale(0.97) !important; }
+        .bubble { animation: wcBubbleIn 0.25s cubic-bezier(0.16,1,0.3,1) !important; }
+        @keyframes wcBubbleIn { from{opacity:0;transform:translateY(6px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
+        .settings-row { transition: background 0.15s ease, transform 0.1s ease !important; }
+        .settings-row:active { transform: scale(0.98) !important; }
+        #chat-window { transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94) !important; }
+        .send-btn, .tg-send-btn { transition: transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s !important; }
+        .send-btn:active, .tg-send-btn:active { transform: scale(0.82) !important; }
+        .icon-btn, .tg-attach-btn, .tg-inner-btn { transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease !important; }
+        .icon-btn:active, .tg-attach-btn:active, .tg-inner-btn:active { transform: scale(0.88) !important; }
+        /* Smooth page transitions */
+        #main-content { transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94), filter 0.28s ease, opacity 0.28s ease !important; }
+        /* Smooth scroll-to-bottom button */
+        .scroll-bottom-btn { transition: opacity 0.2s ease, transform 0.2s ease !important; }
+
         /* Skeleton animation */
         @keyframes wcSkPulse { 0%,100%{opacity:.35} 50%{opacity:.75} }
         .wc-skeleton { animation: wcSkPulse 1.5s ease-in-out infinite; background: rgba(255,255,255,0.07); }
@@ -2263,7 +2319,7 @@ body {
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
     .input-bar { padding-bottom: 8px !important; padding-top: 6px !important; }
-    #messages { padding-bottom: 76px !important; }
+    #messages { padding-bottom: 8px !important; }
 
     /* Скроллбары */
     #main-content::-webkit-scrollbar { width: 5px; }
@@ -5469,6 +5525,12 @@ async function sendText() {
                     if (si) si.innerHTML = ICONS.check;
                 }
                 _setLastMsgId(currentChatId, ack.msg_id);
+                // FIX: update chat list immediately after send
+                _debouncedLoadChats();
+            } else if (err) {
+                // ACK timeout — message likely sent, refresh chat list
+                console.warn('[sendText] ACK timeout, refreshing chats');
+                _debouncedLoadChats();
             }
         });
     } else {
