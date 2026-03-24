@@ -169,8 +169,8 @@ const WCCache = (() => {
             transform: none !important;
             z-index: 10 !important;
             background: var(--chat-bg, #1d1d1e) !important;
-            padding: 6px 10px !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
+            padding: 8px 12px !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 12px), 14px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -332,8 +332,22 @@ const VirtualList=(()=>{
             });
         }
         _scrollAfterRender(0);}
-    function append(msg){if(!el)return;ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120; // FIX Task 2a: 120px threshold
-    if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
+    function append(msg){if(!el)return;
+        // FIX DUPLICATE: if real msg arrives, remove optimistic row with same content from same sender
+        if(!msg._optimistic && msg.id){
+            // Remove matching optimistic DOM rows
+            el.querySelectorAll('[data-optimistic="1"]').forEach(function(optEl){
+                if(optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:''))optEl.remove();
+            });
+            // Remove matching temp entries from ms array (tmp_ prefixed)
+            const prevLen=ms.length;
+            ms=ms.filter(function(m){return!(String(m.id).startsWith('tmp_')&&(m.content||'')===(msg.content||''));});
+            if(ms.length<prevLen){hc.clear();s=0;e=0;}
+            // Dedup by real id
+            if(ms.some(function(m){return String(m.id)===String(msg.id);}))return;
+        }
+        ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120; // FIX Task 2a: 120px threshold
+    if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
         if(ab){
             // FIX Task 2a: user near bottom — auto scroll
             requestAnimationFrame(function(){el.scrollTop=el.scrollHeight;});
@@ -353,7 +367,9 @@ const VirtualList=(()=>{
         arr = arr.filter(m => !existIds.has(m.id));
         if(!arr.length) return;
         ms=[...arr,...ms];const nh=new Map();hc.forEach((v,k)=>nh.set(k+arr.length,v));hc=nh;s+=arr.length;e+=arr.length;const ph=el.scrollHeight;win(Math.max(0,s-arr.length),e,false);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-ph;});}
-    function toBottom(a){if(!el)return;a?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):(el.scrollTop=el.scrollHeight);}
+    function toBottom(a){if(!el)return;a?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):(el.scrollTop=el.scrollHeight);
+        // FIX SCROLL-BTN: force-hide button instantly after scrolling to bottom
+        requestAnimationFrame(function(){_scrollAtBottom=true;_scrollUnread=0;_updateScrollBtn(el);});}
     function destroy(){if(!el)return;el.removeEventListener('scroll',onsc);if(rf)cancelAnimationFrame(rf);ms=[];hc.clear();el=ts=bs=tp=bp=null;}
     return{mount,setMessages,appendMessage:append,prependMessages:prepend,scrollToBottom:toBottom,destroy};
 })();
@@ -1358,7 +1374,9 @@ function initSocket() {
     socket.on('incoming_call',  onIncomingCall);
     socket.on('call_answered',  onCallAnswered);
     socket.on('ice_candidate',  onIceCandidate);
-    socket.on('call_ended',     () => { _stopRingtone(); endCall(false); });
+    socket.on('call_ended', () => { _stopRingtone(); endCall(false); });
+    // FIX: also handle call_ended_v2 in case server sends different event
+    socket.on('call_ended_v2', () => { _stopRingtone(); endCall(false); });
     // FIX Task 4d: recipient declined call from push notification
     socket.on('call_declined', (data) => {
         _stopRingtone();
@@ -2019,15 +2037,15 @@ body {
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
-/* FIX P2: tg-input-row = стеклянная капсула, плавающая над обоями */
-.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:24px;padding:4px 6px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 2px; }
-.tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
+/* FIX INPUT BAR: raise above home indicator, proper height */
+.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.88);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:26px;padding:6px 8px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 4px; }
+.tg-attach-btn { width:42px;height:42px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:52px; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:6px 6px 6px 14px;min-height:44px; }
 .tg-text-wrap:focus-within { background:#333335; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
-.tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
+.tg-send-btn { width:42px;height:42px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-send-btn:active { transform:scale(0.88); }
 .tg-mic-btn { background:transparent !important;box-shadow:none !important;color:rgba(255,255,255,0.6); }
 .tg-mic-btn:active { color:white; }
@@ -2038,8 +2056,13 @@ body {
 #wc-img-viewer img { max-width:100vw;max-height:100vh;object-fit:contain;user-select:none;-webkit-user-select:none;touch-action:pinch-zoom; }
 #wc-img-viewer-close { position:absolute;top:max(env(safe-area-inset-top,0px),12px);right:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:10;-webkit-tap-highlight-color:transparent; }
 #wc-img-viewer-close:active { background:rgba(255,255,255,0.22); }
-.img-bubble { border-radius:18px !important;overflow:hidden !important;border:none !important;box-shadow:none !important; }
-.img-bubble img { display:block;width:100%;height:auto;max-height:380px;object-fit:cover;border:none !important; }
+.img-bubble { border-radius:18px !important;overflow:hidden !important;border:none !important;outline:none !important;box-shadow:none !important;background:transparent !important; }
+.img-bubble img { display:block;width:100%;height:auto;max-height:380px;object-fit:cover;border:none !important;outline:none !important;box-shadow:none !important; }
+/* FIX GREEN BORDER: image/video bubbles must have zero padding and transparent background */
+.bubble:has(.img-bubble) { padding:0 !important;background:transparent !important;border:none !important;box-shadow:none !important; }
+.bubble:has(video) { padding:0 !important;background:transparent !important;border:none !important;box-shadow:none !important; }
+.msg-row.out .bubble:has(.img-bubble) { background:transparent !important;box-shadow:none !important; }
+.msg-row.in  .bubble:has(.img-bubble) { background:transparent !important;border:none !important;box-shadow:none !important; }
 .wc-img-sk { position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;pointer-events:none; }
 
 /* ПЕЧАТЬ */
@@ -2097,8 +2120,8 @@ body {
 .settings-row:last-child { border-bottom:none; }
 .settings-row:active { background:rgba(255,255,255,0.05); }
 .settings-icon { width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0; }
-.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:none !important;box-shadow:none !important; }
-.img-bubble img { display:block;width:100%;border:none !important; }
+.img-bubble { border-radius:16px;overflow:hidden;max-width:260px;cursor:zoom-in;border:none !important;outline:none !important;box-shadow:none !important;background:transparent !important; }
+.img-bubble img { display:block;width:100%;border:none !important;outline:none !important; }
 
 /* МОДАЛЬНЫЕ */
 .modal-overlay { position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);display:flex;align-items:flex-end;animation:fadeIn 0.2s ease; }
@@ -2158,10 +2181,10 @@ body {
 /* АНИМАЦИИ */
 @keyframes fadeIn { from{opacity:0;} to{opacity:1;} }
 @keyframes slideUp { from{opacity:0;transform:translateY(12px);} to{opacity:1;transform:translateY(0);} }
-@keyframes msgIn { from{opacity:0;transform:translateY(8px) scale(0.97);} to{opacity:1;transform:translateY(0) scale(1);} }
+@keyframes msgIn { from{opacity:0;transform:translateY(6px);} to{opacity:1;transform:translateY(0);} }
 @keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
-.animate-msg { animation:msgIn 0.25s cubic-bezier(0.22,1,0.36,1); }
+.animate-msg { animation:msgIn 0.18s ease-out both; }
 .animate-up  { animation:slideUp 0.3s ease; }
 
 /* ════════════════════════════════════════════════════════
@@ -2710,7 +2733,7 @@ body {
                 <span id="chat-back-badge" style="display:none;position:absolute;top:-3px;right:-5px;min-width:16px;height:16px;background:#f59e0b;color:#000;font-size:9px;font-weight:800;border-radius:8px;padding:0 3px;align-items:center;justify-content:center;line-height:16px;pointer-events:none"></span>
             </button>
             <div style="position:relative;cursor:pointer" onclick="showPartnerProfile()">
-                <div id="chat-ava-header"></div>
+                <div id="chat-ava-header" style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0;"></div>
                 <div id="chat-online-dot" class="online-dot" style="display:none"></div>
             </div>
             <div onclick="showPartnerProfile()" style="cursor:pointer">
@@ -4160,10 +4183,18 @@ function renderMessagesFromCache(msgs) {
         });
     const container = document.getElementById('messages');
     if (!container) return;
-    if (!container.querySelector('.vl-ph')) {
-        VirtualList.mount(container);
-    }
-    VirtualList.setMessages(msgs);
+    // FIX SMOOTH TRANSITION: fade out before wiping, fade in after render
+    container.style.transition = 'opacity 0.12s ease';
+    container.style.opacity = '0';
+    requestAnimationFrame(() => {
+        if (!container.querySelector('.vl-ph')) {
+            VirtualList.mount(container);
+        }
+        VirtualList.setMessages(msgs);
+        requestAnimationFrame(() => {
+            container.style.opacity = '1';
+        });
+    });
 }
 
 function getMessageDate(msg) {
@@ -4204,6 +4235,11 @@ function buildMessageRow(msg, animate = true) {
     row.style.contentVisibility = 'auto';
     row.style.containIntrinsicSize = '0 72px'; // estimated height hint
     row.setAttribute('data-msg-id', msg.id || '');
+    // FIX DUPLICATE: mark optimistic rows so onNewMessage cleanup finds them
+    if (msg._optimistic) {
+        row.dataset.optimistic = '1';
+        row.dataset.content = msg.content || '';
+    }
     if (animate) row.classList.add('animate-msg');
 
     // Долгое нажатие (мобайл)
@@ -4322,13 +4358,15 @@ function buildMessageRow(msg, animate = true) {
         // FIXED: skeleton + retry + eager load для blob (optimistic UI)
         const _isSrc  = msg.file_url || '';
         const _isBlob = _isSrc.startsWith('blob:');
-        const _skId = 'sk_' + (msg.id || tempId || Math.random().toString(36).slice(2));
+        const _skId = 'sk_' + (msg.id || Math.random().toString(36).slice(2));
+        // FIX PHOTO FLASH: start visible if blob (already in memory) or already loaded once
+        const _startOpacity = (_isBlob || (window._imgLoaded && window._imgLoaded.has(_isSrc))) ? '1' : '0';
         contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
             onclick="openImgZoom(this.querySelector('img')?.src||'')">
-            <div class="wc-img-sk" id="${_skId}"></div>
+            ${_startOpacity==='0'?`<div class="wc-img-sk" id="${_skId}"></div>`:''}
             <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
-                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:0;transition:opacity 0.22s ease"
-                 onload="(function(el){const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
+                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease"
+                 onload="(function(el){window._imgLoaded=window._imgLoaded||new Set();window._imgLoaded.add(el.src);const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
                  onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
@@ -4699,6 +4737,7 @@ function showMsgContextMenu(row, msg) {
     // ── Overlay (затемнение + blur) ──
     const ov = document.createElement('div');
     ov.id = '_wc_ctx';
+    ov.className = 'msg-menu-overlay'; // FIX FREEZE: class needed for duplicate-open guard
     ov.style.cssText = [
         'position:fixed;inset:0;z-index:9100',
         'background:rgba(0,0,0,0.52)',
@@ -4723,7 +4762,9 @@ function showMsgContextMenu(row, msg) {
         sh.style.transform = 'translateY(100%)';
         ov.style.opacity   = '0';
         ov.style.transition = 'opacity 0.26s';
-        setTimeout(() => ov.remove(), 280);
+        // FIX FREEZE: use pointer-events:none during animation, then remove entirely
+        ov.style.pointerEvents = 'none';
+        setTimeout(() => { ov.remove(); }, 280);
     };
     ov.addEventListener('pointerdown', e => { if (e.target === ov) close(); });
 
@@ -5068,6 +5109,7 @@ function _animDeleteMsgRow(msgId) {
 
 // ── Удалить у меня ──
 function _deleteMsgForMe(msgId) {
+    _markMsgDeleted(msgId);   // FIX FREEZE: mark BEFORE animating so VirtualList skips on re-render
     _animDeleteMsgRow(msgId);
     socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
 }
@@ -5545,7 +5587,13 @@ function onNewMessage(msg) {
     if (_mid) _markMsgSeen(_mid);
 
     // Проверяем: это сообщение для открытого чата?
-    if (+msg.chat_id === currentChatId) {
+    // FIX REALTIME: cast both sides to int for safe comparison (server may send string)
+    const _msgChatId = +msg.chat_id || 0;
+    const _isOpenChat = (currentChatId && _msgChatId === +currentChatId)
+        || (!currentChatId && currentPartnerId && (
+            +msg.sender_id === +currentPartnerId || +msg.to_id === +currentPartnerId
+        ));
+    if (_isOpenChat) {
         // Удаляем оптимистичные дубликаты с тем же контентом
         if (+msg.sender_id === currentUser.id) {
             const container = document.getElementById('messages');
@@ -8036,12 +8084,15 @@ function _renderMomentsTab() {
         _renderUploadingCard(container);
     }
 
+    // FIX MOMENTS EMPTY: if uploading, don't show empty state even if cache is empty
     if (!moments.length) {
-        container.innerHTML += `<div style="text-align:center;padding:60px 20px;opacity:0.3">
-            <div style="font-size:48px;margin-bottom:12px">🌅</div>
-            <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет моментов</div>
-            <div style="font-size:13px">Моменты появляются от людей которых вы сохранили</div>
-        </div>`;
+        if (!_momentUploading) {
+            container.innerHTML += `<div style="text-align:center;padding:60px 20px;opacity:0.3">
+                <div style="font-size:48px;margin-bottom:12px">🌅</div>
+                <div style="font-size:16px;font-weight:600;margin-bottom:6px">Нет моментов</div>
+                <div style="font-size:13px">Моменты появляются от людей которых вы сохранили</div>
+            </div>`;
+        }
         return;
     }
 
@@ -8155,11 +8206,12 @@ async function _publishMomentEditor(ov, file, url) {
 
     // Показываем таб Моменты с карточкой загрузки
     switchTab('moments');
-    await new Promise(res => setTimeout(res, 50));
+    // FIX MOMENTS UPLOAD: render tab synchronously so upload card appears immediately
     const container = document.getElementById('full-moments-list');
     if (container) {
         _renderMomentsTab();
     }
+    await new Promise(res => setTimeout(res, 60));
 
     // Симулируем прогресс (iOS не даёт реальный XHR progress через fetch)
     let pct = 0;
@@ -8317,17 +8369,17 @@ function _openMomentsOverlay(moments, startIdx) {
         progRow.style.cssText = `position:absolute;top:max(env(safe-area-inset-top,44px),44px);left:14px;right:14px;display:flex;gap:4px;z-index:20`;
         for (let i = 0; i < total; i++) {
             const bar = document.createElement('div');
-            bar.style.cssText = `flex:1;height:2.5px;border-radius:2px;background:${i < idx ? '#fff' : i === idx ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.25)'}`;
-            if (i === idx && isVid) {
-                // Анимированный прогресс для видео — заполнится через JS
-                bar.id = 'moment-prog-active';
+            bar.style.cssText = `flex:1;height:2.5px;border-radius:2px;overflow:hidden;background:rgba(255,255,255,0.25)`;
+            if (i < idx) {
+                bar.style.background = '#fff';
+            } else if (i === idx) {
+                // FIX MOMENTS PROGRESS: animated fill for both photo AND video
                 bar.style.background = 'rgba(255,255,255,0.25)';
+                bar.id = 'moment-prog-active';
                 const fill = document.createElement('div');
                 fill.id = 'moment-prog-fill';
-                fill.style.cssText = 'height:100%;background:#fff;border-radius:2px;width:0%;transition:width 0.1s linear';
+                fill.style.cssText = 'height:100%;background:#fff;border-radius:2px;width:0%';
                 bar.appendChild(fill);
-            } else if (i < idx) {
-                bar.style.background = '#fff';
             }
             progRow.appendChild(bar);
         }
@@ -8614,8 +8666,9 @@ function _setupMomentsPullDown() {
     }
 
     mainContent.addEventListener('touchstart', (e) => {
-        const chatSec = document.getElementById('chats-section');
-        if (!chatSec?.contains(e.target)) return;
+        // FIX MOMENTS: allow pull from anywhere in main-content, not just chats-section
+        const chatWin = document.getElementById('chat-window');
+        if (chatWin?.classList.contains('active')) return; // don't pull when chat is open
         if (mainContent.scrollTop > 5) return;
         _pullStart = e.touches[0].clientY;
         _pulling = true;
@@ -12547,6 +12600,10 @@ function scrollDown(smooth = true) {
     // FIX: clear unread badge when scrolling to bottom
     const badge = document.getElementById('wc-scroll-badge');
     if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
+    // FIX SCROLL-BTN: hide button immediately
+    _scrollAtBottom = true; _scrollUnread = 0;
+    const _msgsEl = document.getElementById('messages');
+    if (_msgsEl) _updateScrollBtn(_msgsEl);
 }
 
 function setupCallScreen(type, isIncoming) {
@@ -12653,11 +12710,17 @@ async function startCall(type) {
         const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
         await peerConnection.setLocalDescription(offer);
         socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type, call_id: currentCallId });
+        // FIX CALL STUCK: update status after 5s, end after 30s
+        setTimeout(() => {
+            const lbl = document.getElementById('call-status-label');
+            if (lbl && peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState))
+                lbl.textContent = 'Ожидание ответа...';
+        }, 5000);
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
             }
-        }, 45000);
+        }, 30000);
     } catch(e) {
         console.error('startCall:', e); endCall(false);
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
