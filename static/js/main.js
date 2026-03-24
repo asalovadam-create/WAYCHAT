@@ -168,9 +168,9 @@ const WCCache = (() => {
             left: auto !important; right: auto !important;
             transform: none !important;
             z-index: 10 !important;
-            background: transparent !important;
-            padding: 4px 6px !important;
-            padding-bottom: 6px !important;
+            background: var(--chat-bg, #1d1d1e) !important;
+            padding: 6px 10px !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -189,10 +189,9 @@ const WCCache = (() => {
             box-shadow: none !important;
             -webkit-appearance: none !important;
         }
-        /* messages: нижний padding — enough space above input-bar */
+        /* messages: нижний padding небольшой — input-bar теперь в потоке */
         #messages {
-            padding-bottom: 8px !important;
-            min-height: 0 !important;
+            padding-bottom: 4px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
@@ -222,7 +221,6 @@ const WCCache = (() => {
             border: none !important;
             box-shadow: none !important;
             outline: none !important;
-            padding-top: max(env(safe-area-inset-top, 10px), 10px) !important;
         }
         #search-box-wrap, #search-box-wrap * {
             border: none !important;
@@ -240,7 +238,7 @@ const WCCache = (() => {
         /* Offline banner */
         #wc-off {
             position: fixed;
-             top: 0;
+            top: max(env(safe-area-inset-top,0px),0px);
             left: 0; right: 0; z-index: 99997;
             background: rgba(239,68,68,.97); color: #fff;
             padding: 8px 16px; text-align: center;
@@ -248,61 +246,6 @@ const WCCache = (() => {
             transform: translateY(-100%); transition: transform .3s ease;
         }
         #wc-off.v { transform: translateY(0); }
-        
-        /* ═══ SMOOTH IMAGE LOADING ═══ */
-        /* ═══ SMOOTH IMAGE LOADING — no flicker ═══ */
-        .img-bubble img {
-            transition: filter 0.3s ease, opacity 0.3s ease !important;
-            border: none !important;
-            outline: none !important;
-        }
-        .img-bubble img.loading {
-            filter: blur(8px) !important;
-            opacity: 0.7 !important;
-        }
-        .img-bubble img.loaded {
-            filter: none !important;
-            opacity: 1 !important;
-        }
-        .img-bubble, .vid-bubble {
-            border: none !important;
-            outline: none !important;
-            box-shadow: none !important;
-        }
-        .vid-bubble video {
-            border: none !important;
-            outline: none !important;
-        }
-        /* Upload progress — smooth */
-        .upload-progress-bar {
-            transition: width 0.3s ease !important;
-        }
-
-        /* ═══ SMOOTH ANIMATIONS EVERYWHERE ═══ */
-        .modal-overlay {
-            animation: wcFadeIn 0.2s ease !important;
-        }
-        .modal-sheet {
-            animation: wcSlideUp 0.3s cubic-bezier(0.16,1,0.3,1) !important;
-        }
-        @keyframes wcFadeIn { from{opacity:0} to{opacity:1} }
-        @keyframes wcSlideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
-        .chat-item { transition: transform 0.15s ease, opacity 0.15s ease !important; }
-        .chat-item:active { transform: scale(0.97) !important; }
-        .bubble { animation: wcBubbleIn 0.25s cubic-bezier(0.16,1,0.3,1) !important; }
-        @keyframes wcBubbleIn { from{opacity:0;transform:translateY(6px) scale(0.96)} to{opacity:1;transform:translateY(0) scale(1)} }
-        .settings-row { transition: background 0.15s ease, transform 0.1s ease !important; }
-        .settings-row:active { transform: scale(0.98) !important; }
-        #chat-window { transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94) !important; }
-        .send-btn, .tg-send-btn { transition: transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s !important; }
-        .send-btn:active, .tg-send-btn:active { transform: scale(0.82) !important; }
-        .icon-btn, .tg-attach-btn, .tg-inner-btn { transition: transform 0.12s ease, background 0.12s ease, color 0.12s ease !important; }
-        .icon-btn:active, .tg-attach-btn:active, .tg-inner-btn:active { transform: scale(0.88) !important; }
-        /* Smooth page transitions */
-        #main-content { transition: transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94), filter 0.28s ease, opacity 0.28s ease !important; }
-        /* Smooth scroll-to-bottom button */
-        .scroll-bottom-btn { transition: opacity 0.2s ease, transform 0.2s ease !important; }
-
         /* Skeleton animation */
         @keyframes wcSkPulse { 0%,100%{opacity:.35} 50%{opacity:.75} }
         .wc-skeleton { animation: wcSkPulse 1.5s ease-in-out infinite; background: rgba(255,255,255,0.07); }
@@ -541,7 +484,7 @@ function _updateScrollBtn(el) {
     if (!btn) return;
 
     var distFromBottom = el
-        ? (el.scrollHeight - el.scrollTop - el.clientHeight)
+        ? Math.max(0, (el.scrollHeight - el.scrollTop - el.clientHeight))
         : 0;
     var show = distFromBottom > 120;
 
@@ -708,6 +651,7 @@ let callLocalStream   = null;
 let peerConnection    = null;
 let pendingIce        = [];
 let incomingCallData  = null;
+let currentCallId     = null;
 let isMuted           = false;
 let isVideoOff        = false;
 let callStartTime     = null;
@@ -877,6 +821,8 @@ let messagesByChatCache = {};
 const MSG_CACHE_TTL = 120000; // 2 мин — сообщения редко меняются задним числом
 
 let longPressTimer    = null;
+let _sendInFlight     = false;
+let _lastSendSig      = { chatId: null, text: '', ts: 0 };
 let activeTheme       = localStorage.getItem('waychat_theme') || 'emerald';
 const _deletedMsgIds = new Set(
     JSON.parse(localStorage.getItem('_wc_del_ids') || '[]')
@@ -1075,7 +1021,13 @@ function insertEmoji() {
 // Scroll-down button — автоматически создаётся при открытии чата
 function _initScrollDownBtn() {
     const msgs = document.getElementById('messages');
-    if (!msgs || document.getElementById('wc-sd-btn')) return;
+    if (!msgs) return;
+    const existingBtn = document.getElementById('wc-sd-btn');
+    if (existingBtn) {
+        existingBtn.style.opacity = '0';
+        existingBtn.style.display = 'none';
+        return;
+    }
 
     const btn = document.createElement('button');
     btn.id = 'wc-sd-btn';
@@ -1104,7 +1056,7 @@ function _initScrollDownBtn() {
     msgs.addEventListener('scroll', () => {
         clearTimeout(_sdTimer);
         _sdTimer = setTimeout(() => {
-            const dist = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight;
+            const dist = Math.max(0, msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight);
             if (dist > 150) {
                 btn.style.display = 'flex';
                 requestAnimationFrame(() => { btn.style.opacity = '1'; });
@@ -1299,13 +1251,7 @@ function initSocket() {
         // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
         if (Date.now() - _lastChatsLoad > 5000) loadChats();
     // Предзагружаем моменты сразу при старте
-    setTimeout(async () => {
-        await loadMoments();
-        // Если есть моменты — показываем bar автоматически
-        if (momentsCache && momentsCache.length > 0) {
-            _showMomentsBar();
-        }
-    }, 800);
+    setTimeout(() => loadMoments(), 800);
         if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
         wsReconnected = true;
     });
@@ -1605,7 +1551,7 @@ async function init() {
 
         // Фикс для standalone PWA — убираем статус-бар просвет
         var meta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
-        if (meta) meta.content = 'black-translucent';
+        if (meta) meta.content = 'black';
 
         // Инжектим глобальный CSS для убийства серой полосы на всех iPhone
         var killGray = document.createElement('style');
@@ -1718,7 +1664,7 @@ function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
         html = `<div class="${sizeClass} bg-zinc-900/80 rounded-full flex items-center justify-center ${fontSize} shadow-inner border border-white/5" data-uid="${user.id||''}">${emoji}</div>`;
     } else if (avatar && !avatar.includes('default_avatar')) {
         const src = forceRefresh ? avatar + '?t=' + Date.now() : avatar;
-        html = `<img src="${src}" class="${sizeClass} rounded-full object-cover shadow-md border border-white/10" loading="lazy" data-uid="${user.id||''}" onerror="this.outerHTML=getInitialAvatar('${name.replace(/'/g,"\\'")}','${sizeClass}','${user.id||''}')">`;
+        html = `<img src="${src}" class="${sizeClass} rounded-full object-cover shadow-md border border-white/10" style="border-radius:50%;object-fit:cover" loading="lazy" data-uid="${user.id||''}" onerror="this.outerHTML=getInitialAvatar('${name.replace(/'/g,"\\'")}','${sizeClass}','${user.id||''}')">`;
     } else {
         html = getInitialAvatar(name, sizeClass, user.id);
     }
@@ -2054,13 +2000,13 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { padding:6px 8px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
+.input-bar { padding:8px 12px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
-.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s,background 0.2s;box-shadow:var(--glow); }
+.send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
@@ -2074,12 +2020,11 @@ body {
 
 /* ── v9.0: TELEGRAM INPUT BAR ── */
 /* FIX P2: tg-input-row = стеклянная капсула, плавающая над обоями */
-.tg-input-row { display:flex;align-items:center;gap:6px;background:rgba(44,44,46,0.55);backdrop-filter:blur(40px) saturate(200%);-webkit-backdrop-filter:blur(40px) saturate(200%);border-radius:26px;padding:6px;box-shadow:0 2px 16px rgba(0,0,0,0.25),0 0.5px 0 rgba(255,255,255,0.08) inset,0 -0.5px 0 rgba(255,255,255,0.03) inset;margin:0 4px;border:0.5px solid rgba(255,255,255,0.12);transition:background 0.2s ease,border-color 0.2s ease; }
-.tg-input-row:focus-within { background:rgba(44,44,46,0.72);border-color:rgba(255,255,255,0.18); }
+.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:24px;padding:4px 6px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 2px; }
 .tg-attach-btn { width:40px;height:40px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:center;background:transparent;border:none !important;outline:none !important;box-shadow:none !important;border-radius:18px;padding:2px 6px 2px 10px;height:36px; }
-.tg-text-wrap:focus-within { background:transparent; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:2px 6px 2px 14px;min-height:52px; }
+.tg-text-wrap:focus-within { background:#333335; }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:40px;height:40px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2318,8 +2263,8 @@ body {
     }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: 8px !important; padding-top: 6px !important; }
-    #messages { padding-bottom: 8px !important; }
+    .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
+    #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
     #main-content::-webkit-scrollbar { width: 5px; }
@@ -3776,6 +3721,10 @@ let _chatOpenId = 0;
 
 async function openChat(id, name, avatar) {
     const _myOpenId = ++_chatOpenId;  // уникальный ID этого вызова
+    const _prevChatId = currentChatId;
+    if (_prevChatId) {
+        try { socket.emit('leave_chat', { chat_id: _prevChatId }); } catch(e) {}
+    }
 
     // ── 1. Сброс состояния ──────────────────────────────────────
     currentPartnerId = id;
@@ -3832,7 +3781,7 @@ async function openChat(id, name, avatar) {
     if (headerBox) {
         const cachedSrc = chatPartnerAvatarSrc[id];
         headerBox.innerHTML = cachedSrc
-            ? `<img src="${cachedSrc}" class="w-10 h-10 rounded-full object-cover" data-uid="${id}" style="flex-shrink:0">`
+            ? `<img src="${cachedSrc}" class="w-10 h-10 rounded-full object-cover" data-uid="${id}" style="flex-shrink:0;border-radius:50%;object-fit:cover">`
             : getAvatarHtml({id, name, avatar}, 'w-10 h-10');
         if (avatar && !avatar.includes('default') && !cachedSrc) {
             AvatarCache.getOrFetch(avatar, id).then(src => {
@@ -4259,11 +4208,17 @@ function buildMessageRow(msg, animate = true) {
 
     // Долгое нажатие (мобайл)
     let lpTimer;
-    row.addEventListener('touchstart', () => {
-        lpTimer = setTimeout(() => { vibrate([10,30,10]); showMsgContextMenu(row, msg); }, 600);
+    row.addEventListener('touchstart', (e) => {
+        if (e.touches && e.touches.length > 1) return;
+        lpTimer = setTimeout(() => {
+            if (document.querySelector('.msg-menu-overlay')) return;
+            vibrate([10,30,10]);
+            showMsgContextMenu(row, msg);
+        }, 600);
     }, { passive: true });
     row.addEventListener('touchend',  () => clearTimeout(lpTimer), {passive:true});
     row.addEventListener('touchmove', () => clearTimeout(lpTimer), {passive:true});
+    row.addEventListener('touchcancel', () => clearTimeout(lpTimer), {passive:true});
 
     // ПК: правый клик → компактное контекстное меню
     row.addEventListener('contextmenu', (e) => {
@@ -4368,11 +4323,11 @@ function buildMessageRow(msg, animate = true) {
         const _isSrc  = msg.file_url || '';
         const _isBlob = _isSrc.startsWith('blob:');
         const _skId = 'sk_' + (msg.id || tempId || Math.random().toString(36).slice(2));
-        contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden"
+        contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
             onclick="openImgZoom(this.querySelector('img')?.src||'')">
             <div class="wc-img-sk" id="${_skId}"></div>
             <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
-                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;opacity:0;transition:opacity 0.22s ease"
+                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:0;transition:opacity 0.22s ease"
                  onload="(function(el){const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
                  onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
@@ -5464,14 +5419,19 @@ async function sendText() {
     const input = document.getElementById('msg-input');
     const text  = (input?.value || '').trim();
     if (!text) return;
+    if (_sendInFlight) return;
+    const _sendNow = Date.now();
+    if (_lastSendSig.chatId === currentChatId && _lastSendSig.text === text && (_sendNow - _lastSendSig.ts) < 700) return;
+    _sendInFlight = true;
+    _lastSendSig = { chatId: currentChatId, text, ts: _sendNow };
 
     // Если чата ещё нет (первое сообщение после удаления или новый диалог) — создаём
     if (!currentChatId && currentPartnerId) {
         try {
             const r = await apiFetch(`/create_chat/${currentPartnerId}`, { method: 'POST' });
-            if (!r?.ok) { showToast('Ошибка создания чата', 'error'); return; }
+            if (!r?.ok) { showToast('Ошибка создания чата', 'error'); _sendInFlight = false; return; }
             const d = await r.json();
-            if (!d.chat_id) { showToast('Ошибка создания чата', 'error'); return; }
+            if (!d.chat_id) { showToast('Ошибка создания чата', 'error'); _sendInFlight = false; return; }
             currentChatId = d.chat_id;
             socket.emit('enter_chat', { chat_id: currentChatId });
             // Партнёр больше не "удалённый"
@@ -5483,11 +5443,12 @@ async function sendText() {
             _persistDeletedChatIds();
         } catch(e) {
             showToast('Нет соединения', 'error');
+            _sendInFlight = false;
             return;
         }
     }
 
-    if (!currentChatId) return;
+    if (!currentChatId) { _sendInFlight = false; return; }
 
     // ── Оптимистичный рендер (мгновенно) ──
     const tempMsg = {
@@ -5511,6 +5472,7 @@ async function sendText() {
         content:   text,
         type_msg:  'text',
         sender_id: currentUser.id,
+        client_msg_id: tempMsg.id,
     };
     if (wsConnected) {
         // OPT Task 5c: emit with ACK — server returns {ok, msg_id}
@@ -5525,18 +5487,14 @@ async function sendText() {
                     if (si) si.innerHTML = ICONS.check;
                 }
                 _setLastMsgId(currentChatId, ack.msg_id);
-                // FIX: update chat list immediately after send
-                _debouncedLoadChats();
-            } else if (err) {
-                // ACK timeout — message likely sent, refresh chat list
-                console.warn('[sendText] ACK timeout, refreshing chats');
-                _debouncedLoadChats();
             }
+            _sendInFlight = false;
         });
     } else {
         // Offline: store in IndexedDB queue, show ⏳ status
         _omqAdd({ tempId: tempMsg.id, chat_id: currentChatId, text, ts: Date.now() });
         showToast('Нет соединения — сообщение отправится когда появится сеть', 'warning', 4000);
+        _sendInFlight = false;
     }
     input.value = '';
     input.style.height = 'auto';
@@ -5544,7 +5502,7 @@ async function sendText() {
     vibrate(8);
     // BUG-J FIX: use scrollDown() which goes through VirtualList + clears badge
     _scrollUnread = 0;
-    scrollDown(false);  // false = instant (no animation for own messages)
+    scrollDown(true);  // true = smooth for nicer UX
 }
 
 function _nowMoscow() {
@@ -5560,8 +5518,13 @@ function _nowMoscow() {
 // ══════════════════════════════════════════════════════════
 // Глобальный дедупликатор сообщений — предотвращает дубли из chat_ и user_ rooms
 const _seenMsgIds = new Set();
+function _normMsgId(id) {
+    return (id === undefined || id === null) ? '' : String(id);
+}
 function _markMsgSeen(id) {
-    _seenMsgIds.add(id);
+    const key = _normMsgId(id);
+    if (!key) return;
+    _seenMsgIds.add(key);
     if (_seenMsgIds.size > 500) {
         // Чистим старые — берём первые 250 и удаляем
         const iter = _seenMsgIds.values();
@@ -5577,8 +5540,9 @@ function onNewMessage(msg) {
     if (msg.chat_id  && typeof _deletedChatIds    !== 'undefined' && _deletedChatIds.has(msg.chat_id))    return;
 
     // Глобальная защита от дублей (chat_ + user_ rooms шлют одно сообщение)
-    if (msg.id && _seenMsgIds.has(msg.id)) return;
-    if (msg.id) _markMsgSeen(msg.id);
+    const _mid = _normMsgId(msg.id);
+    if (_mid && _seenMsgIds.has(_mid)) return;
+    if (_mid) _markMsgSeen(_mid);
 
     // Проверяем: это сообщение для открытого чата?
     if (+msg.chat_id === currentChatId) {
@@ -5590,7 +5554,7 @@ function onNewMessage(msg) {
             });
         }
         // Защита от дублей в DOM
-        if (document.querySelector(`[data-msg-id="${msg.id}"]`)) return;
+        if (_mid && document.querySelector(`[data-msg-id="${CSS.escape(_mid)}"]`)) return;
 
         hideTypingIndicator();
         // FIX: preserve scroll if user is reading history (not at bottom)
@@ -5617,7 +5581,7 @@ function onNewMessage(msg) {
         if (messagesByChatCache[_ck] && !_deletedMsgIds.has(String(msg.id))) {
             // Avoid duplicates before pushing
             const _existing = messagesByChatCache[_ck].messages;
-            if (!_existing.some(m => m.id === msg.id)) {
+            if (!_existing.some(m => _normMsgId(m.id) === _mid)) {
                 messagesByChatCache[_ck].messages.push(msg);
             }
         }
@@ -8652,7 +8616,7 @@ function _setupMomentsPullDown() {
     mainContent.addEventListener('touchstart', (e) => {
         const chatSec = document.getElementById('chats-section');
         if (!chatSec?.contains(e.target)) return;
-        if (mainContent.scrollTop > 20) return;
+        if (mainContent.scrollTop > 5) return;
         _pullStart = e.touches[0].clientY;
         _pulling = true;
         _momentsShown = _momentsBarVisible;
@@ -8671,7 +8635,7 @@ function _setupMomentsPullDown() {
         ind.style.opacity = String(progress);
         ind.style.transform = `scaleX(${progress})`;
 
-        if (dy > 40 && !_momentsShown) {
+        if (dy > 60 && !_momentsShown) {
             _showMomentsBar();
             _momentsShown = true;
             vibrate(10);
@@ -11729,7 +11693,9 @@ async function answerIncomingCall() {
     document.getElementById('accept-btn').style.display = 'none';
     document.getElementById('call-status-label').textContent = 'Подключение...';
     _stopRingtone(); // FIX Task 4c: stop ringtone when answered
-    currentPartnerId = data.from; vibrate(30);
+    currentPartnerId = data.from;
+    currentCallId = data.call_id || currentCallId || ('c_' + Date.now());
+    vibrate(30);
     try {
         callLocalStream = await getLocalStream(currentCallType);
         if (currentCallType === 'video') showLocalVideo();
@@ -11739,7 +11705,7 @@ async function answerIncomingCall() {
         await flushPendingIce();
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-        socket.emit('answer_call', { to: data.from, answer });
+        socket.emit('answer_call', { to: data.from, answer, call_id: currentCallId });
     } catch(e) { showToast('Ошибка при ответе', 'error'); endCall(true); }
 }
 
@@ -11861,7 +11827,7 @@ async function doIceRestart() {
     try {
         const offer = await peerConnection.createOffer({ iceRestart: true });
         await peerConnection.setLocalDescription(offer);
-        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, offer, call_type: currentCallType, isRestart: true });
+        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, offer, call_type: currentCallType, isRestart: true, call_id: currentCallId });
     } catch(e) { console.error('ICE restart failed:', e); }
 }
 
@@ -11869,19 +11835,7 @@ function endCall(notify = true) {
     _stopRingtone(); // FIX Task 4c: stop ringtone on endCall
     clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
 
-    // Отправляем сообщение о звонке в чат
-    const duration = callStartTime ? Math.floor((Date.now() - callStartTime) / 1000) : 0;
-    if (currentChatId && currentPartnerId && duration > 0) {
-        const callMsgType = currentCallType === 'video' ? 'call_video' : 'call_audio';
-        socket.emit('send_message', {
-            chat_id:   currentChatId,
-            type_msg:  callMsgType,
-            content:   String(duration),
-            sender_id: currentUser.id,
-        });
-    }
-
-    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId });
+    if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId, call_id: currentCallId });
     if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
     if (callLocalStream) { callLocalStream.getTracks().forEach(t => t.stop()); callLocalStream = null; }
     // Очищаем remote audio
@@ -11913,6 +11867,7 @@ function endCall(notify = true) {
     const _chatId      = _getOrCreateChatIdWith(_partnerId);
 
     callStartTime = null;
+    currentCallId = null;
     incomingCallData = null; pendingIce = []; isMuted = false; isVideoOff = false;
     clearTimeout(_callCtrlHideTimer);
     clearTimeout(window._incomingCallTimeout);
@@ -11928,6 +11883,7 @@ function endCall(notify = true) {
             type_msg: 'call_' + _wasType,
             content:  _callLabel,
             sender_id: currentUser.id,
+            client_msg_id: 'calllog_' + Date.now() + '_' + Math.random().toString(36).slice(2,8),
         });
     }
 }
@@ -12180,6 +12136,7 @@ async function onIceCandidate(data) {
 
 function onIncomingCall(data) {
     incomingCallData = data;
+    currentCallId = data.call_id || currentCallId || ('c_' + Date.now());
     pendingIce = [];
     currentCallType = data.call_type || 'audio';
     vibrate([400,200,400,200,400]);
@@ -12686,6 +12643,7 @@ async function startCall(type) {
     vibrate(50);
     setupCallScreen(type, false);
     pendingIce = [];
+    currentCallId = 'c_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
     _speakerOn = true;
     try {
         callLocalStream = await getLocalStream(type);
@@ -12694,7 +12652,7 @@ async function startCall(type) {
         callLocalStream.getTracks().forEach(t => peerConnection.addTrack(t, callLocalStream));
         const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
         await peerConnection.setLocalDescription(offer);
-        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type });
+        socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type, call_id: currentCallId });
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
