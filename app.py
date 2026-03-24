@@ -3078,6 +3078,9 @@ def create_moment():
 # Tracks active calls so we can detect missed/dropped calls
 # Structure: call_id → {from_id, to_id, type, ts, state}
 _active_calls = {}
+# Client-side idempotency for message sends:
+# key: (uid, client_msg_id) -> {'msg_id': int, 'ts': monotonic}
+_recent_client_msgs = {}
 
 def _call_cleanup_task():
     """Background: auto-expire calls older than 60s with no state change"""
@@ -3287,6 +3290,13 @@ def handle_msg(data):
         return
 
     sender_dict = get_cached_user_dict(uid)  # нужен для аватарки в push
+    client_msg_id = str(data.get('client_msg_id') or '').strip()[:120]
+    if client_msg_id:
+        _key = (uid, client_msg_id)
+        _now = time.monotonic()
+        _hit = _recent_client_msgs.get(_key)
+        if _hit and (_now - _hit.get('ts', 0) < 120):
+            return {'ok': True, 'msg_id': _hit.get('msg_id')}
 
     msg_type = data.get('type_msg') or data.get('type', 'text')
     if msg_type == 'send_message':
@@ -3307,6 +3317,14 @@ def handle_msg(data):
     )
     db.session.add(msg)
     db.session.commit()
+    if client_msg_id:
+        _recent_client_msgs[(uid, client_msg_id)] = {'msg_id': msg.id, 'ts': time.monotonic()}
+        # tiny cleanup to keep dict bounded
+        if len(_recent_client_msgs) > 5000:
+            _now2 = time.monotonic()
+            stale = [k for k, v in list(_recent_client_msgs.items()) if _now2 - v.get('ts', 0) > 180]
+            for k in stale[:2000]:
+                _recent_client_msgs.pop(k, None)
 
     _chat_cache.delete(uid)
     payload = msg.to_dict()
@@ -3366,8 +3384,10 @@ def handle_msg(data):
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
                             threading.Thread(target=send_push_to_user, args=(uid_int, uname, push_preview, chat_id, _sender_ava), daemon=True).start()
                     else:
-                        # Отправителю тоже шлём в user_ room — для обновления его списка чатов
-                        emit('new_message', payload, room=f'user_{uid_str}')
+                        # Не шлём в тот же sid, чтобы не было дубля в открытом чате.
+                        # Другие устройства отправителя всё равно получат user_ событие.
+                        emit('new_message', payload, room=f'user_{uid_str}',
+                             skip_sid=request.sid if hasattr(request, 'sid') else None)
 
     # FIX Task 5c: return ACK with real msg_id so client can replace optimistic
     return {'ok': True, 'msg_id': msg.id}
@@ -3709,7 +3729,7 @@ def handle_end_call(data):
         except Exception as e:
             app.logger.error(f'missed call msg error: {e}')
             db.session.rollback()
-    emit('call_ended', {'from': uid}, room=f'user_{to}')
+    emit('call_ended', {'from': uid, 'call_id': call_id}, room=f'user_{to}')
 
 # ══════════════════════════════════════════════════════════
 #  ФОНОВАЯ ОЧИСТКА
