@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <!-- FIX: interactive-widget=resizes-content prevents iOS keyboard from
          pushing the whole page up (use visualViewport instead) -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content, minimal-ui">
     <title>WayChat</title>
 
     <link rel="apple-touch-icon" href="/static/logo.png">
@@ -35,18 +35,24 @@
             -webkit-tap-highlight-color: transparent;
         }
 
-        /* FIX: убран position:fixed на html/body — ломает PWA на iOS.
-           Telegram больше так не делает. */
-        html, body {
-            height: 100%;
-            width: 100%;
+        /* FIX SAFARI PANELS: position:fixed on html+body locks the viewport.
+           This is exactly what Telegram Web and WhatsApp do.
+           Without this, Safari's bottom toolbar creates a black gap. */
+        html {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            overflow: hidden;
             background: #1d1d1e;
             overscroll-behavior: none;
         }
 
         body {
-            position: relative;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             overflow: hidden;
+            background: #1d1d1e;
             color: #fff;
             font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
                          "Helvetica Neue", Arial, sans-serif;
@@ -54,23 +60,27 @@
             text-size-adjust: 100%;
             -webkit-font-smoothing: antialiased;
             touch-action: manipulation;
-            /* FIXED: safe-area только в input-bar, не здесь */
+            /* Kill bounce scroll that reveals black background */
+            overscroll-behavior: none;
+            -webkit-overflow-scrolling: auto;
         }
 
-        /* #root: высота через --app-height (JS visualViewport) */
+        /* #root: fills entire fixed viewport — no gaps, no panels */
         #root {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
             width: 100%;
-            height: var(--app-height, 100dvh);
+            height: 100%;
             background: #1d1d1e;
             display: flex;
             flex-direction: column;
             overflow: hidden;
-            /* FIXED: убран padding-bottom — тройной safe-area вызывал серую полосу */
         }
 
-        /* Fallback для браузеров без dvh */
-        @supports not (height: 100dvh) {
-            #root { height: 100vh; }
+        /* Fallback for non-fixed-position browsers */
+        @supports not (position: fixed) {
+            html, body { height: 100dvh; }
+            #root { height: 100dvh; position: relative; }
         }
 
         /* ── Splash screen ── */
@@ -172,21 +182,33 @@
         .border-white\/5  { border-color: rgba(255,255,255,0.05); }
         .cursor-pointer { cursor: pointer; }
 
-        /* ══ SAFE AREA FIX — убиваем серую полосу снизу на iPhone ══════
-           Причина: main.js добавляет padding-bottom: env(safe-area-inset-bottom)
-           к оберткам. Здесь глобально зануляем на уровне корневых контейнеров.
-           Только input-bar получает safe-area через свой собственный CSS. */
+        /* ══ SAFARI BLACK PANEL NUCLEAR FIX ══════════════════════════════
+           With position:fixed on html+body, Safari toolbar can't push content.
+           But we still kill any padding that might cause gaps. */
         #root,
         #root > div,
         #root > div > div {
             padding-bottom: 0 !important;
+            margin-bottom: 0 !important;
         }
-        /* Если input-bar единственный элемент которому нужен safe-area —
+
+        /* Ensure background is consistent everywhere — no black leaks */
+        #root * {
+            background-color: inherit;
+        }
+        /* Reset to transparent for content elements */
+        #root p, #root span, #root a, #root button,
+        #root input, #root textarea, #root img, #root svg {
+            background-color: transparent;
+        }
+
+        /* If input-bar единственный элемент которому нужен safe-area —
            он сам прописывает его внутри. Всё остальное — 0. */
         body::after {
             display: none !important;
             content: none !important;
         }
+
         /* Убиваем любой element с классом safe-area или bottom-bar кроме input */
         [class*="safe-area"]:not([class*="input"]),
         [class*="bottom-bar"]:not([class*="input"]),
@@ -195,10 +217,7 @@
             padding-bottom: 0 !important;
             margin-bottom: 0 !important;
         }
-        /* Тотальное обнуление safe-area-inset на #root потомках */
-        #root * {
-            padding-bottom: revert;
-        }
+
         /* Финальный override только для #root прямых детей (screens/views) */
         #root > [class] {
             padding-bottom: 0 !important;
@@ -253,8 +272,44 @@
             background: transparent !important;
         }
     </style>
+    <!-- FIX SAFARI PANELS: Force full-viewport lock before any JS runs -->
+    <style>
+        /* Emergency override — Safari bottom toolbar bleed-through killer */
+        html, body {
+            /* Prevent any scroll that would reveal black areas */
+            position: fixed !important;
+            overflow: hidden !important;
+            /* Match app background everywhere */
+            background-color: #1d1d1e !important;
+        }
+        /* Kill the black "safe area" padding added by some iOS versions */
+        body::before, body::after {
+            display: none !important;
+        }
+        /* Ensure #root takes 100% of the fixed viewport */
+        #root {
+            position: fixed !important;
+            top: 0 !important;
+            left: 0 !important;
+            right: 0 !important;
+            bottom: 0 !important;
+            /* No height dependency on 100dvh / var(--app-height) needed
+               because position:fixed + inset:0 already fills exactly */
+            height: 100% !important;
+            background-color: #1d1d1e !important;
+            /* Prevent any rubber-band bounce */
+            overscroll-behavior: none !important;
+        }
+        /* PWA mode: status bar area is part of viewport, keep dark */
+        @media (display-mode: standalone) {
+            html, body, #root {
+                padding-top: 0 !important;
+                /* In PWA the safe-area-inset-top is handled by the app header */
+            }
+        }
+    </style>
 </head>
-<body>
+<body style="overscroll-behavior:none;touch-action:pan-x pan-y;">
 
 <div id="splash">
     <div id="splash-logo-wrap">
@@ -292,27 +347,43 @@ window.currentUser = {{ {
 (function () {
     'use strict';
 
-    // ── 1. Dynamic viewport height fix (iOS Safari) ──────────────────────
-    // FIX 6b/6d: Use visualViewport API — the only reliable way to get true
-    // viewport height on iOS when keyboard is open. Stores in --app-height CSS var.
-    // DO NOT use window.scrollTo or scrollIntoView inside this handler.
+    // ── 1. Viewport height fix (iOS Safari) ─────────────────────────────
+    // FIX SAFARI PANELS: With position:fixed on html+body, we use innerHeight.
+    // visualViewport shrinks when keyboard opens — we handle that separately.
+    // The --app-height is only needed for legacy code that still references it.
     function setAppHeight() {
-        var h = window.visualViewport
-            ? window.visualViewport.height
-            : window.innerHeight;
+        var h = window.innerHeight;
         document.documentElement.style.setProperty('--app-height', h + 'px');
+        document.documentElement.style.setProperty('--vh', h + 'px');
+        document.documentElement.style.setProperty('--dvh', (h * 0.01) + 'px');
     }
     setAppHeight();
 
+    // Re-calculate on resize (orientation change, keyboard)
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', setAppHeight, { passive: true });
-        window.visualViewport.addEventListener('scroll', setAppHeight, { passive: true });
     }
     window.addEventListener('resize', setAppHeight, { passive: true });
     window.addEventListener('orientationchange', function() {
-        // FIX: delay needed on iOS — height not updated immediately after rotation
-        setTimeout(setAppHeight, 150);
+        setTimeout(setAppHeight, 200);
+        setTimeout(setAppHeight, 500);
     }, { passive: true });
+
+    // FIX SAFARI SCROLL-BOUNCE: kill touchmove on body to prevent black reveal
+    document.addEventListener('touchmove', function(e) {
+        // Allow scrolling inside scrollable elements
+        var el = e.target;
+        while (el && el !== document.body) {
+            var style = window.getComputedStyle(el);
+            var overflow = style.overflow + style.overflowY;
+            if (overflow.includes('scroll') || overflow.includes('auto')) return;
+            el = el.parentElement;
+        }
+        // Only prevent on body-level
+        if (e.target === document.body || e.target === document.documentElement) {
+            e.preventDefault();
+        }
+    }, { passive: false });
 
     // ── 2. Tailwind CDN REMOVED — caused thousands of padding JS errors
 
