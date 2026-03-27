@@ -227,8 +227,8 @@ const WCCache = (() => {
             outline: none !important;
             box-shadow: none !important;
         }
-        /* Input bar — прозрачный floating (основные стили уже выше в этом блоке) */
-        .input-bar { border: none !important; }
+        /* Input bar — прозрачный floating */
+        .input-bar { border: none !important; padding-bottom: max(env(safe-area-inset-bottom, 14px), 14px) !important; }
         /* iOS: минимум 16px предотвращает авто-зум при фокусе */
         input, textarea, select { font-size: max(16px, 1em) !important; }
         body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -309,7 +309,13 @@ const VirtualList=(()=>{
         if(!el||!ms.length)return;ns=Math.max(0,ns);ne=Math.min(ms.length,ne);if(ns===s&&ne===e)return;
         let an=null,of=0;if(ks){an=el.querySelector('[data-vi]');if(an)of=an.getBoundingClientRect().top;}
         const f=document.createDocumentFragment();let ld2=ld(ns);
-        for(let i=ns;i<ne;i++){const m=ms[i],d=getMessageDate(m);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);ld2=d;}const r=buildMessageRow(m,false);r.dataset.vi=i;f.appendChild(r);}
+        for(let i=ns;i<ne;i++){const m=ms[i],d=getMessageDate(m);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);ld2=d;}
+          // Grouped bubble metadata
+          const prevM=i>0?ms[i-1]:null,nextM=i<ms.length-1?ms[i+1]:null;
+          const samePrev=prevM&&prevM.sender_id===m.sender_id&&getMessageDate(prevM)===getMessageDate(m);
+          const sameNext=nextM&&nextM.sender_id===m.sender_id&&getMessageDate(nextM)===getMessageDate(m);
+          m._grpFirst=!samePrev;m._grpLast=!sameNext;m._grpMid=samePrev&&sameNext;
+          const r=buildMessageRow(m,false);r.dataset.vi=i;f.appendChild(r);}
         el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());ts.after(f);s=ns;e=ne;msr();phs();
         if(ks&&an){const na=el.querySelector('[data-vi="'+s+'"]');if(na)el.scrollTop+=na.getBoundingClientRect().top-of;}
     }
@@ -346,7 +352,13 @@ const VirtualList=(()=>{
             // Dedup by real id
             if(ms.some(function(m){return String(m.id)===String(msg.id);}))return;
         }
-        ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120; // FIX Task 2a: 120px threshold
+        ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120;
+    // Set grouping flags on append
+    const _prev=idx>0?ms[idx-1]:null;
+    const _samePrev=_prev&&_prev.sender_id===msg.sender_id&&getMessageDate(_prev)===getMessageDate(msg);
+    msg._grpFirst=!_samePrev;msg._grpLast=true;msg._grpMid=false;
+    // Update previous message's _grpLast=false if same sender
+    if(_samePrev){_prev._grpLast=false;_prev._grpMid=_prev._grpFirst===false;} // FIX Task 2a: 120px threshold
     if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
         if(ab){
             // FIX Task 2a: user near bottom — auto scroll
@@ -366,7 +378,14 @@ const VirtualList=(()=>{
         const existIds = new Set(ms.map(m => m.id));
         arr = arr.filter(m => !existIds.has(m.id));
         if(!arr.length) return;
-        ms=[...arr,...ms];const nh=new Map();hc.forEach((v,k)=>nh.set(k+arr.length,v));hc=nh;s+=arr.length;e+=arr.length;const ph=el.scrollHeight;win(Math.max(0,s-arr.length),e,false);requestAnimationFrame(()=>{el.scrollTop+=el.scrollHeight-ph;});}
+        ms=[...arr,...ms];
+        // Shift height cache safely
+        const nh=new Map();hc.forEach((v,k)=>{if(typeof k==='number')nh.set(k+arr.length,v);});hc=nh;
+        s+=arr.length;e+=arr.length;
+        const ph=el.scrollHeight;
+        win(Math.max(0,s-arr.length),e,false);
+        // Maintain scroll position after prepend (no jump)
+        requestAnimationFrame(()=>{ if(el) el.scrollTop+=el.scrollHeight-ph; });}
     function toBottom(a){if(!el)return;a?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):(el.scrollTop=el.scrollHeight);
         // FIX SCROLL-BTN: force-hide button instantly after scrolling to bottom
         requestAnimationFrame(function(){_scrollAtBottom=true;_scrollUnread=0;_updateScrollBtn(el);});}
@@ -502,7 +521,7 @@ function _updateScrollBtn(el) {
     var distFromBottom = el
         ? Math.max(0, (el.scrollHeight - el.scrollTop - el.clientHeight))
         : 0;
-    var show = distFromBottom > 120;
+    var show = distFromBottom > 60;
 
     // OPT: only mutate style when state changes
     if (show) {
@@ -1402,6 +1421,10 @@ function initSocket() {
 
     // ── Новый момент ──
     socket.on('new_moment', (d) => {
+        if (d.preview_url !== undefined && momentsCache) {
+            const existing = momentsCache.find(m => m.id === d.moment_id);
+            if (existing && !existing.preview_url) existing.preview_url = d.preview_url;
+        }
         onNewMomentSocket(d);
     });
 
@@ -1979,7 +2002,7 @@ body {
 .ava-pulse-anim{animation:avaPulse 0.4s cubic-bezier(0.34,1.56,0.64,1)}
 
 /* ЧАТ ОКНО — плавное открытие как в TG */
-.chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform; }
+.chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform;-webkit-backface-visibility:hidden;backface-visibility:hidden; }
 .chat-view.active { transform:translateX(0); }
 .chat-wallpaper{
     background-color: #1a1a2e;
@@ -2018,7 +2041,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { padding:8px 12px;border:none !important;background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none; }
+.input-bar { padding:8px 12px 0;border:none !important;background:transparent; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
@@ -2028,6 +2051,36 @@ body {
 .send-btn:active { transform:scale(0.88); }
 .icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
 .icon-btn:active { background:rgba(255,255,255,0.14); }
+
+
+/* ── GROUPED BUBBLES — Telegram style ── */
+/* mid + first shrink top margin; last + mid shrink bottom */
+.msg-row.grp-first  { margin-bottom: 1px !important; }
+.msg-row.grp-mid    { margin-top: 1px !important; margin-bottom: 1px !important; }
+.msg-row.grp-last   { margin-top: 1px !important; }
+
+/* Outgoing grouped — adjust corner radii like Telegram */
+.msg-row.out.grp-first  .bubble { border-radius: 22px 22px 6px 22px !important; }
+.msg-row.out.grp-mid    .bubble { border-radius: 22px 6px 6px 22px !important; }
+.msg-row.out.grp-last   .bubble { border-radius: 22px 6px 22px 22px !important; }
+
+/* Incoming grouped */
+.msg-row.in.grp-first  .bubble { border-radius: 22px 22px 22px 6px !important; }
+.msg-row.in.grp-mid    .bubble { border-radius: 6px 22px 22px 6px !important; }
+.msg-row.in.grp-last   .bubble { border-radius: 6px 22px 22px 22px !important; }
+
+/* Smooth message entry animation */
+@keyframes msgSlideIn {
+    from { opacity: 0; transform: translateY(6px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-msg { animation: msgSlideIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* Video message poster placeholder */
+.video-bubble-wrap { overflow:hidden;border-radius:14px;max-width:260px;background:#111;position:relative;border:none; }
+.video-bubble-wrap video { display:block;width:100%;max-height:380px;object-fit:cover;border:none;outline:none; }
+.video-play-overlay { position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none; }
+.video-play-btn { width:56px;height:56px;border-radius:50%;background:rgba(0,0,0,0.55);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center; }
 
 /* ── v9.0: ВРЕМЯ INLINE как в Telegram ── */
 .msg-time { display:none !important; }
@@ -2159,7 +2212,24 @@ body {
 
 /* ПРОФИЛЬ ПАРТНЁРА */
 .partner-profile-overlay { position:fixed;inset:0;z-index:5500;background:#0f0f0f;display:flex;flex-direction:column;overflow-y:auto;animation:slideUp 0.28s cubic-bezier(.4,0,.2,1); }
-@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} } @keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}} .skeleton-shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.04) 0%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 100%);background-size:400px 100%;animation:shimmer 1.6s infinite linear}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}} @keyframes slideUp { from{transform:translateY(100%);} to{transform:translateY(0);} } @keyframes shimmer{0%{background-position:-400px 0}100%{background-position:400px 0}}
+/* Image skeleton placeholder */
+.wc-img-sk {
+    position:absolute;inset:0;
+    background: linear-gradient(90deg,
+        rgba(255,255,255,0.04) 0%,
+        rgba(255,255,255,0.09) 50%,
+        rgba(255,255,255,0.04) 100%);
+    background-size: 400px 100%;
+    animation: shimmer 1.6s infinite linear;
+    border-radius: 14px;
+    min-height: 120px;
+}
+ 
+/* typing-wrap: transparent, no grey bar */
+.typing-wrap { background: transparent !important; border-top: none !important; }
+
+.skeleton-shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.04) 0%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 100%);background-size:400px 100%;animation:shimmer 1.6s infinite linear}
 
 /* КОНТАКТЫ */
 .contact-item { display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:16px;cursor:pointer;transition:background 0.15s; }
@@ -2284,6 +2354,22 @@ body {
     #chat-header {
         padding-top: 10px !important;
     }
+
+    
+/* Desktop 2-column layout stability */
+@media (min-width: 768px) {
+    #main-content {
+        min-width: 280px !important;
+        max-width: 360px !important;
+    }
+    #chat-window {
+        flex: 1;
+        position: relative !important;
+        transform: none !important;
+        left: auto !important; right: auto !important;
+        top: auto !important; bottom: auto !important;
+    }
+}
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
     .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
@@ -2747,7 +2833,7 @@ body {
         </div>
     </div>
     <div id="messages" class="flex-1 chat-wallpaper msg-container"></div>
-    <div id="typing-wrap" class="typing-wrap glass" style="padding:6px 16px 8px;border-top:0.5px solid var(--border)">
+    <div id="typing-wrap" class="typing-wrap" style="padding:4px 16px 6px;border-top:none;background:transparent">
         <div class="typing-bubble">
             <div class="dot"></div><div class="dot"></div><div class="dot"></div>
         </div>
@@ -3569,13 +3655,54 @@ function updatePartnerOnlineStatus(userId, isOnline) {
 // ══════════════════════════════════════════════════════════
 //  API FETCH
 // ══════════════════════════════════════════════════════════
+
+// ── Global loading progress bar ──
+(function _injectTopBar() {
+    const _doInject = () => {
+        if (document.getElementById('wc-top-bar')) return;
+        const bar = document.createElement('div');
+        bar.id = 'wc-top-bar';
+        (document.body || document.documentElement).insertBefore(bar, (document.body || document.documentElement).firstChild);
+    };
+    if (document.body) _doInject();
+    else document.addEventListener('DOMContentLoaded', _doInject, { once: true });
+})();
+window.wcProgress = {
+    _t: null,
+    start() {
+        const b = document.getElementById('wc-top-bar');
+        if (!b) return;
+        clearTimeout(this._t);
+        b.style.transform = 'scaleX(0.3)';
+        b.classList.add('active');
+    },
+    set(pct) {
+        const b = document.getElementById('wc-top-bar');
+        if (!b) return;
+        b.style.transform = `scaleX(${Math.min(pct / 100, 0.95)})`;
+    },
+    done() {
+        const b = document.getElementById('wc-top-bar');
+        if (!b) return;
+        b.style.transform = 'scaleX(1)';
+        this._t = setTimeout(() => {
+            b.classList.remove('active');
+            b.style.transform = 'scaleX(0)';
+        }, 350);
+    },
+};
+
 async function apiFetch(url, options = {}, _retry = 0) {
+    // Show progress bar for non-background calls (skip polling/heartbeat)
+    const _isQuiet = url.includes('/heartbeat') || url.includes('/mark_read');
+    if (!_isQuiet) wcProgress?.start();
     const headers = { ...(options.headers || {}) };
     const controller = new AbortController();
     const tid = setTimeout(() => controller.abort(), 15000); // 15s таймаут
     try {
         const res = await fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal });
         clearTimeout(tid);
+        if (!_isQuiet) wcProgress?.done();
         if (res.status === 401 || (res.redirected && res.url.includes('/login'))) {
             location.href = '/login';
             return null;
@@ -3588,6 +3715,7 @@ async function apiFetch(url, options = {}, _retry = 0) {
         return res;
     } catch(e) {
         clearTimeout(tid);
+        if (!_isQuiet) wcProgress?.done();
         if (e.name === 'AbortError') console.warn('apiFetch timeout:', url);
         return null;
     }
@@ -4230,7 +4358,12 @@ function buildMessageRow(msg, animate = true) {
     const isMe = msg.sender_id === currentUser.id;
     const type = msg.type || msg.type_msg || 'text';
     const row  = document.createElement('div');
-    row.className = `msg-row ${isMe ? 'out' : 'in'}`;
+    const _grpFirst = msg._grpFirst !== false;
+    const _grpLast  = msg._grpLast  !== false;
+    const _grpMid   = msg._grpMid   === true;
+    // Grouped bubble class suffixes
+    const _gcls = _grpFirst && _grpLast ? '' : _grpFirst ? ' grp-first' : _grpLast ? ' grp-last' : ' grp-mid';
+    row.className = `msg-row ${isMe ? 'out' : 'in'}${_gcls}`;
     // OPT Task 2c: content-visibility:auto defers paint for off-screen messages
     row.style.contentVisibility = 'auto';
     row.style.containIntrinsicSize = '0 72px'; // estimated height hint
@@ -4371,11 +4504,18 @@ function buildMessageRow(msg, animate = true) {
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
     } else if (type === 'video') {
-        // FIXED: preload=metadata для мгновенного thumb, controls видны сразу
-        contentHtml = `<div style="overflow:hidden;border-radius:14px;max-width:260px;background:transparent;position:relative;border:none">
-            <video src="${msg.file_url}" controls playsinline preload="metadata"
-                   style="display:block;width:100%;max-height:380px;object-fit:cover;border:none;outline:none"
+        // Poster: use preview_url if present (thumbnail extracted on sender side)
+        const _vposter = msg.preview_url ? `poster="${msg.preview_url}"` : '';
+        const _vidId   = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
+        contentHtml = `<div class="video-bubble-wrap" onclick="(function(w){const v=document.getElementById('${_vidId}');if(v){v.controls=true;v.play();const ov=w.querySelector('.video-play-overlay');if(ov)ov.style.display='none';}})(this)" style="cursor:pointer">
+            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="metadata"
+                   style="display:block;width:100%;max-height:380px;object-fit:cover"
                    onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
+            <div class="video-play-overlay">
+                <div class="video-play-btn">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </div>
+            </div>
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
     } else if (type === 'file' || type === 'document') {
@@ -4411,9 +4551,13 @@ function buildMessageRow(msg, animate = true) {
         contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5;overflow:hidden">${_timeFloat}${linked}</div>`;
     }
 
+    // Grouped: hide avatar for non-last messages; name only on first
+    const _showAvatar = !isMe && _grpLast;
+    const _showName   = !isMe && _grpFirst;
+
     // Аватар — кэшированный, для групп берём по sender_id
     let avatarHtml = '';
-    if (!isMe) {
+    if (!isMe && _showAvatar) {
         const avatarUserId = currentChatType === 'group' ? msg.sender_id : currentPartnerId;
         const cachedSrc = chatPartnerAvatarSrc[avatarUserId];
         if (cachedSrc && !cachedSrc.startsWith('data:')) {
@@ -4437,9 +4581,14 @@ function buildMessageRow(msg, animate = true) {
         }
     }
 
-    // Для группового чата — показываем имя отправителя
+    // Placeholder to preserve bubble indent when avatar is hidden (grouped)
+    if (!isMe && !_showAvatar) {
+        avatarHtml = '<div style="width:32px;flex-shrink:0"></div>';
+    }
+
+    // Для группового чата — показываем имя отправителя (only on first in group)
     let senderNameHtml = '';
-    if (!isMe && currentChatType === 'group' && msg.sender_name) {
+    if (!isMe && _showName && currentChatType === 'group' && msg.sender_name) {
         senderNameHtml = `<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:3px">${msg.sender_name}</div>`;
     }
 
@@ -7802,12 +7951,50 @@ async function pickMedia(context) {
 }
 
 // ── Редактор момента: превью + перетаскиваемая гео-метка ──
-let _meFile = null, _meGeo = null;
+let _meFile = null, _meGeo = null, _meThumbnailBlob = null;
+
+/**
+ * Extract a single frame from a video file as a JPEG Blob.
+ * Works in all modern browsers via HTMLVideoElement + Canvas.
+ */
+function _extractVideoThumbnail(file) {
+    return new Promise((resolve) => {
+        try {
+            const blobUrl = URL.createObjectURL(file);
+            const vid = document.createElement('video');
+            vid.muted = true;
+            vid.playsInline = true;
+            vid.preload = 'metadata';
+            vid.src = blobUrl;
+            const cleanup = () => { URL.revokeObjectURL(blobUrl); vid.remove(); };
+            vid.onloadeddata = () => {
+                vid.currentTime = Math.min(0.5, vid.duration * 0.1);
+            };
+            vid.onseeked = () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    canvas.width  = Math.min(vid.videoWidth,  640);
+                    canvas.height = Math.min(vid.videoHeight, 640);
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+                    canvas.toBlob((blob) => { cleanup(); resolve(blob); }, 'image/jpeg', 0.82);
+                } catch(e) { cleanup(); resolve(null); }
+            };
+            vid.onerror = () => { cleanup(); resolve(null); };
+            setTimeout(() => { cleanup(); resolve(null); }, 8000);
+        } catch(e) { resolve(null); }
+    });
+}
 
 function _showMomentEditor(file) {
-    _meFile = file; _meGeo = null;
+    _meFile = file; _meGeo = null; _meThumbnailBlob = null;
     const isVid = file.type.startsWith('video');
     const url   = URL.createObjectURL(file);
+
+    // Pre-extract thumbnail for video in background
+    if (isVid) {
+        _extractVideoThumbnail(file).then(blob => { _meThumbnailBlob = blob; });
+    }
 
     const ov = document.createElement('div');
     ov.id = 'me-ov';
@@ -8123,6 +8310,23 @@ function _renderMomentsTab() {
             isNew, 62
         );
 
+        // thumbnail preview strip (up to 3 moments)
+        const thumbsDiv = document.createElement('div');
+        thumbsDiv.style.cssText = 'display:flex;gap:4px;flex-shrink:0;margin-left:auto';
+        userMoments.slice(0, 3).forEach(m => {
+            const thumb = document.createElement('div');
+            const isVideo = m.media_url && /\.(mp4|mov|webm|m4v)/i.test(m.media_url);
+            const thumbSrc = m.preview_url || (isVideo ? '' : m.media_url);
+            thumb.style.cssText = 'width:42px;height:42px;border-radius:10px;overflow:hidden;background:#222;flex-shrink:0;position:relative';
+            if (thumbSrc) {
+                thumb.innerHTML = `<img src="${thumbSrc}" style="width:100%;height:100%;object-fit:cover" loading="lazy" onerror="this.style.display='none'">`;
+            }
+            if (isVideo) {
+                thumb.innerHTML += '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center"><div style="width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center"><svg width="9" height="9" viewBox="0 0 12 12"><polygon points="2 1 11 6 2 11" fill="white"/></svg></div></div>';
+            }
+            thumbsDiv.appendChild(thumb);
+        });
+
         const infoDiv = document.createElement('div');
         infoDiv.style.cssText = 'flex:1;min-width:0';
         infoDiv.innerHTML = `
@@ -8130,12 +8334,14 @@ function _renderMomentsTab() {
                 ${isMe ? 'Мой момент' : escHtml(first.user_name || '')}
                 ${isNew ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#10b981;margin-left:6px;vertical-align:middle"></span>' : ''}
             </div>
-            <div style="font-size:12px;color:var(--text-2);margin-top:2px">
+            <div style="font-size:12px;color:var(--text-2);margin-top:2px;display:flex;align-items:center;gap:4px">
+                ${userMoments.some(m => m.media_url && /\.(mp4|mov|webm)/i.test(m.media_url)) ? '🎥' : userMoments.some(m => m.media_url) ? '📸' : '💬'}
                 ${userMoments.length > 1 ? userMoments.length + ' моментов · ' : ''}${first.timestamp || ''}
             </div>`;
 
         row.appendChild(avaDiv);
         row.appendChild(infoDiv);
+        row.appendChild(thumbsDiv);
         row.onclick = () => openUserMomentsViewer(uid);
         row.addEventListener('touchend', (e) => { e.preventDefault(); openUserMomentsViewer(uid); }, { passive: false });
         container.appendChild(row);
@@ -8149,7 +8355,10 @@ function _renderUploadingCard(container) {
     card.style.cssText = 'display:flex;align-items:center;gap:16px;padding:14px 16px;background:rgba(16,185,129,0.06);border:1px solid rgba(16,185,129,0.18);border-radius:20px;margin:8px 16px 4px;animation:fadeIn 0.3s ease';
 
     const isVid = _momentUploadFile?.type.startsWith('video');
-    const previewUrl = _momentUploadPreviewUrl || '';
+    // Use extracted thumbnail for video if available
+    const previewUrl = _meThumbnailBlob
+        ? URL.createObjectURL(_meThumbnailBlob)
+        : (_momentUploadPreviewUrl || '');
 
     const C = (2 * Math.PI * 22).toFixed(2);
     card.innerHTML = `
@@ -8220,42 +8429,74 @@ async function _publishMomentEditor(ov, file, url) {
         _updateUploadProgress(Math.min(Math.round(pct), 82));
     }, 250);
 
-    try {
+    // Build FormData (include thumbnail blob if available)
+    const _buildMomentFD = async () => {
         const fd = new FormData();
         fd.append('file', file);
         if (caption) fd.append('text', caption);
         if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
+        // Attach thumbnail: if not yet ready for video, try to capture now
+        let thumbBlob = _meThumbnailBlob;
+        if (!thumbBlob && file.type.startsWith('video')) {
+            thumbBlob = await _extractVideoThumbnail(file).catch(() => null);
+        }
+        if (thumbBlob) fd.append('preview', thumbBlob, 'thumb.jpg');
+        return fd;
+    };
 
-        const uploadResult = await new Promise((resolve) => {
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/create_moment', true);
-            xhr.withCredentials = true;
-            xhr.upload.onprogress = (ev) => {
-                if (ev.lengthComputable) {
-                    clearInterval(timer);
-                    _updateUploadProgress(Math.round((ev.loaded / ev.total) * 95));
-                }
-            };
-            xhr.onload = () => {
+    const _doUpload = (fd) => new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/create_moment', true);
+        xhr.withCredentials = true;
+        xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable) {
                 clearInterval(timer);
-                _updateUploadProgress(100);
-                try { const d = JSON.parse(xhr.responseText); resolve({ ok: !!d.success }); }
-                catch(e) { resolve({ ok: xhr.status >= 200 && xhr.status < 300 }); }
-            };
-            xhr.onerror = () => { clearInterval(timer); resolve({ ok: false }); };
-            xhr.timeout = 90000;
-            xhr.ontimeout = () => { clearInterval(timer); resolve({ ok: false }); };
-            xhr.send(fd);
-        });
+                _updateUploadProgress(Math.round((ev.loaded / ev.total) * 95));
+            }
+        };
+        xhr.onload = () => {
+            clearInterval(timer);
+            _updateUploadProgress(100);
+            try {
+                const d = JSON.parse(xhr.responseText);
+                resolve({ ok: !!d.success, data: d });
+            } catch(e) {
+                resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: {} });
+            }
+        };
+        xhr.onerror   = () => { clearInterval(timer); resolve({ ok: false, data: {} }); };
+        xhr.timeout   = 120000;
+        xhr.ontimeout = () => { clearInterval(timer); resolve({ ok: false, data: {} }); };
+        xhr.send(fd);
+    });
 
-        await new Promise(res => setTimeout(res, 350));
-        showToast(uploadResult.ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки — попробуй ещё раз', uploadResult.ok ? 'success' : 'error');
-
+    const MAX_RETRIES = 3;
+    let uploadResult = { ok: false };
+    try {
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const fd = await _buildMomentFD();
+                uploadResult = await _doUpload(fd);
+                if (uploadResult.ok) break;
+                if (attempt < MAX_RETRIES) {
+                    _updateUploadProgress(0);
+                    const delay = attempt * 1500;
+                    console.warn(`[moment] attempt ${attempt} failed, retry in ${delay}ms`);
+                    await new Promise(res => setTimeout(res, delay));
+                }
+            } catch(attemptErr) {
+                console.error(`[moment] attempt ${attempt} error:`, attemptErr);
+                if (attempt === MAX_RETRIES) break;
+                await new Promise(res => setTimeout(res, attempt * 1500));
+            }
+        }
     } catch(e) {
         clearInterval(timer);
         console.error('[moment] publish error:', e);
-        showToast('Ошибка сети — попробуй ещё раз', 'error');
     }
+
+    await new Promise(res => setTimeout(res, 350));
+    showToast(uploadResult.ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки — попробуй ещё раз', uploadResult.ok ? 'success' : 'error');
 
     // Сброс + перезагрузка
     _momentUploading = false;
@@ -8357,8 +8598,13 @@ function _openMomentsOverlay(moments, startIdx) {
         if (isImg) {
             bg.innerHTML = `<img src="${m.media_url}" style="width:100%;height:100%;object-fit:cover;filter:blur(28px) brightness(0.35) saturate(1.4)" draggable="false">`;
         } else if (isVid) {
-            // Для видео — цветной градиент как фон
-            bg.style.background = 'linear-gradient(160deg,#0a0a15,#12121f)';
+            // For video — use preview thumbnail as blurred bg if available
+            const prevSrc = m.preview_url || '';
+            if (prevSrc) {
+                bg.innerHTML = `<img src="${prevSrc}" style="width:100%;height:100%;object-fit:cover;filter:blur(28px) brightness(0.3) saturate(1.4)" draggable="false">`;
+            } else {
+                bg.style.background = 'linear-gradient(160deg,#0a0a15,#12121f)';
+            }
         } else {
             bg.style.background = 'linear-gradient(160deg,#0a0a15,#12121f)';
         }
@@ -8489,7 +8735,7 @@ function _openMomentsOverlay(moments, startIdx) {
 
         ov.appendChild(mediaWrap);
 
-        // ── Зоны тапа: левая треть → назад, правая треть → вперёд ──
+        // ── Зоны тапа + свайп: левая треть → назад, правая треть → вперёд ──
         const tapZones = document.createElement('div');
         tapZones.style.cssText = 'position:absolute;inset:0;z-index:18;display:flex;pointer-events:none';
         const zL = document.createElement('div');
@@ -8498,6 +8744,13 @@ function _openMomentsOverlay(moments, startIdx) {
         const zR = document.createElement('div');
         zR.style.cssText = 'flex:1;pointer-events:all;cursor:pointer';
         zR.onclick = (e) => { e.stopPropagation(); goTo(idx + 1); };
+        // Swipe gesture support
+        let _swipeX = 0;
+        tapZones.addEventListener('touchstart', e => { _swipeX = e.touches[0].clientX; }, { passive: true });
+        tapZones.addEventListener('touchend', e => {
+            const dx = e.changedTouches[0].clientX - _swipeX;
+            if (Math.abs(dx) > 50) { e.stopPropagation(); goTo(idx + (dx < 0 ? 1 : -1)); }
+        }, { passive: false });
         tapZones.appendChild(zL);
         tapZones.appendChild(zR);
         ov.appendChild(tapZones);
@@ -11814,13 +12067,13 @@ function createPeerConnection() {
         console.log('ICE state:', state);
 
         if (state === 'connected' || state === 'completed') {
-            if (label) label.textContent = 'В эфире';
+            if (label) { label.textContent = 'В эфире'; label.style.color = '#30d158'; }
             startCallTimer();
             document.querySelectorAll('.call-ring-1,.call-ring-2,.call-ring-3').forEach(r => r.style.display = 'none');
         } else if (state === 'checking') {
-            if (label) label.textContent = 'Соединение...';
+            if (label) { label.textContent = 'Соединение...'; label.style.color = 'rgba(255,255,255,0.7)'; }
         } else if (state === 'disconnected') {
-            if (label) label.textContent = 'Переподключение...';
+            if (label) { label.textContent = 'Переподключение...'; label.style.color = '#fbbf24'; }
             // Автоматический ICE restart через 2 сек
             setTimeout(() => {
                 if (peerConnection?.iceConnectionState === 'disconnected') doIceRestart();
@@ -11887,6 +12140,9 @@ async function doIceRestart() {
 function endCall(notify = true) {
     _stopRingtone(); // FIX Task 4c: stop ringtone on endCall
     clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
+    // Show "Завершён" briefly before hiding
+    const _endLbl = document.getElementById('call-status-label');
+    if (_endLbl) { _endLbl.textContent = 'Завершён'; _endLbl.style.color = 'rgba(255,255,255,0.5)'; }
 
     if (notify && currentPartnerId) socket.emit('end_call', { to: currentPartnerId, call_id: currentCallId });
     if (peerConnection) { try { peerConnection.close(); } catch(e) {} peerConnection = null; }
@@ -12209,7 +12465,7 @@ function onIncomingCall(data) {
 
     const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
     setEl('call-name',         el => el.textContent = data.from_name || 'Звонок');
-    setEl('call-status-label', el => el.textContent = currentCallType === 'video' ? '📹 Входящий видеозвонок' : '📞 Входящий звонок');
+    setEl('call-status-label', el => { el.textContent = currentCallType === 'video' ? '📹 Входящий видеозвонок' : '📞 Входящий звонок'; el.style.color = 'rgba(255,255,255,0.7)'; });
     setEl('call-avatar-box',   el => el.innerHTML = getAvatarHtml({id:data.from, name:data.from_name, avatar:data.from_avatar||''}, 'w-28 h-28'));
     setEl('accept-btn',        el => { el.style.display = 'flex'; });
     setEl('call-timer',        el => el.style.display = 'none');
@@ -12710,12 +12966,19 @@ async function startCall(type) {
         const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: type === 'video' });
         await peerConnection.setLocalDescription(offer);
         socket.emit('call_user', { to: currentPartnerId, from_name: currentUser.name, from_avatar: currentUser.avatar, offer, call_type: type, call_id: currentCallId });
-        // FIX CALL STUCK: update status after 5s, end after 30s
+        // Status progression: Звоним → Ожидание ответа → timeout
+        const _lbl0 = document.getElementById('call-status-label');
+        if (_lbl0) { _lbl0.textContent = type === 'video' ? '📹 Видеозвонок...' : '📞 Звоним...'; _lbl0.style.color = 'rgba(255,255,255,0.7)'; }
         setTimeout(() => {
             const lbl = document.getElementById('call-status-label');
             if (lbl && peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState))
                 lbl.textContent = 'Ожидание ответа...';
-        }, 5000);
+        }, 4000);
+        setTimeout(() => {
+            const lbl = document.getElementById('call-status-label');
+            if (lbl && peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState))
+                lbl.textContent = 'Не отвечает...';
+        }, 15000);
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
