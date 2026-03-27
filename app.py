@@ -312,6 +312,7 @@ def _run_early_migrations():
         'CREATE INDEX IF NOT EXISTS idx_user_username_lower ON "user"(lower(username))',
         'CREATE INDEX IF NOT EXISTS idx_saved_contact_both ON saved_contact(user_id, contact_id)',
         'CREATE INDEX IF NOT EXISTS idx_moment_user_time ON moment(user_id, timestamp DESC)',
+        "ALTER TABLE moment ADD COLUMN IF NOT EXISTS preview_url VARCHAR(500) DEFAULT ''",
         'CREATE INDEX IF NOT EXISTS idx_group_member_user_fast ON group_member(user_id, group_id)',
     ]
     for sql in early_sqls:
@@ -775,7 +776,8 @@ class Moment(db.Model):
     geo_lat    = db.Column(db.String(20),  nullable=True)
     geo_lng    = db.Column(db.String(20),  nullable=True)
     timestamp  = db.Column(db.DateTime,    default=datetime.utcnow, index=True)
-    expires_at = db.Column(db.DateTime,    index=True)
+    expires_at   = db.Column(db.DateTime,    index=True)
+    preview_url  = db.Column(db.String(500),   default='')  # video/image thumbnail
 
 
 class BlockedUser(db.Model):
@@ -2614,7 +2616,7 @@ def get_moments():
     ).scalars().all())
 
     rows = db.session.execute(text('''
-        SELECT m.id AS moment_id, m.user_id, m.media_url, m.text, m.geo_name, m.timestamp,
+        SELECT m.id AS moment_id, m.user_id, m.media_url, COALESCE(m.preview_url,'') AS preview_url, m.text, m.geo_name, m.timestamp,
                u.name AS user_name, u.avatar AS user_avatar,
                COALESCE(u.moments_visibility,'all') AS vis
         FROM moment m
@@ -2657,6 +2659,7 @@ def get_moments():
             'raw_timestamp': ts.isoformat() + 'Z' if ts else '',
             'view_count':    view_counts.get(r.moment_id, 0),
             'is_mine':       is_mine,
+            'preview_url':   getattr(r, 'preview_url', '') or '',
         })
     return jsonify(data)
 
@@ -3012,14 +3015,46 @@ def create_moment():
     uid   = current_user.id
     uname = current_user.name
 
-    media_url = None
+    media_url   = None
+    preview_url = None
+
+    # ── Main media file ────────────────────────────────────
     if 'file' in request.files:
         file = request.files['file']
         if file and file.filename:
+            mime = file.content_type or mimetypes.guess_type(file.filename)[0] or ''
             file.seek(0)
+
+            # Try Cloudinary first; fall back to local storage
             media_url = upload_to_cloudinary(file, folder='waychat/moments')
             if not media_url:
-                return jsonify({'success': False, 'error': 'Ошибка загрузки медиа'}), 500
+                app.logger.warning('Cloudinary failed for moment, using local fallback')
+                try:
+                    ext      = os.path.splitext(file.filename)[1].lower() or ('.mp4' if 'video' in mime else '.jpg')
+                    fname    = f'm_{uid}_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}'
+                    savepath = os.path.join(MOMENTS_FOLDER, fname)
+                    file.seek(0)
+                    file.save(savepath)
+                    media_url = f'/static/uploads/moments/{fname}'
+                except Exception as _fe:
+                    app.logger.error(f'Local fallback save failed: {_fe}')
+                    return jsonify({'success': False, 'error': 'Ошибка сохранения медиа'}), 500
+
+    # ── Thumbnail / preview (optional, sent by client for video) ──
+    if 'preview' in request.files:
+        prev_file = request.files['preview']
+        if prev_file and prev_file.filename:
+            prev_file.seek(0)
+            preview_url = upload_to_cloudinary(prev_file, folder='waychat/previews')
+            if not preview_url:
+                try:
+                    pname    = f'prev_{uid}_{int(time.time())}.jpg'
+                    ppath    = os.path.join(MOMENTS_FOLDER, pname)
+                    prev_file.seek(0)
+                    prev_file.save(ppath)
+                    preview_url = f'/static/uploads/moments/{pname}'
+                except Exception:
+                    preview_url = None
 
     text_content = request.form.get('text', '').strip()[:500]
     geo_name     = request.form.get('geo_name', '').strip()[:200] or None
@@ -3030,8 +3065,8 @@ def create_moment():
         return jsonify({'success': False, 'error': 'Нет контента'}), 400
 
     moment = Moment(
-        user_id=uid, media_url=media_url, text=text_content,
-        geo_name=geo_name, geo_lat=geo_lat, geo_lng=geo_lng,
+        user_id=uid, media_url=media_url, preview_url=preview_url or '',
+        text=text_content, geo_name=geo_name, geo_lat=geo_lat, geo_lng=geo_lng,
         expires_at=datetime.utcnow() + timedelta(hours=24)
     )
     db.session.add(moment)
@@ -3039,25 +3074,26 @@ def create_moment():
     _moments_cache.delete('all')
 
     moment_payload = {
-        'user_id':    uid,
-        'user_name':  uname,
-        'moment_id':  moment.id,
-        'media_url':  media_url or '',
-        'text':       text_content,
-        'timestamp':  moment.expires_at.strftime('%H:%M') if moment.expires_at else '',
+        'user_id':     uid,
+        'user_name':   uname,
+        'moment_id':   moment.id,
+        'media_url':   media_url   or '',
+        'preview_url': preview_url or '',
+        'text':        text_content,
+        'timestamp':   moment.expires_at.strftime('%H:%M') if moment.expires_at else '',
     }
-    # Broadcast в комнаты всех контактов этого юзера (не глобально)
+    # Broadcast to all contacts
     try:
         contact_rows = db.session.execute(text('''
             SELECT DISTINCT
                 CASE WHEN c.room_key LIKE :p1 THEN
-                    CAST(SPLIT_PART(REPLACE(c.room_key, :pfx, ''), '_', 2) AS INTEGER)
+                    CAST(SPLIT_PART(REPLACE(c.room_key, :pfx, \'\'), \'_\', 2) AS INTEGER)
                 ELSE
-                    CAST(SPLIT_PART(REPLACE(c.room_key, :pfx, ''), '_', 1) AS INTEGER)
+                    CAST(SPLIT_PART(REPLACE(c.room_key, :pfx, \'\'), \'_\', 1) AS INTEGER)
                 END AS partner_id
             FROM chat c
             WHERE (c.room_key LIKE :p1 OR c.room_key LIKE :p2)
-              AND NOT c.room_key LIKE 'group_%'
+              AND NOT c.room_key LIKE \'group_%\'
         '''), {
             'p1': f'chat_{uid}_%',
             'p2': f'%_{uid}',
@@ -3068,10 +3104,10 @@ def create_moment():
             if pid and pid != uid:
                 socketio.emit('new_moment', moment_payload, room=f'user_{pid}')
     except Exception as _me:
-        print(f'[moment broadcast] {_me}')
+        app.logger.error(f'[moment broadcast] {_me}')
         socketio.emit('new_moment', moment_payload)  # fallback
 
-    return jsonify({'success': True, 'moment_id': moment.id})
+    return jsonify({'success': True, 'moment_id': moment.id, 'media_url': media_url or '', 'preview_url': preview_url or ''})
 
 
 # ── In-memory call state registry ────────────────────────────
