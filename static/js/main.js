@@ -169,8 +169,8 @@ const WCCache = (() => {
             transform: none !important;
             z-index: 10 !important;
             background: transparent !important;
-            padding: 6px 8px !important;
-            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px) !important;
+            padding: 10px 10px !important;
+            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -301,11 +301,11 @@ const WCCache = (() => {
   user-select: none;
   -webkit-user-select: none;
 }
-/* Размеры шрифта пропорционально */
-.wc-ava-chat    .wc-ava-initials { font-size: 20px; }
-.wc-ava-header  .wc-ava-initials { font-size: 14px; }
-.wc-ava-profile .wc-ava-initials { font-size: 36px; }
-.wc-ava-msg     .wc-ava-initials { font-size: 13px; }
+/* Размеры шрифта — 1 буква как в TG */
+.wc-ava-chat    .wc-ava-initials { font-size: 22px; }
+.wc-ava-header  .wc-ava-initials { font-size: 15px; }
+.wc-ava-profile .wc-ava-initials { font-size: 40px; }
+.wc-ava-msg     .wc-ava-initials { font-size: 14px; }
 /* Online dot */
 .wc-ava-wrap { position: relative; flex-shrink: 0; display: inline-flex; }
 .wc-ava-online {
@@ -1125,54 +1125,11 @@ function insertEmoji() {
     autoResize(inp);
 }
 
-// Scroll-down button — автоматически создаётся при открытии чата
+// Scroll-down button — удалена дублирующая кнопка, используется только wc-scroll-btn
 function _initScrollDownBtn() {
-    const msgs = document.getElementById('messages');
-    if (!msgs) return;
-    const existingBtn = document.getElementById('wc-sd-btn');
-    if (existingBtn) {
-        existingBtn.style.opacity = '0';
-        existingBtn.style.display = 'none';
-        return;
-    }
-
-    const btn = document.createElement('button');
-    btn.id = 'wc-sd-btn';
-    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-        <path d="M6 9l6 6 6-6" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>`;
-    btn.style.cssText = [
-        'position:absolute','bottom:72px','right:12px','z-index:50',
-        'width:36px','height:36px','border-radius:50%','border:none',
-        'background:rgba(40,40,42,.96)',
-        'border:.5px solid rgba(255,255,255,.1)',
-        'box-shadow:0 4px 16px rgba(0,0,0,.45)',
-        'cursor:pointer','display:none','align-items:center','justify-content:center',
-        'opacity:0','transition:opacity .2s ease',
-        'backdrop-filter:blur(8px)','-webkit-backdrop-filter:blur(8px)',
-    ].join(';');
-    btn.onclick = () => msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
-
-    if (msgs.parentNode) {
-        msgs.parentNode.style.position = 'relative';
-        msgs.parentNode.appendChild(btn);
-    }
-
-    // Debounced scroll listener
-    let _sdTimer;
-    msgs.addEventListener('scroll', () => {
-        clearTimeout(_sdTimer);
-        _sdTimer = setTimeout(() => {
-            const dist = Math.max(0, msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight);
-            if (dist > 150) {
-                btn.style.display = 'flex';
-                requestAnimationFrame(() => { btn.style.opacity = '1'; });
-            } else {
-                btn.style.opacity = '0';
-                setTimeout(() => { btn.style.display = 'none'; }, 200);
-            }
-        }, 80);
-    }, { passive: true });
+    // Убираем старую дублирующую кнопку если она есть
+    const old = document.getElementById('wc-sd-btn');
+    if (old) old.remove();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1814,11 +1771,9 @@ function getInitialAvatar(name, sizeClass, uid = '') {
     for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
     const gi = Math.abs(hash) % GRADIENTS.length;
     const [c1, c2] = GRADIENTS[gi];
-    // Initials: up to 2 chars
+    // Initials: 1 char (like Telegram)
     const parts = n.trim().split(/\s+/);
-    const initials = parts.length >= 2
-        ? (parts[0][0] + parts[parts.length-1][0]).toUpperCase()
-        : n.slice(0,2).toUpperCase();
+    const initials = parts[0][0].toUpperCase();
     // Map sizeClass → wc-ava size class
     const sc = sizeClass || '';
     const sizeVariant = sc.includes('w-28') || sc.includes('w-20') || sc.includes('w-16') ? 'wc-ava-profile'
@@ -3616,11 +3571,16 @@ function renderChatList(chats) {
 
             // Аватар
             const avaWrap = document.createElement('div');
-            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:58px;height:58px';
+            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:52px;height:52px;display:flex;align-items:center;justify-content:center';
 
             const _ai = document.createElement('div');
-            _ai.style.cssText = 'position:absolute;inset:'+(chat.has_moment&&!isGroup?'4px':'0')+';border-radius:50%;overflow:hidden';
-            _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
+            if (chat.has_moment && !isGroup) {
+                _ai.style.cssText = 'position:absolute;inset:4px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center';
+                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-10 h-10');
+            } else {
+                _ai.style.cssText = 'border-radius:50%;overflow:hidden;flex-shrink:0';
+                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+            }
             avaWrap.appendChild(_ai);
 
             // SVG-кольцо моментов
