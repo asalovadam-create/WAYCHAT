@@ -7935,7 +7935,7 @@ async function pickMedia(context) {
                     if (xhr.status >= 200 && xhr.status < 300) {
                         try { resolve(JSON.parse(xhr.responseText)); }
                         catch(e) { reject(new Error('parse error')); }
-                    } else { reject(new Error(\`Ошибка сервера: \${xhr.status}\`)); }
+                    } else { reject(new Error('Ошибка сервера: ' + xhr.status)); }
                 };
                 xhr.onerror = () => reject(new Error('Нет соединения'));
                 xhr.open('POST', '/upload_media');
@@ -8498,7 +8498,7 @@ async function _publishMomentEditor(ov, file, url) {
                 const d = JSON.parse(xhr.responseText);
                 resolve({ ok: !!d.success, data: d });
             } catch(e) {
-                resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: { error: \`Ошибка сервера (\${xhr.status})\` } });
+                resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: { error: 'Ошибка сервера (' + xhr.status + ')' } });
             }
         };
         xhr.onerror   = () => { clearInterval(timer); resolve({ ok: false, data: {} }); };
