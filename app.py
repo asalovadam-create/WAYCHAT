@@ -179,7 +179,7 @@ app.config.update(
         'connect_args':   {'connect_timeout': 10},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
-    MAX_CONTENT_LENGTH       = 20 * 1024 * 1024,   # 20MB защита от перегрузки
+    MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,  # 100MB — supports video moments
     SESSION_COOKIE_SAMESITE  = 'Lax',
     SESSION_COOKIE_SECURE    = True,    # HTTPS Render
     SESSION_COOKIE_HTTPONLY  = True,
@@ -256,6 +256,7 @@ def _run_early_migrations():
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_data BYTEA",
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50) DEFAULT 'audio/mpeg'",
         "ALTER TABLE message ADD COLUMN IF NOT EXISTS extra_data TEXT DEFAULT ''",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS preview_url VARCHAR(500) DEFAULT ''",
         # Channels
         '''CREATE TABLE IF NOT EXISTS channel (
             id SERIAL PRIMARY KEY,
@@ -637,6 +638,7 @@ class Message(db.Model):
     type        = db.Column(db.String(10),  default='text')
     content     = db.Column(db.Text)
     file_url        = db.Column(db.String(300))
+    preview_url     = db.Column(db.String(500), default='')   # thumbnail for video messages
     extra_data      = db.Column(db.Text,  default='')  # JSON: forwarded_from, music meta
     is_read         = db.Column(db.Boolean,     default=False, index=True)
     is_deleted  = db.Column(db.Boolean,     default=False, index=True)
@@ -662,6 +664,7 @@ class Message(db.Model):
             'type_msg':      self.type,
             'content':       self.content,
             'file_url':      self.file_url,
+            'preview_url':   getattr(self, 'preview_url', '') or '',
             'is_read':       self.is_read,
             'timestamp':     to_moscow_str(self.timestamp),
             'raw_timestamp': self.timestamp.isoformat() + 'Z' if self.timestamp else '',
@@ -3349,7 +3352,9 @@ def handle_msg(data):
     msg = Message(
         chat_id=chat_id, sender_id=uid, sender_name=uname,
         type=msg_type, content=(data.get('content') or '')[:10000],
-        file_url=data.get('file_url'), extra_data=_extra_json,
+        file_url=data.get('file_url'),
+        preview_url=(data.get('preview_url') or '')[:500],
+        extra_data=_extra_json,
     )
     db.session.add(msg)
     db.session.commit()
@@ -3368,6 +3373,9 @@ def handle_msg(data):
     # Прокидываем extra поля в payload для live-сообщений
     for _k in ('forwarded_from','fwd_avatar','music_title','music_artist','music_url'):
         if data.get(_k): payload[_k] = data[_k]
+    # Pass preview_url through for instant video thumbnail display
+    if data.get('preview_url'):
+        payload['preview_url'] = data['preview_url']
     chat = db.session.get(Chat, chat_id)
 
     if chat:
@@ -4648,6 +4656,37 @@ def admin_channel_unverify():
 
 
 
+
+
+@app.route('/upload_media_thumb', methods=['POST'])
+@login_required
+def upload_media_thumb():
+    """Upload a thumbnail/preview image for a video message."""
+    if 'file' not in request.files:
+        return jsonify({'success': False, 'error': 'No file'}), 400
+    file = request.files['file']
+    if not file or not file.filename:
+        return jsonify({'success': False}), 400
+    # Only accept images
+    mime = file.content_type or ''
+    if not mime.startswith('image/'):
+        return jsonify({'success': False, 'error': 'Images only'}), 400
+    file.seek(0)
+    url = upload_to_cloudinary(file, folder='waychat/thumbs')
+    if not url:
+        # Local fallback
+        try:
+            ext   = '.jpg'
+            fname = f'th_{current_user.id}_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}'
+            path  = os.path.join(MESSAGES_FOLDER, fname)
+            file.seek(0)
+            file.save(path)
+            url = f'/static/uploads/messages/{fname}'
+        except Exception:
+            return jsonify({'success': False, 'error': 'Upload failed'}), 500
+    return jsonify({'success': True, 'url': url})
+
+
 @app.route('/health')
 def healthcheck():
     try:
@@ -4674,7 +4713,7 @@ def not_found(e):
 
 @app.errorhandler(413)
 def too_large(e):
-    return jsonify({'error': 'Файл слишком большой (макс 100 МБ)'}), 413
+    return jsonify({'error': 'Файл слишком большой (макс 100 МБ). Для видео-момента обрежь клип.'}), 413
 
 
 @app.errorhandler(500)
