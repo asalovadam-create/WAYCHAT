@@ -161,16 +161,16 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — в потоке flex-колонки, поднят над home indicator, без серой полосы */
+        /* INPUT BAR — floating pill, transparent container */
         .input-bar {
             position: relative !important;
             bottom: auto !important;
             left: auto !important; right: auto !important;
             transform: none !important;
             z-index: 10 !important;
-            background: var(--chat-bg, #1d1d1e) !important;
-            padding: 8px 12px !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 12px), 14px) !important;
+            background: transparent !important;
+            padding: 6px 8px !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 10px), 10px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -228,7 +228,7 @@ const WCCache = (() => {
             box-shadow: none !important;
         }
         /* Input bar — прозрачный floating */
-        .input-bar { border: none !important; padding-bottom: max(env(safe-area-inset-bottom, 14px), 14px) !important; }
+        .input-bar { border: none !important; }
         /* iOS: минимум 16px предотвращает авто-зум при фокусе */
         input, textarea, select { font-size: max(16px, 1em) !important; }
         body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
@@ -386,9 +386,11 @@ const VirtualList=(()=>{
         win(Math.max(0,s-arr.length),e,false);
         // Maintain scroll position after prepend (no jump)
         requestAnimationFrame(()=>{ if(el) el.scrollTop+=el.scrollHeight-ph; });}
-    function toBottom(a){if(!el)return;a?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):(el.scrollTop=el.scrollHeight);
-        // FIX SCROLL-BTN: force-hide button instantly after scrolling to bottom
-        requestAnimationFrame(function(){_scrollAtBottom=true;_scrollUnread=0;_updateScrollBtn(el);});}
+    function toBottom(a){if(!el)return;
+        // FIX: set flag BEFORE scroll so _updateScrollBtn sees it immediately
+        _scrollAtBottom=true;_scrollUnread=0;
+        if(a)el.scrollTo({top:el.scrollHeight,behavior:'smooth'});else el.scrollTop=el.scrollHeight;
+        _updateScrollBtn(el);}
     function destroy(){if(!el)return;el.removeEventListener('scroll',onsc);if(rf)cancelAnimationFrame(rf);ms=[];hc.clear();el=ts=bs=tp=bp=null;}
     return{mount,setMessages,appendMessage:append,prependMessages:prepend,scrollToBottom:toBottom,destroy};
 })();
@@ -409,16 +411,16 @@ let _scrollListenerAttached = false;
  */
 function scrollToBottom(el, instant) {
     if (!el) return;
+    // Set flag BEFORE scroll so _updateScrollBtn hides button instantly
+    _scrollUnread   = 0;
+    _scrollAtBottom = true;
     if (instant) {
-        // OPT: direct assignment is synchronous and jank-free
         el.scrollTop = el.scrollHeight;
     } else {
         requestAnimationFrame(function() {
             el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
         });
     }
-    _scrollUnread  = 0;
-    _scrollAtBottom = true;
     _updateScrollBtn(el);
 }
 
@@ -521,7 +523,9 @@ function _updateScrollBtn(el) {
     var distFromBottom = el
         ? Math.max(0, (el.scrollHeight - el.scrollTop - el.clientHeight))
         : 0;
-    var show = distFromBottom > 60;
+    // If we know we programmatically scrolled to bottom, trust _scrollAtBottom
+    // rather than the not-yet-updated scrollTop (smooth scroll is async)
+    var show = _scrollAtBottom ? false : distFromBottom > 60;
 
     // OPT: only mutate style when state changes
     if (show) {
@@ -4508,8 +4512,8 @@ function buildMessageRow(msg, animate = true) {
         const _vposter = msg.preview_url ? `poster="${msg.preview_url}"` : '';
         const _vidId   = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
         contentHtml = `<div class="video-bubble-wrap" onclick="(function(w){const v=document.getElementById('${_vidId}');if(v){v.controls=true;v.play();const ov=w.querySelector('.video-play-overlay');if(ov)ov.style.display='none';}})(this)" style="cursor:pointer">
-            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="metadata"
-                   style="display:block;width:100%;max-height:380px;object-fit:cover"
+            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="${msg.preview_url ? 'none' : 'metadata'}"
+                   style="display:block;width:100%;max-height:380px;object-fit:cover;background:#111"
                    onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
             <div class="video-play-overlay">
                 <div class="video-play-btn">
@@ -7905,6 +7909,12 @@ async function pickMedia(context) {
             msgsEl.scrollTop = msgsEl.scrollHeight;
         }
 
+        // For video: start thumbnail extraction in background immediately
+        let _vidThumbBlob = null;
+        if (isVid) {
+            _extractVideoThumbnail(file).then(b => { _vidThumbBlob = b; }).catch(() => {});
+        }
+
         // Загружаем с XMLHttpRequest для прогресса
         try {
             const url_res = await new Promise((resolve, reject) => {
@@ -7921,30 +7931,43 @@ async function pickMedia(context) {
                     if (pctEl) pctEl.textContent = Math.round(pct) + '%';
                 };
                 xhr.onload = () => {
+                    if (xhr.status === 413) { reject(new Error('Файл слишком большой (макс 50 МБ)')); return; }
                     if (xhr.status >= 200 && xhr.status < 300) {
                         try { resolve(JSON.parse(xhr.responseText)); }
                         catch(e) { reject(new Error('parse error')); }
-                    } else { reject(new Error('upload failed')); }
+                    } else { reject(new Error(\`Ошибка сервера: \${xhr.status}\`)); }
                 };
-                xhr.onerror = () => reject(new Error('network error'));
+                xhr.onerror = () => reject(new Error('Нет соединения'));
                 xhr.open('POST', '/upload_media');
                 xhr.withCredentials = true;
                 xhr.send(fd);
             });
 
+            // Upload thumbnail separately if we have it
+            let _previewUrl = '';
+            if (isVid && _vidThumbBlob) {
+                try {
+                    const tfd = new FormData();
+                    tfd.append('file', _vidThumbBlob, 'thumb.jpg');
+                    const tr = await fetch('/upload_media_thumb', { method:'POST', credentials:'include', body: tfd });
+                    if (tr.ok) { const td = await tr.json(); _previewUrl = td.url || ''; }
+                } catch(e) {}
+            }
+
             // Убираем превью и отправляем реальное сообщение
             tmpRow.remove();
             URL.revokeObjectURL(previewUrl);
             socket.emit('send_message', {
-                chat_id: currentChatId,
-                type_msg: url_res.type || (isVid ? 'video' : 'image'),
-                file_url: url_res.url,
-                sender_id: currentUser.id
+                chat_id:     currentChatId,
+                type_msg:    url_res.type || (isVid ? 'video' : 'image'),
+                file_url:    url_res.url,
+                preview_url: _previewUrl,
+                sender_id:   currentUser.id
             });
         } catch(e) {
             tmpRow.remove();
             URL.revokeObjectURL(previewUrl);
-            showToast('Ошибка загрузки', 'error');
+            showToast(e.message || 'Ошибка загрузки', 'error', 4000);
         }
     };
     input.click();
@@ -7987,6 +8010,12 @@ function _extractVideoThumbnail(file) {
 }
 
 function _showMomentEditor(file) {
+    // Client-side size guard: warn if > 50MB (server limit is ~100MB after our fix)
+    const MAX_MB = 50;
+    if (file.size > MAX_MB * 1024 * 1024) {
+        showToast(`Файл слишком большой (макс ${MAX_MB} МБ). Обрежь видео в галерее.`, 'error', 5000);
+        return;
+    }
     _meFile = file; _meGeo = null; _meThumbnailBlob = null;
     const isVid = file.type.startsWith('video');
     const url   = URL.createObjectURL(file);
@@ -8457,11 +8486,19 @@ async function _publishMomentEditor(ov, file, url) {
         xhr.onload = () => {
             clearInterval(timer);
             _updateUploadProgress(100);
+            if (xhr.status === 413) {
+                resolve({ ok: false, data: { error: 'Файл слишком большой. Обрежь видео или выбери другое.' } });
+                return;
+            }
+            if (xhr.status === 429) {
+                resolve({ ok: false, data: { error: 'Слишком много загрузок. Подожди минуту.' } });
+                return;
+            }
             try {
                 const d = JSON.parse(xhr.responseText);
                 resolve({ ok: !!d.success, data: d });
             } catch(e) {
-                resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: {} });
+                resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: { error: \`Ошибка сервера (\${xhr.status})\` } });
             }
         };
         xhr.onerror   = () => { clearInterval(timer); resolve({ ok: false, data: {} }); };
@@ -8496,7 +8533,13 @@ async function _publishMomentEditor(ov, file, url) {
     }
 
     await new Promise(res => setTimeout(res, 350));
-    showToast(uploadResult.ok ? 'Момент опубликован! 🎉' : 'Ошибка загрузки — попробуй ещё раз', uploadResult.ok ? 'success' : 'error');
+    if (uploadResult.ok) {
+        showToast('Момент опубликован! 🎉', 'success');
+    } else {
+        const _errMsg = uploadResult.data?.error || 'Ошибка загрузки — попробуй ещё раз';
+        showToast(_errMsg, 'error', 5000);
+        console.error('[moment] upload failed:', uploadResult);
+    }
 
     // Сброс + перезагрузка
     _momentUploading = false;
