@@ -161,16 +161,18 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — прозрачный контейнер, поднятый над home indicator */
+        /* INPUT BAR — Telegram style: прилипает к низу, выше home indicator */
         .input-bar {
             position: relative !important;
             bottom: auto !important;
             left: auto !important; right: auto !important;
             transform: none !important;
             z-index: 10 !important;
-            background: transparent !important;
-            padding: 10px 0 !important;
-            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px + var(--ib-bottom-offset, 0px)) !important;
+            background: rgba(30,30,33,0.96) !important;
+            backdrop-filter: blur(20px) !important;
+            -webkit-backdrop-filter: blur(20px) !important;
+            padding: 0 !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -384,8 +386,7 @@ const VirtualList=(()=>{
           const samePrev=prevM&&prevM.sender_id===m.sender_id&&getMessageDate(prevM)===getMessageDate(m);
           const sameNext=nextM&&nextM.sender_id===m.sender_id&&getMessageDate(nextM)===getMessageDate(m);
           m._grpFirst=!samePrev;m._grpLast=!sameNext;m._grpMid=samePrev&&sameNext;
-          // FIX CRITICAL: buildMessageRow может вернуть null — без проверки весь рендер ломается
-          const r=buildMessageRow(m,false);if(!r)continue;r.dataset.vi=i;f.appendChild(r);}
+          const r=buildMessageRow(m,false);r.dataset.vi=i;f.appendChild(r);}
         el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());ts.after(f);s=ns;e=ne;msr();phs();
         if(ks&&an){const na=el.querySelector('[data-vi="'+s+'"]');if(na)el.scrollTop+=na.getBoundingClientRect().top-of;}
     }
@@ -409,19 +410,11 @@ const VirtualList=(()=>{
         }
         _scrollAfterRender(0);}
     function append(msg){if(!el)return;
-        // FIX: если пришло реальное сообщение — переиспользуем оптимистичный элемент вместо удаления
+        // FIX DUPLICATE: if real msg arrives, remove optimistic row with same content from same sender
         if(!msg._optimistic && msg.id){
-            // Reuse matching optimistic DOM rows instead of removing them
-            let _reused=false;
+            // Remove matching optimistic DOM rows
             el.querySelectorAll('[data-optimistic="1"]').forEach(function(optEl){
-                if(!_reused && optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:'') && !optEl.dataset.replaced){
-                    _reused=true;
-                    optEl.dataset.replaced='1';
-                    optEl.setAttribute('data-msg-id',String(msg.id));
-                    optEl.removeAttribute('data-optimistic');
-                    const si=optEl.querySelector('.status-icon');
-                    if(si){si.innerHTML=typeof ICONS!=='undefined'?ICONS.check:'✓';si.style.color='rgba(255,255,255,0.55)';}
-                }
+                if(optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:''))optEl.remove();
             });
             // Remove matching temp entries from ms array (tmp_ prefixed)
             const prevLen=ms.length;
@@ -429,8 +422,6 @@ const VirtualList=(()=>{
             if(ms.length<prevLen){hc.clear();s=0;e=0;}
             // Dedup by real id
             if(ms.some(function(m){return String(m.id)===String(msg.id);}))return;
-            // If we reused a DOM row, add real msg to ms array but skip DOM append
-            if(_reused){ms.push(msg);return;}
         }
         ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120;
     // Set grouping flags on append
@@ -2171,35 +2162,103 @@ body {
 .msg-meta-inline { display:inline-flex;align-items:center;gap:2px;font-size:10.5px;opacity:0.6;white-space:nowrap;pointer-events:none;line-height:1; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
-/* ── v9.1: INPUT BAR — прозрачный, поднятый ── */
-/* Настройки позиции — меняй значения в блоке INPUT BAR SETTINGS в JS */
+/* ── INPUT BAR — Telegram style ── */
 :root {
-  --ib-bottom-offset: 0px;   /* доп. отступ снизу — настраивается пользователем */
-  --ib-side-margin: 8px;     /* боковые отступы */
-  --ib-pill-radius: 26px;    /* скругление капсулы */
+  --ib-bottom-offset: 0px;
+  --ib-side-margin: 8px;
+  --ib-pill-radius: 24px;
 }
+
+/* Контейнер строки ввода — тёмная капсула как в TG */
 .tg-input-row {
-  display:flex;align-items:flex-end;gap:6px;
-  background:rgba(36,36,40,0.82);
-  backdrop-filter:blur(24px) saturate(200%);
-  -webkit-backdrop-filter:blur(24px) saturate(200%);
-  border-radius:var(--ib-pill-radius);
-  padding:8px 10px;
-  min-height:75px;
-  box-shadow:0 2px 20px rgba(0,0,0,0.28), 0 1px 0 rgba(255,255,255,0.06) inset;
-  margin:0 var(--ib-side-margin);
-  border:0.5px solid rgba(255,255,255,0.08);
+  display: flex;
+  align-items: flex-end;
+  gap: 0px;
+  background: rgba(30, 30, 33, 0.96);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-radius: 0;
+  padding: 8px 4px 8px 4px;
+  min-height: 52px;
+  border: none;
+  margin: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
-.tg-attach-btn { width:42px;height:42px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
-.tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:rgba(255,255,255,0.07);border:none !important;outline:none !important;box-shadow:none !important;border-radius:20px;padding:6px 6px 6px 14px;min-height:44px; }
-.tg-text-wrap:focus-within { background:rgba(255,255,255,0.10); }
-.tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
-.tg-inner-btn:active { color:white; }
-.tg-send-btn { width:42px;height:42px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
-.tg-send-btn:active { transform:scale(0.88); }
-.tg-mic-btn { background:transparent !important;box-shadow:none !important;color:rgba(255,255,255,0.6); }
-.tg-mic-btn:active { color:white; }
+
+/* Скрепка слева */
+.tg-attach-btn {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  color: rgba(255,255,255,0.55);
+  transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+.tg-attach-btn:active { color: white; }
+
+/* Поле ввода — закруглённая капсула как в TG */
+.tg-text-wrap {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(255,255,255,0.08);
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 22px;
+  padding: 10px 4px 10px 14px;
+  min-height: 44px;
+  max-height: 120px;
+  overflow: hidden;
+}
+.tg-text-wrap:focus-within { background: rgba(255,255,255,0.10); }
+
+/* Смайлик внутри поля — справа */
+.tg-inner-btn {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  color: rgba(255,255,255,0.5);
+  align-self: flex-end;
+  margin-bottom: 1px;
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+}
+.tg-inner-btn:active { color: rgba(255,255,255,0.9); }
+
+/* Кнопка отправить / микрофон — правее поля */
+.tg-send-btn {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  box-shadow: var(--glow);
+  transition: transform 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  margin-left: 4px;
+  padding: 0;
+}
+.tg-send-btn:active { transform: scale(0.88); }
+.tg-mic-btn {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: rgba(255,255,255,0.55);
+  margin-left: 4px;
+}
+.tg-mic-btn:active { color: white; }
 
 /* ── v9.0: FULLSCREEN PHOTO ── */
 #wc-img-viewer { position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.22s ease; }
@@ -2470,7 +2529,7 @@ body {
 }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: 12px !important; padding-top: 8px !important; }
+    .input-bar { padding-bottom: max(env(safe-area-inset-bottom,0px), 8px) !important; padding-top: 0 !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
@@ -2937,26 +2996,50 @@ body {
         </div>
         <div style="font-size:11px;color:var(--text-2);margin-bottom:4px" id="typing-name-label"></div>
     </div>
-    <div class="input-bar" style="border-top:none">
+    <div class="input-bar">
         <div class="tg-input-row">
-            <button class="tg-attach-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+
+            <!-- Смайлик — СЛЕВА как в TG -->
+            <button class="tg-attach-btn" onclick="insertEmoji()" aria-label="Эмодзи">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
+                    <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    <circle cx="9" cy="9.5" r="1.2" fill="currentColor"/>
+                    <circle cx="15" cy="9.5" r="1.2" fill="currentColor"/>
+                </svg>
             </button>
+
+            <!-- Поле ввода текста -->
             <div class="tg-text-wrap" id="input-area">
                 <textarea id="msg-input" rows="1"
                     placeholder="Сообщение..."
                     oninput="handleTyping(); autoResize(this); updateSendButton()"
                     onkeydown="handleInputKeydown(event)"></textarea>
-                <button class="tg-inner-btn" onclick="insertEmoji()" aria-label="Эмодзи">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="9" cy="9" r="1" fill="currentColor"/><circle cx="15" cy="9" r="1" fill="currentColor"/></svg>
-                </button>
             </div>
+
+            <!-- Скрепка — СПРАВА от поля как в TG -->
+            <button class="tg-attach-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+
+            <!-- Отправить (появляется когда есть текст) -->
             <button id="send-btn-main" onclick="sendText()" class="tg-send-btn" style="display:none" aria-label="Отправить">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
             </button>
+
+            <!-- Микрофон (когда нет текста) -->
             <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое" style="touch-action:none;user-select:none;-webkit-user-select:none">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="2"/><path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                    <rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/>
+                    <path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                    <path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>
             </button>
+
         </div>
     </div>
 </div>
@@ -5743,20 +5826,18 @@ async function sendText() {
     if (!currentChatId) { _sendInFlight = false; return; }
 
     // ── Оптимистичный рендер (мгновенно) ──
-    const _tempNow = new Date().toISOString();
     const tempMsg = {
-        id:            'tmp_' + Date.now(),
-        chat_id:       currentChatId,
-        sender_id:     currentUser.id,
-        sender_name:   currentUser.name,
-        type:          'text',
-        type_msg:      'text',
-        content:       text,
-        file_url:      null,
-        is_read:       false,
-        timestamp:     _tempNow,
-        raw_timestamp: _tempNow,
-        _optimistic:   true,
+        id:          'tmp_' + Date.now(),
+        chat_id:     currentChatId,
+        sender_id:   currentUser.id,
+        sender_name: currentUser.name,
+        type:        'text',
+        type_msg:    'text',
+        content:     text,
+        file_url:    null,
+        is_read:     false,
+        timestamp:   _nowMoscow(),
+        _optimistic: true,
     };
     renderNewMessage(tempMsg, true);
 
@@ -5772,13 +5853,11 @@ async function sendText() {
         // OPT Task 5c: emit with ACK — server returns {ok, msg_id}
         socket.timeout(5000).emit('send_message', _msgPayload, (err, ack) => {
             if (!err && ack && ack.msg_id) {
-                // Replace tempId with real id in DOM and mark as confirmed
+                // Replace tempId with real id in DOM
                 const tempEl = document.querySelector(`[data-msg-id="${tempMsg.id}"]`);
                 if (tempEl) {
                     tempEl.dataset.msgId = ack.msg_id;
                     tempEl.setAttribute('data-msg-id', ack.msg_id);
-                    tempEl.dataset.replaced = '1';         // FIX: предотвращаем повторную обработку в onNewMessage
-                    tempEl.removeAttribute('data-optimistic'); // FIX: снимаем флаг оптимистичного
                     const si = tempEl.querySelector('.status-icon');
                     if (si) si.innerHTML = ICONS.check;
                 }
@@ -5848,27 +5927,12 @@ function onNewMessage(msg) {
             +msg.sender_id === +currentPartnerId || +msg.to_id === +currentPartnerId
         ));
     if (_isOpenChat) {
-        // Переиспользуем оптимистичный элемент — НЕ удаляем, а помечаем как замененный
-        // FIX: el.remove() вызывал исчезновение сообщений — заменяем на reuse-логику
-        if (+msg.sender_id === currentUser.id && _mid) {
+        // Удаляем оптимистичные дубликаты с тем же контентом
+        if (+msg.sender_id === currentUser.id) {
             const container = document.getElementById('messages');
-            let _reused = false;
             container?.querySelectorAll('[data-optimistic="1"]').forEach(el => {
-                if (!_reused && el.dataset.content === (msg.content || '') && !el.dataset.replaced) {
-                    _reused = true;
-                    el.dataset.replaced = '1';
-                    el.setAttribute('data-msg-id', _mid);
-                    el.removeAttribute('data-optimistic');
-                    const si = el.querySelector('.status-icon');
-                    if (si) { si.innerHTML = ICONS.check; si.style.color = 'rgba(255,255,255,0.55)'; }
-                }
+                if (el.dataset.content === (msg.content || '')) el.remove();
             });
-            if (_reused) {
-                // Элемент уже правильно отображён в DOM — обновляем кэши и выходим
-                _debouncedLoadChats();
-                if (msg.id) _setLastMsgId(currentChatId, msg.id);
-                return;
-            }
         }
         // Защита от дублей в DOM
         if (_mid && document.querySelector(`[data-msg-id="${CSS.escape(_mid)}"]`)) return;
