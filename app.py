@@ -66,6 +66,8 @@ except ImportError:
 #  ПУТИ И ПАПКИ
 # ══════════════════════════════════════════════════════════
 BASE_DIR         = os.path.dirname(os.path.abspath(__file__))
+IS_DEV           = os.environ.get('FLASK_ENV', 'production') == 'development'
+FRONTEND_URL     = os.environ.get('FRONTEND_URL', 'https://waychat-r4cm.onrender.com')
 UPLOAD_FOLDER    = os.path.join(BASE_DIR, 'static', 'uploads')
 AVATARS_FOLDER   = os.path.join(UPLOAD_FOLDER, 'avatars')
 MESSAGES_FOLDER  = os.path.join(UPLOAD_FOLDER, 'messages')
@@ -179,7 +181,7 @@ app.config.update(
         'connect_args':   {'connect_timeout': 10},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
-    MAX_CONTENT_LENGTH       = 100 * 1024 * 1024,  # 100MB — supports video moments
+    MAX_CONTENT_LENGTH       = 50 * 1024 * 1024,   # 50MB — достаточно для видео-моментов
     SESSION_COOKIE_SAMESITE  = 'Lax',
     SESSION_COOKIE_SECURE    = True,    # HTTPS Render
     SESSION_COOKIE_HTTPONLY  = True,
@@ -190,7 +192,7 @@ app.config.update(
     JSON_SORT_KEYS           = False,
 )
 
-CORS(app, supports_credentials=True, origins=['*'])
+CORS(app, supports_credentials=True, origins=[FRONTEND_URL, 'http://localhost:5000', 'http://127.0.0.1:5000'])
 
 db            = SQLAlchemy(app)
 login_manager = LoginManager(app)
@@ -203,7 +205,7 @@ _REDIS_URL = os.environ.get('REDIS_URL', '').strip()
 socketio = SocketIO(
     app,
     async_mode            = 'threading',
-    cors_allowed_origins  = '*',
+    cors_allowed_origins  = [FRONTEND_URL, 'http://localhost:5000', 'http://127.0.0.1:5000'],
     manage_session        = True,
     path                  = '/socket.io',
     ping_timeout          = 20000,
@@ -338,6 +340,23 @@ def _run_early_migrations():
 with app.app_context():
     try:
         db.create_all()
+        # Принудительно создаём таблицу pending_code если её нет (новая таблица)
+        try:
+            db.session.execute(text('''
+                CREATE TABLE IF NOT EXISTS pending_code (
+                    phone    VARCHAR(20)  PRIMARY KEY,
+                    code     VARCHAR(6)   NOT NULL,
+                    name     VARCHAR(120) DEFAULT '',
+                    username VARCHAR(80)  DEFAULT '',
+                    expires  DOUBLE PRECISION NOT NULL,
+                    is_login BOOLEAN DEFAULT FALSE
+                )
+            '''))
+            db.session.commit()
+            print('✅ pending_code table ready')
+        except Exception as _tbl_e:
+            db.session.rollback()
+            print(f'pending_code table skip: {_tbl_e}')
         _run_early_migrations()
         print('✅ DB migrations OK')
     except Exception as _e:
@@ -1055,7 +1074,7 @@ def login():
             if request.is_json:
                 return jsonify({'success': False, 'error': 'Заполните все поля'}), 400
             flash('Заполните все поля', 'error')
-            return render_template('login.html')
+            return render_template('login.html', is_dev=IS_DEV)
 
         u = User.query.filter_by(phone=phone).first()
         auth_ok = False
@@ -1081,14 +1100,14 @@ def login():
         if request.is_json:
             return jsonify({'success': False, 'error': 'Неправильный номер или пароль'}), 401
         flash('Неправильный номер или пароль', 'error')
-    return render_template('login.html')
+    return render_template('login.html', is_dev=IS_DEV)
 
 
 @app.route('/register', methods=['GET'])
 def register():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
-    return render_template('login.html')
+    return render_template('login.html', is_dev=IS_DEV)
 
 
 _pending_registrations = {}  # Legacy — заменён на PendingCode (БД), оставлен для совместимости
@@ -1226,7 +1245,7 @@ def register_step1():
     if current_user.is_authenticated:
         return jsonify({'success': True, 'redirect': url_for('index')})
     if request.method != 'POST':
-        return render_template('login.html')
+        return render_template('login.html', is_dev=IS_DEV)
     try:
         data     = request.get_json() if request.is_json else request.form
         phone    = (data.get('phone', '') or '').strip()
@@ -1267,7 +1286,7 @@ def register_step2_page():
     if current_user.is_authenticated:
         return jsonify({'success': True, 'redirect': url_for('index')})
     if request.method != 'POST':
-        return render_template('login.html')
+        return render_template('login.html', is_dev=IS_DEV)
     try:
         data  = request.get_json() if request.is_json else request.form
         phone = (data.get('phone', '') or '').strip()
@@ -1348,7 +1367,7 @@ def service_worker():
 
 @app.after_request
 def add_cache_headers(response):
-    """Пункты 1,9: кэш-заголовки для CDN (Cloudflare) и браузера"""
+    """Кэш-заголовки для CDN (Cloudflare) и браузера + Security headers"""
     path = request.path
     # Статика — кэш 1 год (Cloudflare будет кэшировать)
     if path.startswith('/static/') and not path.endswith('.html'):
@@ -1360,6 +1379,15 @@ def add_cache_headers(response):
     # API — no cache
     elif path.startswith('/api/') or path in ['/get_messages/', '/get_my_chats']:
         response.headers['Cache-Control'] = 'no-store'
+
+    # ── Security headers ──────────────────────────────────────
+    response.headers['X-Content-Type-Options']  = 'nosniff'
+    response.headers['X-Frame-Options']         = 'DENY'
+    response.headers['Referrer-Policy']         = 'strict-origin-when-cross-origin'
+    response.headers['Permissions-Policy']      = 'geolocation=(), microphone=(self), camera=(self)'
+    response.headers['X-XSS-Protection']        = '1; mode=block'
+    if not IS_DEV:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
     return response
 
 
@@ -2240,6 +2268,14 @@ def upload_avatar_emoji():
 # ══════════════════════════════════════════════════════════
 # ── Хранилище pending uploads ──
 _pending_uploads = {}  # temp_id → {'status': 'uploading'|'done'|'error', 'url': str, 'ts': float}
+_UPLOAD_TTL = 300  # 5 минут — после этого запись удаляется из памяти
+
+def _cleanup_pending_uploads():
+    """Удаляет устаревшие записи из _pending_uploads (вызывается периодически)"""
+    now = time.monotonic()
+    stale = [k for k, v in list(_pending_uploads.items()) if now - v.get('ts', 0) > _UPLOAD_TTL]
+    for k in stale:
+        _pending_uploads.pop(k, None)
 
 
 def _do_async_upload(file_bytes, mime, folder, temp_id, chat_id, uid, uname, msg_type):
@@ -2324,6 +2360,7 @@ def api_upload():
     file_bytes = file.read()
     uid   = current_user.id
     uname = current_user.name
+    _cleanup_pending_uploads()  # убираем устаревшие записи перед добавлением новой
     temp_id = f'tmp_{uid}_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}'
     _pending_uploads[temp_id] = {'status': 'uploading', 'url': '', 'ts': time.monotonic()}
 
@@ -2701,6 +2738,7 @@ def get_moments():
 
 @app.route('/debug_moments')
 @login_required
+@require_admin
 def debug_moments():
     """Полный debug — показывает ВСЁ"""
     uid     = current_user.id
