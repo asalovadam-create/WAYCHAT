@@ -170,7 +170,7 @@ const WCCache = (() => {
             z-index: 10 !important;
             background: transparent !important;
             padding: 6px 8px !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 20px), 20px) !important;
+            padding-bottom: max(env(safe-area-inset-bottom, 0px) + 18px, 22px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -191,7 +191,7 @@ const WCCache = (() => {
         }
         /* messages: нижний padding небольшой — input-bar теперь в потоке */
         #messages {
-            padding-bottom: 8px !important;
+            padding-bottom: 4px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
@@ -1728,17 +1728,18 @@ function getInitialAvatar(name, sizeClass, uid = '') {
         : sc.includes('w-16') ? 64 : sc.includes('w-14') ? 56
         : sc.includes('w-12') ? 48 : sc.includes('w-11') ? 44
         : sc.includes('w-10') ? 40 : sc.includes('w-9')  ? 36
-        : sc.includes('w-8')  ? 32 : sc.includes('full') ? 100 : 32;
-    // SVG горы — уникальные точки на основе uid/name для разнообразия
-    let h2 = 0; for (let i = 0; i < n.length; i++) h2 = (h2 * 31 + n.charCodeAt(i)) & 0xffff;
-    const p1 = 18 + (h2 & 7);        // левый пик ~18-25%
-    const p2 = 48 + ((h2 >> 3) & 7); // центральный пик ~48-55%
-    const p3 = 78 + ((h2 >> 6) & 5); // правый пик ~78-82%
-    const v1 = 58 + ((h2 >> 9) & 10);
-    const v2 = 35 + ((h2 >> 12) & 12);
-    const v3 = 50 + ((h2 >> 10) & 10);
-    const mountain = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><rect width="100" height="100" rx="50" fill="${color}"/><polygon points="0,100 ${p1},${v1} ${Math.round(p1+(p2-p1)*0.4)},${v1+12} ${p2},${v2} ${Math.round(p2+(p3-p2)*0.35)},${v3} ${p3},${v3-8} 100,100" fill="rgba(255,255,255,0.92)"/></svg>`;
-    return `<div class="${sc} rounded-full" style="width:${sz}px;height:${sz}px;background:${color};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden;border-radius:50%" data-uid="${uid}">${mountain}</div>`;
+        : sc.includes('w-8')  ? 32 : sc.includes('full') ? 100 : 48;
+    // Unique mountain shape per user based on name hash
+    let h2 = 0;
+    for (let i = 0; i < n.length; i++) h2 = (h2 * 31 + n.charCodeAt(i)) & 0xffff;
+    const ax = 18 + (h2 & 7),         ay = 44 + ((h2 >> 4) & 12);
+    const bx = 48 + ((h2 >> 2) & 6),  by = 22 + ((h2 >> 8) & 14);
+    const cx2= 76 + ((h2 >> 6) & 6),  cy = 38 + ((h2 >> 11) & 12);
+    const m1x= Math.round((ax+bx)/2), m1y= Math.round((ay+by)/2)+9;
+    const m2x= Math.round((bx+cx2)/2),m2y= Math.round((by+cy)/2)+7;
+    const pts= `0,100 ${ax},${ay} ${m1x},${m1y} ${bx},${by} ${m2x},${m2y} ${cx2},${cy} 100,100`;
+    const svg= `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 100 100" style="display:block;border-radius:50%"><circle cx="50" cy="50" r="50" fill="${color}"/><polygon points="${pts}" fill="rgba(255,255,255,0.92)"/></svg>`;
+    return `<div class="${sc}" style="width:${sz}px;height:${sz}px;border-radius:50%;overflow:hidden;flex-shrink:0;display:inline-flex" data-uid="${uid}">${svg}</div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -1955,7 +1956,7 @@ body {
 .prof-sheet-inner{position:relative;width:100%;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;background:#1c1c1c;border-radius:22px 22px 0 0;border-top:.5px solid rgba(255,255,255,.08);transform:translateY(100%);transition:transform .35s cubic-bezier(.32,.72,0,1);padding-bottom:20px}
 
 /* ПОИСК — пилл как у TG */
-.search-box { display:flex;align-items:center;gap:8px;background:#2c2c2e;border:none !important;outline:none !important;border-radius:9999px;padding:12px 16px;min-height:50px;box-shadow:none !important;-webkit-appearance:none; }
+.search-box { display:flex;align-items:center;gap:8px;background:#2c2c2e;border:none !important;outline:none !important;border-radius:9999px;padding:10px 14px;min-height:46px;box-shadow:none !important;-webkit-appearance:none; }
 .search-box:focus-within { background:#363638; }
 .search-box * { border:none !important; outline:none !important; box-shadow:none !important; }
 #chat-search-bar { border:none !important; border-bottom:none !important; box-shadow:none !important; outline:none !important; background:var(--bg,#1d1d1e) !important; }
@@ -2028,9 +2029,9 @@ body {
 .msg-row.out { justify-content:flex-end; }
 .msg-row.in  { justify-content:flex-start;align-items:flex-end; }
 
-.bubble { max-width:80%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
+.bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
 .msg-row.out .bubble { background:var(--accent);border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 12px rgba(16,185,129,0.25); }
-.msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3);margin-left:4px; }
+.msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-right:44px;margin-left:6px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3); }
 
 .msg-time { font-size:11px;opacity:0.6;display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:4px;white-space:nowrap; }
 .status-icon { display:flex;align-items:center; }
@@ -2046,7 +2047,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { padding:8px 12px 0;border:none !important;background:transparent;position:sticky;bottom:0;z-index:50; }
+.input-bar { padding:8px 12px 0;border:none !important;background:transparent; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:#333335; }
@@ -2453,7 +2454,7 @@ body {
         <!-- ══ ЧАТЫ ══ -->
         <div id="chats-section">
             <!-- Единая строка: поиск + аватар — sticky, всегда сверху при скролле -->
-            <div id="chat-search-bar" style="display:flex;align-items:center;gap:10px;padding:14px 12px 12px;position:sticky;top:0;z-index:100;background:var(--bg,#1d1d1e);border:none;box-shadow:none;outline:none">
+            <div id="chat-search-bar" style="display:flex;align-items:center;gap:10px;padding:10px 12px 8px;position:sticky;top:0;z-index:100;background:var(--bg,#1d1d1e);border:none;box-shadow:none;outline:none">
                 <!-- Поиск -->
                 <div class="search-box" id="search-box-wrap" style="flex:1">
                     <span style="flex-shrink:0;opacity:.4">${ICONS.search}</span>
@@ -3877,8 +3878,8 @@ let _chatOpenId = 0;
 
 async function openChat(id, name, avatar) {
     const _myOpenId = ++_chatOpenId;  // уникальный ID этого вызова
+    _stopAllChatVideos();
     const _prevChatId = currentChatId;
-    _stopAllChatVideos(); // Останавливаем видео предыдущего чата
     if (_prevChatId) {
         try { socket.emit('leave_chat', { chat_id: _prevChatId }); } catch(e) {}
     }
@@ -4068,7 +4069,6 @@ async function openChat(id, name, avatar) {
 async function openGroupChat(groupId, groupName, groupAvatar) {
     const _myOpenId = ++_chatOpenId;
     _stopAllChatVideos();
-
     currentPartnerId = groupId;
     currentChatId    = null;
     currentChatType  = 'group';
@@ -4511,45 +4511,18 @@ function buildMessageRow(msg, animate = true) {
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
     } else if (type === 'video') {
-        const _vidId   = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
-        const _canvId  = 'cnv_' + _vidId;
-        const _wrpId   = 'wrp_' + _vidId;
-        // Poster: use preview_url if present (uploaded thumbnail)
+        const _vidId = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
+        const _wrpId = 'wrp_' + _vidId;
         const _vposter = msg.preview_url ? `poster="${msg.preview_url}"` : '';
-        // If no preview_url — we'll capture first frame via canvas after load
-        const _needThumb = !msg.preview_url;
-        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:pointer;position:relative"
-            onclick="(function(w,vid){
-                if(!vid)return;
-                if(vid.paused){
-                    /* Останавливаем все другие видео в чате */
-                    document.querySelectorAll('#messages video').forEach(function(v){if(v!==vid){v.pause();v.currentTime=0;const ov2=v.closest('.video-bubble-wrap');if(ov2){const ob=ov2.querySelector('.video-play-overlay');if(ob)ob.style.display='flex';}}});
-                    vid.controls=true;vid.play();
-                    const ov=w.querySelector('.video-play-overlay');if(ov)ov.style.display='none';
-                } else {
-                    vid.pause();
-                    const ov=w.querySelector('.video-play-overlay');if(ov)ov.style.display='flex';
-                }
-            })(this,document.getElementById('${_vidId}'))">
-            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="metadata"
-                   style="display:block;width:100%;max-height:380px;object-fit:cover;background:#111;${_needThumb ? 'filter:blur(0px);' : ''}"
-                   onloadeddata="(function(v,wid){
-                       if(!v.dataset.thumbDone){
-                           v.dataset.thumbDone='1';
-                           try{
-                               const c=document.createElement('canvas');
-                               c.width=v.videoWidth||320;c.height=v.videoHeight||180;
-                               v.currentTime=0.01;
-                               v.addEventListener('seeked',function onS(){
-                                   v.removeEventListener('seeked',onS);
-                                   c.getContext('2d').drawImage(v,0,0,c.width,c.height);
-                                   v.poster=c.toDataURL('image/jpeg',0.8);
-                                   v.style.filter='';
-                               },{once:true});
-                           }catch(e){v.style.filter='';}
-                       }
-                   })(this)"
-                   onended="(function(v,w){v.controls=false;const ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';})(this,document.getElementById('${_wrpId}'))"
+        // preload=auto when no poster so browser can decode first frame for canvas capture
+        const _preload = msg.preview_url ? 'none' : 'auto';
+        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:pointer">
+            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="${_preload}"
+                   style="display:block;width:100%;max-height:380px;object-fit:cover;background:#111"
+                   onloadedmetadata="(function(v){if(!v.dataset.seeking){v.dataset.seeking=1;v.currentTime=0.001;}})(this)"
+                   onseeked="(function(v,wid){if(v.dataset.thumbSet)return;v.dataset.thumbSet=1;try{var c=document.createElement('canvas');c.width=v.videoWidth||320;c.height=v.videoHeight||180;var ctx=c.getContext('2d');ctx.drawImage(v,0,0,c.width,c.height);var d=ctx.getImageData(0,0,1,1).data;if(d[0]+d[1]+d[2]>10){v.setAttribute('poster',c.toDataURL('image/jpeg',0.85));}}catch(e){}v.pause();v.currentTime=0;})(this)"
+                   onclick="(function(v,w){if(!v)return;if(v.paused){document.querySelectorAll('#messages video').forEach(function(o){if(o!==v){o.pause();o.currentTime=0;var ol=o.closest('.video-bubble-wrap');if(ol){var ov=ol.querySelector('.video-play-overlay');if(ov)ov.style.display='flex';}}});v.controls=true;v.play();var ov=w.querySelector('.video-play-overlay');if(ov)ov.style.display='none';}else{v.pause();var ov=w.querySelector('.video-play-overlay');if(ov)ov.style.display='flex';}})(document.getElementById('${_vidId}'),document.getElementById('${_wrpId}'))"
+                   onended="(function(v,w){v.controls=false;var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';})(this,document.getElementById('${_wrpId}'))"
                    onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
             <div class="video-play-overlay">
                 <div class="video-play-btn">
@@ -4591,11 +4564,11 @@ function buildMessageRow(msg, animate = true) {
         contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5;overflow:hidden">${_timeFloat}${linked}</div>`;
     }
 
-    // Аватар полностью убран из сообщений — сообщения прижаты к краю экрана
-    let avatarHtml = '';
+    // No avatar next to messages — bubbles flush to screen edge
     const _showName = !isMe && _grpFirst;
+    let avatarHtml = '';
 
-    // В групповом чате — показываем имя отправителя (only on first in group)
+    // Для группового чата — показываем имя отправителя (only on first in group)
     let senderNameHtml = '';
     if (!isMe && _showName && currentChatType === 'group' && msg.sender_name) {
         senderNameHtml = `<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:3px">${msg.sender_name}</div>`;
@@ -12064,9 +12037,8 @@ async function answerIncomingCall() {
 }
 
 function _stopAllChatVideos() {
-    // Останавливаем все видео в чате — иначе звук играет в фоне
     document.querySelectorAll('#messages video, .video-bubble-wrap video').forEach(function(v) {
-        try { v.pause(); v.currentTime = 0; v.src = v.src; } catch(e) {}
+        try { v.pause(); v.currentTime = 0; } catch(e) {}
     });
 }
 
