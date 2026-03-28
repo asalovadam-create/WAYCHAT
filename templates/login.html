@@ -90,7 +90,7 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
 }
 .field input:focus { border-color:rgba(16,185,129,0.5); }
 .field input::placeholder { color:var(--text2); }
-.field input.code-inp { text-align:center; font-size:34px; font-weight:700; letter-spacing:12px; padding:16px 10px; }
+.field input.code-inp { text-align:center; font-size:32px; font-weight:700; letter-spacing:8px; padding:16px 18px; font-variant-numeric:tabular-nums; }
 .hint { font-size:12px; color:var(--text2); margin-top:6px; padding:0 4px; }
 .hint.ok  { color:var(--accent); }
 .hint.bad { color:var(--red); }
@@ -127,6 +127,87 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
 .ci-flag { font-size:24px; flex-shrink:0; }
 .ci-name { flex:1; font-size:16px; }
 .ci-code { font-size:15px; color:var(--text2); font-weight:600; }
+
+/* ── ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ ── */
+.privacy-wrap {
+  width:100%; margin-top:14px; margin-bottom:4px;
+  display:flex; align-items:flex-start; gap:12px;
+  cursor:pointer; -webkit-tap-highlight-color:transparent;
+  padding:4px 0;
+}
+.privacy-check {
+  width:22px; height:22px; border-radius:7px;
+  border:2px solid rgba(255,255,255,0.25);
+  background:var(--sur2); flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  transition:all 0.18s cubic-bezier(0.34,1.56,0.64,1);
+  margin-top:1px;
+}
+.privacy-check svg { opacity:0; transform:scale(0.5); transition:all 0.18s cubic-bezier(0.34,1.56,0.64,1); }
+.privacy-wrap.checked .privacy-check {
+  background:var(--accent); border-color:var(--accent);
+  box-shadow:0 0 16px rgba(16,185,129,0.35);
+}
+.privacy-wrap.checked .privacy-check svg { opacity:1; transform:scale(1); }
+.privacy-text {
+  font-size:13px; color:var(--text2); line-height:1.5; flex:1;
+}
+.privacy-text a {
+  color:var(--accent); text-decoration:none; font-weight:600;
+  border-bottom:1px solid rgba(16,185,129,0.3);
+}
+.privacy-text a:active { opacity:0.7; }
+
+/* ── ПОЛИТИКА — ПОЛНЫЙ ЭКРАН ── */
+#sc-privacy {
+  position:fixed; inset:0; z-index:9999;
+  background:var(--bg); overflow-y:auto;
+  display:none; flex-direction:column;
+  padding:0;
+}
+#sc-privacy.open { display:flex; }
+.privacy-header {
+  position:sticky; top:0; background:var(--bg);
+  border-bottom:1px solid var(--border);
+  padding:max(env(safe-area-inset-top,0px),16px) 16px 14px;
+  display:flex; align-items:center; gap:14px; z-index:10;
+  backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+}
+.privacy-header h2 { font-size:17px; font-weight:700; flex:1; }
+.privacy-body {
+  padding:24px 24px max(env(safe-area-inset-bottom,0px),40px);
+  max-width:680px; margin:0 auto; width:100%;
+}
+.privacy-body h3 {
+  font-size:15px; font-weight:700; margin:24px 0 8px;
+  color:var(--accent);
+}
+.privacy-body p {
+  font-size:14px; line-height:1.65; color:rgba(255,255,255,0.75);
+  margin-bottom:10px;
+}
+.privacy-body ul {
+  padding-left:18px; margin-bottom:10px;
+}
+.privacy-body ul li {
+  font-size:14px; line-height:1.65; color:rgba(255,255,255,0.75);
+  margin-bottom:6px;
+}
+.privacy-close-btn {
+  width:36px; height:36px; border-radius:50%;
+  background:rgba(255,255,255,0.08); border:none;
+  color:white; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  flex-shrink:0; transition:background 0.15s;
+}
+.privacy-close-btn:active { background:rgba(255,255,255,0.16); }
+.privacy-agree-btn {
+  width:100%; max-width:420px; margin:28px auto 0;
+  padding:16px; background:var(--accent); border:none; border-radius:16px;
+  color:#000; font:700 16px/1 -apple-system,sans-serif; cursor:pointer;
+  box-shadow:0 4px 24px rgba(16,185,129,0.3); display:block;
+  -webkit-appearance:none;
+}
+
 </style>
 </head>
 <body>
@@ -179,7 +260,8 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
     <div class="field">
       <label>Код подтверждения</label>
       <input id="login-code" type="tel" inputmode="numeric" class="code-inp"
-             placeholder="000000" autocomplete="one-time-code"
+             placeholder="000000" autocomplete="one-time-code" maxlength="10"
+             oninput="this.value=this.value.replace(/\D/g,'')"
              onkeydown="if(event.key==='Enter')doLogin()">
     </div>
     <button class="btn-main" id="btn-login" onclick="doLogin()">Войти</button>
@@ -215,7 +297,17 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
              oninput="checkUsername(this)" onkeydown="if(event.key==='Enter')doRegStep1()">
       <div class="hint" id="un-hint">Лат. буквы, цифры и _ , минимум 4 символа</div>
     </div>
-    <button class="btn-main" id="btn-reg-info" onclick="doRegStep1()">Получить код →</button>
+    <div class="privacy-wrap" id="privacy-wrap-reg" onclick="togglePrivacy()">
+      <div class="privacy-check" id="privacy-check-reg">
+        <svg width="13" height="10" viewBox="0 0 13 10" fill="none">
+          <path d="M1 5l4 4L12 1" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="privacy-text">
+        Я прочитал(а) и принимаю <a href="#" onclick="openPrivacy(event)">Политику конфиденциальности</a> WayChat
+      </div>
+    </div>
+    <button class="btn-main" id="btn-reg-info" onclick="doRegStep1()" disabled>Получить код →</button>
   </div>
 </div>
 
@@ -240,7 +332,8 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
     <div class="field">
       <label>Код подтверждения</label>
       <input id="reg-code" type="tel" inputmode="numeric" class="code-inp"
-             placeholder="000000" autocomplete="one-time-code"
+             placeholder="000000" autocomplete="one-time-code" maxlength="10"
+             oninput="this.value=this.value.replace(/\D/g,'')"
              onkeydown="if(event.key==='Enter')doRegStep2()">
     </div>
     <button class="btn-main" id="btn-reg-code" onclick="doRegStep2()">Создать аккаунт</button>
@@ -560,8 +653,8 @@ async function requestLoginCode() {
 // ── 2: ВОЙТИ ──
 async function doLogin() {
   showErr('err-code-login','');
-  const code = document.getElementById('login-code').value.trim();
-  if (!code || code.length < 4) { showErr('err-code-login','Введите код'); return; }
+  const code = document.getElementById('login-code').value.replace(/\D/g,'').trim();
+  if (!code || code.length < 4) { showErr('err-code-login','Введите код (4+ цифры)'); return; }
   busy('btn-login', true, 'Вхожу…');
   try {
     const r = await fetch('/login_step2', {
@@ -584,6 +677,7 @@ async function doLogin() {
 
 // ── 3: РЕГИСТРАЦИЯ - данные ──
 async function doRegStep1() {
+  if (!_privacyAccepted) { showErr('err-reg-info','Примите политику конфиденциальности'); return; }
   showErr('err-reg-info','');
   const name  = document.getElementById('r-name').value.trim();
   const uname = document.getElementById('r-un').value.trim();
@@ -613,8 +707,8 @@ async function doRegStep1() {
 // ── 4: РЕГИСТРАЦИЯ - код ──
 async function doRegStep2() {
   showErr('err-code-reg','');
-  const code = document.getElementById('reg-code').value.trim();
-  if (!code) { showErr('err-code-reg','Введите код'); return; }
+  const code = document.getElementById('reg-code').value.replace(/\D/g,'').trim();
+  if (!code || code.length < 4) { showErr('err-code-reg','Введите код (4+ цифры)'); return; }
   busy('btn-reg-code', true, 'Создаю аккаунт…');
   try {
     const r = await fetch('/register_step2', {
@@ -643,6 +737,99 @@ window.addEventListener('DOMContentLoaded', () => {
   {% endfor %}{% endif %}
   {% endwith %}
 });
+
+// ── ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ ──
+let _privacyAccepted = false;
+
+function togglePrivacy() {
+  _privacyAccepted = !_privacyAccepted;
+  const wrap  = document.getElementById('privacy-wrap-reg');
+  const btn   = document.getElementById('btn-reg-info');
+  if (wrap) wrap.classList.toggle('checked', _privacyAccepted);
+  if (btn)  btn.disabled = !_privacyAccepted;
+}
+
+function openPrivacy(e) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  document.getElementById('sc-privacy').classList.add('open');
+  document.getElementById('sc-privacy').scrollTop = 0;
+}
+
+function closePrivacy() {
+  document.getElementById('sc-privacy').classList.remove('open');
+}
+
+function agreePrivacy() {
+  if (!_privacyAccepted) {
+    _privacyAccepted = true;
+    const wrap = document.getElementById('privacy-wrap-reg');
+    const btn  = document.getElementById('btn-reg-info');
+    if (wrap) wrap.classList.add('checked');
+    if (btn)  btn.disabled = false;
+  }
+  closePrivacy();
+}
 </script>
+
+<!-- ПОЛИТИКА КОНФИДЕНЦИАЛЬНОСТИ -->
+<div id="sc-privacy">
+  <div class="privacy-header">
+    <button class="privacy-close-btn" onclick="closePrivacy()">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M19 12H5M5 12l7 7M5 12l7-7" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <h2>Политика конфиденциальности</h2>
+  </div>
+  <div class="privacy-body">
+    <p>Дата последнего обновления: <b>28 марта 2026 г.</b></p>
+    <p>Настоящая Политика конфиденциальности описывает, как мессенджер <b>WayChat</b> собирает, использует и защищает ваши персональные данные.</p>
+
+    <h3>1. Какие данные мы собираем</h3>
+    <ul>
+      <li><b>Номер телефона</b> — для идентификации и входа в аккаунт.</li>
+      <li><b>Имя и юзернейм</b> — для отображения в профиле.</li>
+      <li><b>Аватар</b> — фотография профиля, загружаемая по желанию.</li>
+      <li><b>Сообщения</b> — текстовые сообщения, фото, видео и файлы, которые вы отправляете.</li>
+      <li><b>Технические данные</b> — IP-адрес, тип устройства, время последнего входа.</li>
+    </ul>
+
+    <h3>2. Как мы используем данные</h3>
+    <ul>
+      <li>Для обеспечения работы мессенджера и доставки сообщений.</li>
+      <li>Для защиты от спама, мошенничества и нарушений правил.</li>
+      <li>Для улучшения качества сервиса.</li>
+      <li>Мы <b>не продаём</b> ваши данные третьим лицам.</li>
+      <li>Мы <b>не используем</b> данные для таргетированной рекламы.</li>
+    </ul>
+
+    <h3>3. Хранение данных</h3>
+    <p>Ваши данные хранятся на защищённых серверах. Сообщения хранятся до тех пор, пока вы не удалите их или аккаунт. Мы применяем шифрование при передаче данных (HTTPS/TLS).</p>
+
+    <h3>4. Передача данных третьим лицам</h3>
+    <p>Мы не передаём ваши данные третьим лицам, кроме случаев, предусмотренных законодательством (по запросу суда или правоохранительных органов).</p>
+
+    <h3>5. Ваши права</h3>
+    <ul>
+      <li>Право на доступ к своим данным.</li>
+      <li>Право на исправление неточных данных.</li>
+      <li>Право на удаление аккаунта и всех данных.</li>
+      <li>Право на ограничение обработки данных.</li>
+    </ul>
+
+    <h3>6. Удаление аккаунта</h3>
+    <p>Вы можете удалить аккаунт в настройках приложения. При удалении все ваши сообщения и данные будут безвозвратно удалены с наших серверов в течение 30 дней.</p>
+
+    <h3>7. Возраст</h3>
+    <p>WayChat предназначен для лиц старше <b>13 лет</b>. Мы не собираем намеренно данные детей младше 13 лет.</p>
+
+    <h3>8. Изменения политики</h3>
+    <p>Мы можем обновлять настоящую Политику. О существенных изменениях мы уведомим вас через приложение.</p>
+
+    <h3>9. Контакты</h3>
+    <p>По вопросам конфиденциальности: <b>privacy@waychat.app</b></p>
+
+    <button class="privacy-agree-btn" onclick="agreePrivacy()">✓ Принимаю и возвращаюсь</button>
+  </div>
+</div>
+
 </body>
 </html>
