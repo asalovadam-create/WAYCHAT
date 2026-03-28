@@ -251,6 +251,74 @@ const WCCache = (() => {
         .wc-skeleton { animation: wcSkPulse 1.5s ease-in-out infinite; background: rgba(255,255,255,0.07); }
     `;
     document.head.appendChild(st);
+    // ── Avatar System CSS ──
+    const _avaSt = document.createElement('style');
+    _avaSt.id = 'wc-avatar-system';
+    _avaSt.textContent = `
+/* ═══════════════════════════════════════════════════
+   WAYCHAT AVATAR SYSTEM v2 — Unified, Production
+   ═══════════════════════════════════════════════════ */
+:root {
+  --avatar-chat:    52px;   /* список чатов */
+  --avatar-header:  36px;   /* header чата  */
+  --avatar-profile: 96px;   /* профиль      */
+  --avatar-msg:     34px;   /* в сообщениях (group) */
+}
+/* Базовый компонент */
+.wc-ava {
+  border-radius: 50%;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  background: #2c2c2e;
+}
+.wc-ava img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+/* Размеры */
+.wc-ava-chat    { width: var(--avatar-chat);    height: var(--avatar-chat);    min-width: var(--avatar-chat); }
+.wc-ava-header  { width: var(--avatar-header);  height: var(--avatar-header);  min-width: var(--avatar-header); }
+.wc-ava-profile { width: var(--avatar-profile); height: var(--avatar-profile); min-width: var(--avatar-profile); }
+.wc-ava-msg     { width: var(--avatar-msg);     height: var(--avatar-msg);     min-width: var(--avatar-msg); }
+/* Инициалы внутри аватара */
+.wc-ava-initials {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  font-family: -apple-system, SF Pro Display, system-ui, sans-serif;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.5px;
+  line-height: 1;
+  text-transform: uppercase;
+  border-radius: 50%;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* Размеры шрифта пропорционально */
+.wc-ava-chat    .wc-ava-initials { font-size: 20px; }
+.wc-ava-header  .wc-ava-initials { font-size: 14px; }
+.wc-ava-profile .wc-ava-initials { font-size: 36px; }
+.wc-ava-msg     .wc-ava-initials { font-size: 13px; }
+/* Online dot */
+.wc-ava-wrap { position: relative; flex-shrink: 0; display: inline-flex; }
+.wc-ava-online {
+  position: absolute; bottom: 1px; right: 1px;
+  width: 13px; height: 13px;
+  background: var(--accent);
+  border: 2.5px solid var(--bg);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px var(--bg);
+}
+`;
+    document.head.appendChild(_avaSt);
+
 
     // ── Offline banner ──
     const ob = () => {
@@ -1695,64 +1763,72 @@ function getVerifyBadge(user, size=14) {
 }
 
 function getAvatarHtml(user, sizeClass = 'w-12 h-12', forceRefresh = false) {
-    if (!user) return `<div class="${sizeClass} bg-zinc-800 rounded-full"></div>`;
-    // null как строка "null" или объект null — оба заменяем пустой строкой
+    if (!user) return `<div class="wc-ava wc-ava-chat"></div>`;
     const avatar = (!user.avatar || user.avatar === 'null' || user.avatar === 'undefined') ? '' : user.avatar;
     const name   = user.name || user.username || '?';
-    const cacheKey = `${user.id || name}_${avatar}_${sizeClass}`;
+    const uid    = user.id || '';
+    const cacheKey = `${uid}_${avatar}_${sizeClass}`;
     if (!forceRefresh && avatarHtmlCache[cacheKey]) return avatarHtmlCache[cacheKey];
+
+    // Map sizeClass → variant class
+    const sc = sizeClass || '';
+    const sizeVariant = sc.includes('w-28') || sc.includes('w-20') || sc.includes('w-16') ? 'wc-ava-profile'
+        : sc.includes('w-14') || sc.includes('w-12') ? 'wc-ava-chat'
+        : sc.includes('w-10') || sc.includes('w-11') ? 'wc-ava-msg'
+        : sc.includes('w-8')  || sc.includes('w-9')  ? 'wc-ava-header'
+        : sc.includes('full') ? 'wc-ava-profile'
+        : 'wc-ava-chat';
 
     let html;
     if (avatar.startsWith('emoji:')) {
         const emoji = avatar.split(':')[1];
-        const fontSize = sizeClass.includes('w-28') ? 'text-4xl' : sizeClass.includes('w-16') ? 'text-3xl' : sizeClass.includes('w-14') ? 'text-2xl' : sizeClass.includes('w-10') ? 'text-xl' : 'text-lg';
-        html = `<div class="${sizeClass} bg-zinc-900/80 rounded-full flex items-center justify-center ${fontSize} shadow-inner border border-white/5" data-uid="${user.id||''}">${emoji}</div>`;
+        const fs = sizeVariant === 'wc-ava-profile' ? '36px'
+            : sizeVariant === 'wc-ava-chat' ? '22px'
+            : sizeVariant === 'wc-ava-msg'  ? '16px' : '14px';
+        html = `<div class="wc-ava ${sizeVariant}" style="background:#2c2c2e;font-size:${fs}" data-uid="${uid}">${emoji}</div>`;
     } else if (avatar && !avatar.includes('default_avatar')) {
         const src = forceRefresh ? avatar + '?t=' + Date.now() : avatar;
-        html = `<img src="${src}" class="${sizeClass} rounded-full object-cover shadow-md border border-white/10" style="border-radius:50%;object-fit:cover" loading="lazy" data-uid="${user.id||''}" onerror="this.outerHTML=getInitialAvatar('${name.replace(/'/g,"\\'")}','${sizeClass}','${user.id||''}')">`;
+        const fallback = getInitialAvatar(name, sizeClass, uid);
+        html = `<div class="wc-ava ${sizeVariant}" data-uid="${uid}"><img src="${src}" loading="lazy" onerror="this.parentElement.outerHTML=getInitialAvatar('${name.replace(/'/g,"\\'").replace(/"/g,'&quot;')}','${sizeClass}','${uid}')"></div>`;
     } else {
-        html = getInitialAvatar(name, sizeClass, user.id);
+        html = getInitialAvatar(name, sizeClass, uid);
     }
     avatarHtmlCache[cacheKey] = html;
     return html;
 }
 
 function getInitialAvatar(name, sizeClass, uid = '') {
-    const colors = ['#f43f5e','#6366f1','#10b981','#f59e0b','#3b82f6','#8b5cf6','#ec4899','#06b6d4'];
-    const lights = ['#ff7096','#818cf8','#34d399','#fbbf24','#60a5fa','#a78bfa','#f472b6','#22d3ee'];
+    // Gradient palette — 8 beautiful gradients, consistent per user
+    const GRADIENTS = [
+        ['#f43f5e','#e11d48'],  // rose
+        ['#6366f1','#4f46e5'],  // indigo
+        ['#10b981','#059669'],  // emerald
+        ['#f59e0b','#d97706'],  // amber
+        ['#3b82f6','#2563eb'],  // blue
+        ['#8b5cf6','#7c3aed'],  // violet
+        ['#ec4899','#db2777'],  // pink
+        ['#06b6d4','#0891b2'],  // cyan
+    ];
     const n = name || '?';
     let hash = 0;
     for (let i = 0; i < n.length; i++) hash = n.charCodeAt(i) + ((hash << 5) - hash);
-    const ci = Math.abs(hash) % colors.length;
-    const baseColor  = colors[ci];
-    const lightColor = lights[ci];
+    const gi = Math.abs(hash) % GRADIENTS.length;
+    const [c1, c2] = GRADIENTS[gi];
+    // Initials: up to 2 chars
+    const parts = n.trim().split(/\s+/);
+    const initials = parts.length >= 2
+        ? (parts[0][0] + parts[parts.length-1][0]).toUpperCase()
+        : n.slice(0,2).toUpperCase();
+    // Map sizeClass → wc-ava size class
     const sc = sizeClass || '';
-    // Tailwind → px (точное соответствие классам)
-    const sz = sc.includes('w-28') ? 112 : sc.includes('w-20') ? 80
-             : sc.includes('w-16') ? 64  : sc.includes('w-14') ? 56
-             : sc.includes('w-12') ? 48  : sc.includes('w-11') ? 44
-             : sc.includes('w-10') ? 40  : sc.includes('w-9')  ? 36
-             : sc.includes('w-8')  ? 32  : sc.includes('full') ? 100 : 48;
-    // Уникальные горы на основе имени — 5 вершин
-    let h = 0; for (let i = 0; i < n.length; i++) h = (h * 31 + n.charCodeAt(i)) & 0xfffff;
-    // Задний хребет (дальние горы — темнее, выше)
-    const b1x = 10 + (h & 7),        b1y = 38 + ((h >> 3)  & 10);
-    const b2x = 35 + ((h >> 6) & 6), b2y = 20 + ((h >> 10) & 12);
-    const b3x = 58 + ((h >> 4) & 8), b3y = 30 + ((h >> 14) & 10);
-    const b4x = 85 + ((h >> 8) & 8), b4y = 35 + ((h >> 17) & 8);
-    // Передний хребет (ближние горы — светлее, ниже)
-    const f1x = 0,                    f1y = 65 + ((h >> 2)  & 8);
-    const f2x = 28 + ((h >> 5) & 8), f2y = 48 + ((h >> 9)  & 10);
-    const f3x = 52 + ((h >> 7) & 6), f3y = 55 + ((h >> 13) & 8);
-    const f4x = 75 + ((h >> 6) & 8), f4y = 50 + ((h >> 16) & 10);
-    const f5x = 100,                  f5y = 62 + ((h >> 3)  & 8);
-    // Snow caps (маленькие белые треугольники на пиках)
-    const sc1 = `${b2x},${b2y} ${b2x-4},${b2y+8} ${b2x+4},${b2y+8}`;
-    const sc2 = `${b3x},${b3y} ${b3x-3},${b3y+7} ${b3x+3},${b3y+7}`;
-    const sc3 = `${f2x},${f2y} ${f2x-3},${f2y+7} ${f2x+3},${f2y+7}`;
-    const gid = 'mg' + Math.abs(hash).toString(36);
-    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${sz}" height="${sz}" viewBox="0 0 100 100"><defs><radialGradient id="${gid}b" cx="50%" cy="30%" r="70%"><stop offset="0%" stop-color="${lightColor}"/><stop offset="100%" stop-color="${baseColor}"/></radialGradient><radialGradient id="${gid}f" cx="50%" cy="80%" r="60%"><stop offset="0%" stop-color="${lightColor}" stop-opacity="0.55"/><stop offset="100%" stop-color="${baseColor}" stop-opacity="0.85"/></radialGradient></defs><circle cx="50" cy="50" r="50" fill="url(#${gid}b)"/><polygon points="${b1x},100 ${b1x},${b1y} ${Math.round((b1x+b2x)/2)},${Math.round((b1y+b2y)/2)+10} ${b2x},${b2y} ${Math.round((b2x+b3x)/2)},${Math.round((b2y+b3y)/2)+8} ${b3x},${b3y} ${Math.round((b3x+b4x)/2)},${Math.round((b3y+b4y)/2)+9} ${b4x},${b4y} ${b4x},100" fill="rgba(0,0,0,0.28)"/><polygon points="${f1x},100 ${f1x},${f1y} ${Math.round((f1x+f2x)/2)},${Math.round((f1y+f2y)/2)+6} ${f2x},${f2y} ${Math.round((f2x+f3x)/2)},${Math.round((f2y+f3y)/2)+5} ${f3x},${f3y} ${Math.round((f3x+f4x)/2)},${Math.round((f3y+f4y)/2)+6} ${f4x},${f4y} ${Math.round((f4x+f5x)/2)},${Math.round((f4y+f5y)/2)+5} ${f5x},${f5y} ${f5x},100" fill="url(#${gid}f)"/><polygon points="${sc1}" fill="rgba(255,255,255,0.7)"/><polygon points="${sc2}" fill="rgba(255,255,255,0.65)"/><polygon points="${sc3}" fill="rgba(255,255,255,0.6)"/></svg>`;
-    return `<div class="${sc}" style="width:${sz}px;height:${sz}px;min-width:${sz}px;border-radius:50%;overflow:hidden;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center" data-uid="${uid}">${svg}</div>`;
+    const sizeVariant = sc.includes('w-28') || sc.includes('w-20') || sc.includes('w-16') ? 'wc-ava-profile'
+        : sc.includes('w-12') || sc.includes('w-14') ? 'wc-ava-chat'
+        : sc.includes('w-10') || sc.includes('w-11') ? 'wc-ava-msg'
+        : sc.includes('w-8')  || sc.includes('w-9')  ? 'wc-ava-header'
+        : sc.includes('full') ? 'wc-ava-profile'
+        : 'wc-ava-chat';
+    const gid = 'ag' + Math.abs(hash).toString(36);
+    return `<div class="wc-ava ${sizeVariant}" style="background:linear-gradient(135deg,${c1},${c2})" data-uid="${uid}"><div class="wc-ava-initials">${initials}</div></div>`;
 }
 
 function invalidateAvatarCache(userId, newAvatar) {
@@ -1988,12 +2064,12 @@ body {
 .fab-plus:active { transform:scale(0.88); }
 
 /* ЧАТЫ — TG минимализм */
-.chat-item{display:flex;align-items:center;gap:12px;padding:7px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
+.chat-item{display:flex;align-items:center;gap:12px;padding:8px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
 /* TG-style divider: тонкая линия снизу, начинается после аватара */
 .chat-item + .chat-item { border-top: 0.33px solid rgba(255,255,255,0.07); }
-.online-dot{position:absolute;bottom:1px;right:1px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 6px var(--accent)}
+.online-dot{position:absolute;bottom:2px;right:2px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 0 1.5px var(--bg),0 0 6px var(--accent)}
 
 /* СВАЙП ЖЕСТЫ */
 .chat-swipe-container{position:relative;overflow:hidden;touch-action:pan-y}
@@ -2391,7 +2467,7 @@ body {
 }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: 10px !important; padding-top: 8px !important; }
+    .input-bar { padding-bottom: 12px !important; padding-top: 8px !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
@@ -2838,7 +2914,7 @@ body {
                 <span id="chat-back-badge" style="display:none;position:absolute;top:-3px;right:-5px;min-width:16px;height:16px;background:#f59e0b;color:#000;font-size:9px;font-weight:800;border-radius:8px;padding:0 3px;align-items:center;justify-content:center;line-height:16px;pointer-events:none"></span>
             </button>
             <div style="position:relative;cursor:pointer" onclick="showPartnerProfile()">
-                <div id="chat-ava-header" style="width:40px;height:40px;border-radius:50%;overflow:hidden;flex-shrink:0;"></div>
+                <div id="chat-ava-header" style="width:var(--avatar-header);height:var(--avatar-header);border-radius:50%;overflow:hidden;flex-shrink:0;min-width:var(--avatar-header);"></div>
                 <div id="chat-online-dot" class="online-dot" style="display:none"></div>
             </div>
             <div onclick="showPartnerProfile()" style="cursor:pointer">
@@ -3953,7 +4029,7 @@ async function openChat(id, name, avatar) {
         const cachedSrc = chatPartnerAvatarSrc[id];
         headerBox.innerHTML = cachedSrc
             ? `<img src="${cachedSrc}" class="w-10 h-10 rounded-full object-cover" data-uid="${id}" style="flex-shrink:0;border-radius:50%;object-fit:cover">`
-            : getAvatarHtml({id, name, avatar}, 'w-10 h-10');
+            : getAvatarHtml({id, name, avatar}, 'w-9 h-9');
         if (avatar && !avatar.includes('default') && !cachedSrc) {
             AvatarCache.getOrFetch(avatar, id).then(src => {
                 if (src) {
@@ -4112,7 +4188,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
     if (elDot)    elDot.style.display  = 'none';
 
     const headerBox = document.getElementById('chat-ava-header');
-    if (headerBox) headerBox.innerHTML = getAvatarHtml({id:groupId, name:groupName, avatar:groupAvatar}, 'w-10 h-10');
+    if (headerBox) headerBox.innerHTML = getAvatarHtml({id:groupId, name:groupName, avatar:groupAvatar}, 'w-9 h-9');
 
     VirtualList.destroy();
     msgs.innerHTML = '';
@@ -4153,7 +4229,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 
         if (elStatus) elStatus.textContent = `${data.member_count || 0} участников`;
         if (data.group_avatar && headerBox) {
-            headerBox.innerHTML = getAvatarHtml({id:groupId, name:groupName, avatar:data.group_avatar}, 'w-10 h-10');
+            headerBox.innerHTML = getAvatarHtml({id:groupId, name:groupName, avatar:data.group_avatar}, 'w-9 h-9');
             chatPartnerAvatarSrc[groupId] = data.group_avatar;
         }
 
@@ -4530,9 +4606,9 @@ function buildMessageRow(msg, animate = true) {
         contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:pointer">
             <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="auto" muted
                    style="display:block;width:100%;max-height:380px;object-fit:cover;background:#111"
-                   oncanplay="(function(v){if(v._wcThumb)return;v._wcThumb=1;var c=document.createElement('canvas');c.width=v.videoWidth||320;c.height=v.videoHeight||180;function grab(){try{var ctx=c.getContext('2d');ctx.drawImage(v,0,0,c.width,c.height);var px=ctx.getImageData(0,0,4,4).data;var br=0;for(var i=0;i<px.length;i+=4)br+=px[i]+px[i+1]+px[i+2];if(br>200){v.setAttribute('poster',c.toDataURL('image/jpeg',0.85));}}catch(e){}}if(typeof v.requestVideoFrameCallback==='function'){v.requestVideoFrameCallback(grab);}else{grab();}})(this)"
+                   oncanplay="(function(v){if(v._wct)return;v._wct=1;function _grab(){try{var cv=document.createElement('canvas');cv.width=v.videoWidth||320;cv.height=v.videoHeight||180;cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);var px=cv.getContext('2d').getImageData(0,0,8,8).data;var s=0;for(var i=0;i<px.length;i+=4)s+=px[i]+px[i+1]+px[i+2];if(s>400)v.setAttribute('poster',cv.toDataURL('image/jpeg',0.8));}catch(e){}}if(typeof v.requestVideoFrameCallback==='function'){v.requestVideoFrameCallback(_grab);}else{_grab();}})(this)"
                    onclick="(function(v,w){if(!v)return;if(v.paused){document.querySelectorAll('#messages video').forEach(function(o){if(o!==v){o.pause();o.removeAttribute('controls');var ol=o.closest('.video-bubble-wrap');if(ol){var ob=ol.querySelector('.video-play-overlay');if(ob)ob.style.display='flex';}}});v.muted=false;v.removeAttribute('muted');v.controls=true;v.play();var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='none';}else{v.pause();var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';}})(document.getElementById('${_vidId}'),document.getElementById('${_wrpId}'))"
-                   onended="(function(v,w){v.removeAttribute('controls');var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';})(this,document.getElementById('${_wrpId}'))"
+                   onended="(function(v,w){v.removeAttribute('controls');v.muted=true;v.setAttribute('muted','');var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';})(this,document.getElementById('${_wrpId}'))"
                    onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
             <div class="video-play-overlay">
                 <div class="video-play-btn">
@@ -4574,7 +4650,7 @@ function buildMessageRow(msg, animate = true) {
         contentHtml = `<div style="white-space:pre-wrap;word-break:break-word;line-height:1.5;overflow:hidden">${_timeFloat}${linked}</div>`;
     }
 
-    // No avatar in message rows — messages flush to screen edge like TG
+    // Avatars removed from message rows — messages flush to screen edge (like TG private chat)
     const _showName = !isMe && _grpFirst;
     let avatarHtml = '';
 
@@ -4637,12 +4713,37 @@ function showFloatingHeart(row) {
 }
 
 function renderNewMessage(msg, animate = true) {
-    if (!msg._optimistic) {
+    if (!msg._optimistic && msg.id) {
         const ck = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
         if (messagesByChatCache[ck]) {
-            messagesByChatCache[ck].messages.push(msg);
-            clearTimeout(renderNewMessage._t);
-            renderNewMessage._t = setTimeout(() => MsgDB.save(ck, messagesByChatCache[ck].messages), 1500);
+            // Dedup: never push if id already in cache
+            const _exists = messagesByChatCache[ck].messages.some(m =>
+                String(m.id) === String(msg.id) || (m._optimistic && m.content === msg.content && +m.sender_id === +msg.sender_id)
+            );
+            if (!_exists) {
+                messagesByChatCache[ck].messages.push(msg);
+                clearTimeout(renderNewMessage._t);
+                renderNewMessage._t = setTimeout(() => MsgDB.save(ck, messagesByChatCache[ck].messages), 1500);
+            }
+        }
+    }
+    // Remove any matching optimistic row before appending real message
+    if (!msg._optimistic && msg.id) {
+        const container = document.getElementById('messages');
+        if (container) {
+            container.querySelectorAll('[data-optimistic="1"]').forEach(function(el) {
+                if (el.dataset.content === (msg.content || '') && !el.dataset.replaced) {
+                    el.dataset.replaced = '1';
+                    el.setAttribute('data-msg-id', msg.id);
+                    el.removeAttribute('data-optimistic');
+                    // Update status icon to sent
+                    const si = el.querySelector('.status-icon');
+                    if (si) { si.innerHTML = ICONS.check; si.style.color = 'rgba(255,255,255,0.55)'; }
+                    return; // reuse the DOM row instead of removing
+                }
+            });
+            // Check if we reused an optimistic row
+            if (document.querySelector(`[data-msg-id="${CSS.escape(String(msg.id))}"]`)) return;
         }
     }
     VirtualList.appendMessage(msg);
@@ -12048,7 +12149,7 @@ async function answerIncomingCall() {
 
 function _stopAllChatVideos() {
     document.querySelectorAll('#messages video, .video-bubble-wrap video').forEach(function(v) {
-        try { v.pause(); v.removeAttribute('controls'); v.muted = true; } catch(e) {}
+        try { v.pause(); v.removeAttribute('controls'); v.muted = true; v.setAttribute('muted',''); } catch(e) {}
     });
 }
 
