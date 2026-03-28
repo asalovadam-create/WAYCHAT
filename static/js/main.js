@@ -260,7 +260,7 @@ const WCCache = (() => {
    WAYCHAT AVATAR SYSTEM v2 — Unified, Production
    ═══════════════════════════════════════════════════ */
 :root {
-  --avatar-chat:    52px;   /* список чатов */
+  --avatar-chat:    56px;   /* список чатов */
   --avatar-header:  36px;   /* header чата  */
   --avatar-profile: 96px;   /* профиль      */
   --avatar-msg:     34px;   /* в сообщениях (group) */
@@ -628,7 +628,7 @@ function _updateScrollBtn(el) {
 //
 (function _applyInputBarSettings() {
     const S = {
-        bottomOffset : 75,   // px — поднять панель выше (например 20)
+        bottomOffset : 0,   // px — поднять панель выше (например 20)
         sideMargin   : 8,   // px — отступы по бокам
         pillRadius   : 26,  // px — скругление капсулы
     };
@@ -2040,7 +2040,7 @@ body {
 .fab-plus:active { transform:scale(0.88); }
 
 /* ЧАТЫ — TG минимализм */
-.chat-item{display:flex;align-items:center;gap:12px;padding:8px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
+.chat-item{display:flex;align-items:center;gap:14px;padding:11px 16px;cursor:pointer;position:relative;transition:background .15s;will-change:transform}
 .chat-item:active{background:var(--item-hover)}
 .chat-item-divider{display:none}
 /* TG-style divider: тонкая линия снизу, начинается после аватара */
@@ -2111,11 +2111,11 @@ body {
 .date-divider { text-align:center;padding:12px 0 4px;position:relative; }
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
-/* ИНПУТ — floating над чатом (position:absolute задан в wc-ios10 патче) */
-.input-bar { padding:8px 12px 0;border:none !important;background:transparent; }
+/* ИНПУТ — floating над чатом */
+.input-bar { padding:8px 0 0;border:none !important;background:transparent; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
-.input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
-.input-inner:focus-within { background:#333335; }
+.input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
+.input-inner:focus-within { background:rgba(255,255,255,0.10); }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
@@ -2160,8 +2160,8 @@ body {
 .msg-meta-inline { display:inline-flex;align-items:center;gap:2px;font-size:10.5px;opacity:0.6;white-space:nowrap;pointer-events:none;line-height:1; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
-/* ── v9.1: INPUT BAR — прозрачный, поднятый, настраиваемый ── */
-/* Настройки позиции (меняются через _ibSettings) */
+/* ── v9.1: INPUT BAR — прозрачный, поднятый ── */
+/* Настройки позиции — меняй значения в блоке INPUT BAR SETTINGS в JS */
 :root {
   --ib-bottom-offset: 0px;   /* доп. отступ снизу — настраивается пользователем */
   --ib-side-margin: 8px;     /* боковые отступы */
@@ -3607,7 +3607,7 @@ function renderChatList(chats) {
 
             // Аватар
             const avaWrap = document.createElement('div');
-            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:52px;height:52px;display:flex;align-items:center;justify-content:center';
+            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:56px;height:56px;display:flex;align-items:center;justify-content:center';
 
             const _ai = document.createElement('div');
             if (chat.has_moment && !isGroup) {
@@ -3681,13 +3681,13 @@ function renderChatList(chats) {
         const info = div.querySelector('.chat-info');
         if (info) {
             info.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
-                    <span style="font-weight:${isUnread?'700':'600'};font-size:16px;letter-spacing:-0.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px">${escHtml(displayName)}</span>
-                    <span style="font-size:11px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px">${time}</span>
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+                    <span style="font-weight:${isUnread?'700':'600'};font-size:17px;letter-spacing:-0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:205px">${escHtml(displayName)}</span>
+                    <span style="font-size:12px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px">${time}</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                    <p style="font-size:14px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
-                    ${isUnread?`<span style="background:var(--accent);color:#000;font-size:10px;font-weight:800;min-width:20px;height:20px;border-radius:10px;display:flex;align-items:center;justify-content:center;padding:0 5px;flex-shrink:0">${chat.unread_count}</span>`:''}
+                    <p style="font-size:15px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
+                    ${isUnread?`<span style="background:var(--accent);color:#000;font-size:11px;font-weight:800;min-width:22px;height:22px;border-radius:11px;display:flex;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0">${chat.unread_count}</span>`:''}
                 </div>`;
         }
 
@@ -4653,7 +4653,7 @@ function buildMessageRow(msg, animate = true) {
     // Для группового чата — показываем имя отправителя (only on first in group)
     let senderNameHtml = '';
     if (!isMe && _showName && currentChatType === 'group' && msg.sender_name) {
-        senderNameHtml = `<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:3px">${msg.sender_name}</div>`;
+        senderNameHtml = `<div style="font-size:11px;font-weight:600;color:var(--accent);margin-bottom:4px">${msg.sender_name}</div>`;
     }
 
     const readColor = msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.4)';
@@ -7076,19 +7076,19 @@ function showPartnerProfile() {
         // Инфо блок
         + '<div style="margin:12px 16px 0;background:rgba(255,255,255,0.05);border-radius:18px;overflow:hidden" id="profile-info-block">'
         + '<div id="profile-phone-row" style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">'
-        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">мобильный</div>'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:4px">мобильный</div>'
         + '<div style="font-size:16px;font-weight:500;color:#4da3ff" id="profile-phone-val">—</div>'
         + '</div>'
         + '<div style="padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">'
-        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">имя пользователя</div>'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:4px">имя пользователя</div>'
         + '<div style="font-size:16px;font-weight:500;color:#4da3ff" id="profile-username-val">...</div>'
         + '</div>'
         + '<div id="profile-bio-row" style="display:none;padding:14px 16px;border-bottom:0.5px solid rgba(255,255,255,0.06)">'
-        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">о себе</div>'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:4px">о себе</div>'
         + '<div style="font-size:15px;color:rgba(255,255,255,0.85);line-height:1.45" id="profile-bio-val"></div>'
         + '</div>'
         + '<div id="profile-date-row" style="display:none;padding:14px 16px">'
-        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:3px">в WayChat с</div>'
+        + '<div style="font-size:11px;color:rgba(255,255,255,0.38);margin-bottom:4px">в WayChat с</div>'
         + '<div style="font-size:15px;color:rgba(255,255,255,0.7)" id="profile-date-val"></div>'
         + '</div>'
         + '</div>'
@@ -8113,15 +8113,46 @@ function _showMomentEditor(file) {
 
     // ── Медиа (полный экран) ──
     const mediaWrap = document.createElement('div');
-    mediaWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden';
+    mediaWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;background:#000';
     if (isVid) {
         const vid = document.createElement('video');
-        vid.src=url; vid.autoplay=true; vid.muted=true; vid.loop=true; vid.playsInline=true;
-        vid.style.cssText='width:100%;height:100%;object-fit:cover';
+        // iOS Safari требует эти атрибуты в DOM, не только через JS
+        vid.setAttribute('autoplay', '');
+        vid.setAttribute('muted', '');
+        vid.setAttribute('loop', '');
+        vid.setAttribute('playsinline', '');
+        vid.setAttribute('webkit-playsinline', '');
+        vid.muted = true;
+        vid.autoplay = true;
+        vid.loop = true;
+        vid.playsInline = true;
+        vid.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
+        // Спиннер пока видео грузится
+        const spinner = document.createElement('div');
+        spinner.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:2;pointer-events:none';
+        spinner.innerHTML = '<div style="width:40px;height:40px;border:3px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:_me_spin 0.7s linear infinite"></div>';
+        if (!document.getElementById('_me_spin_css')) {
+            const s = document.createElement('style');
+            s.id = '_me_spin_css';
+            s.textContent = '@keyframes _me_spin{to{transform:rotate(360deg)}}';
+            document.head.appendChild(s);
+        }
+        mediaWrap.appendChild(spinner);
+        vid.addEventListener('canplay', () => {
+            spinner.remove();
+            vid.play().catch(() => {});
+        }, { once: true });
+        vid.addEventListener('error', () => {
+            spinner.innerHTML = '<div style="color:rgba(255,255,255,0.6);font-size:13px;text-align:center">⚠️ Не удалось загрузить видео</div>';
+        }, { once: true });
+        // Устанавливаем src после навешивания обработчиков
+        vid.src = url;
+        vid.load();
         mediaWrap.appendChild(vid);
     } else {
         const img = document.createElement('img');
-        img.src=url; img.style.cssText='width:100%;height:100%;object-fit:cover';
+        img.src = url;
+        img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block';
         mediaWrap.appendChild(img);
     }
     // Градиент снизу для панели
@@ -9439,7 +9470,7 @@ function _showPushBanner() {
             // iOS Safari без PWA — только инструкция
             b.innerHTML = '<div style="font-size:22px;flex-shrink:0">🔔</div>'
                 +'<div style="flex:1;min-width:0">'
-                +'<div style="font-size:13px;font-weight:700;margin-bottom:3px">Уведомления на iPhone</div>'
+                +'<div style="font-size:13px;font-weight:700;margin-bottom:4px">Уведомления на iPhone</div>'
                 +'<div style="font-size:11px;color:var(--text-2);line-height:1.5">Нажмите <b style="color:var(--text)">«Поделиться ⬆»</b> → <b style="color:var(--text)">«На экран Домой»</b> и откройте WayChat оттуда</div>'
                 +'</div>'
                 +'<button id="push-no" style="background:none;border:none;color:var(--text-2);font-size:18px;cursor:pointer;flex-shrink:0;padding:4px">✕</button>';
