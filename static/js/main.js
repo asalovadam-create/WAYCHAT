@@ -2173,7 +2173,8 @@ body {
   backdrop-filter:blur(24px) saturate(200%);
   -webkit-backdrop-filter:blur(24px) saturate(200%);
   border-radius:var(--ib-pill-radius);
-  padding:6px 8px;
+  padding:8px 10px;
+  min-height:75px;
   box-shadow:0 2px 20px rgba(0,0,0,0.28), 0 1px 0 rgba(255,255,255,0.06) inset;
   margin:0 var(--ib-side-margin);
   border:0.5px solid rgba(255,255,255,0.08);
@@ -3173,7 +3174,7 @@ async function loadChats(force = false) {
     // FIXED: таймаут защита — если _chatsLoading завис более 12 сек, сбрасываем
     if (_chatsLoading && (now - _lastChatsLoad) < 12000) return;
     if (_chatsLoading) { _chatsLoading = false; } // сброс зависшего флага
-    if (!force && recentChats.length && (now - _lastChatsLoad) < 8000) {
+    if (!force && recentChats.length && (now - _lastChatsLoad) < 3000) {
         renderChatList(recentChats);
         return;
     }
@@ -3262,7 +3263,7 @@ function _showChatsError() {
 let _loadChatsDebTimer = null;
 function _debouncedLoadChats() {
     clearTimeout(_loadChatsDebTimer);
-    _loadChatsDebTimer = setTimeout(() => loadChats(), 1200);
+    _loadChatsDebTimer = setTimeout(() => loadChats(), 300);
 }
 
 // ════════════════════════════════════
@@ -4719,7 +4720,7 @@ function renderNewMessage(msg, animate = true) {
             if (!_exists) {
                 messagesByChatCache[ck].messages.push(msg);
                 clearTimeout(renderNewMessage._t);
-                renderNewMessage._t = setTimeout(() => MsgDB.save(ck, messagesByChatCache[ck].messages), 1500);
+                renderNewMessage._t = setTimeout(() => MsgDB.save(ck, messagesByChatCache[ck].messages), 300);
             }
         }
     }
@@ -8553,124 +8554,101 @@ async function _publishMomentEditor(ov, file, url) {
     const caption = (document.getElementById('me-cap')?.value || '').trim();
     const geo     = _meGeo;
 
-    _momentUploading        = true;
-    _momentUploadFile       = file;
-    _momentUploadCaption    = caption;
-    _momentUploadGeo        = geo;
-    if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} }
-    _momentUploadPreviewUrl = URL.createObjectURL(file);
-
-    // Закрываем редактор
+    // Закрываем редактор сразу
     ov.remove();
     try { URL.revokeObjectURL(url); } catch(e) {}
     _meFile = null; _meGeo = null;
 
-    // Показываем таб Моменты с карточкой загрузки
-    switchTab('moments');
-    // FIX MOMENTS UPLOAD: render tab synchronously so upload card appears immediately
-    const container = document.getElementById('full-moments-list');
-    if (container) {
-        _renderMomentsTab();
+    // Показываем toast-прогресс прямо на главном экране
+    const toastId = '_moment_upload_toast';
+    let toastEl = document.getElementById(toastId);
+    if (!toastEl) {
+        toastEl = document.createElement('div');
+        toastEl.id = toastId;
+        toastEl.style.cssText = [
+            'position:fixed','top:max(env(safe-area-inset-top,0px),54px)','left:12px','right:12px',
+            'z-index:9800','background:rgba(22,22,28,0.97)','backdrop-filter:blur(20px)',
+            '-webkit-backdrop-filter:blur(20px)','border-radius:18px',
+            'padding:14px 16px','display:flex','align-items:center','gap:12px',
+            'box-shadow:0 8px 32px rgba(0,0,0,0.5)','border:0.5px solid rgba(255,255,255,0.1)',
+            'transition:opacity 0.25s ease',
+        ].join(';');
+        toastEl.innerHTML = `
+            <div id="_mt_thumb" style="width:44px;height:44px;border-radius:10px;overflow:hidden;flex-shrink:0;background:#1c1c1e;position:relative">
+                ${file.type.startsWith('video')
+                    ? '<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:20px">🎬</div>'
+                    : `<img src="${URL.createObjectURL(file)}" style="width:100%;height:100%;object-fit:cover">`}
+            </div>
+            <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:6px">Публикация момента...</div>
+                <div style="height:3px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden">
+                    <div id="_mt_bar" style="height:100%;background:var(--accent,#10b981);width:0%;transition:width 0.3s ease;border-radius:2px"></div>
+                </div>
+            </div>`;
+        document.body.appendChild(toastEl);
     }
-    await new Promise(res => setTimeout(res, 60));
 
-    // Симулируем прогресс (iOS не даёт реальный XHR progress через fetch)
-    let pct = 0;
-    const timer = setInterval(() => {
-        pct += pct < 30 ? 5 : pct < 60 ? 2.5 : pct < 82 ? 1 : 0.2;
-        _updateUploadProgress(Math.min(Math.round(pct), 82));
-    }, 250);
-
-    // Build FormData (include thumbnail blob if available)
-    const _buildMomentFD = async () => {
-        const fd = new FormData();
-        fd.append('file', file);
-        if (caption) fd.append('text', caption);
-        if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
-        // Attach thumbnail: if not yet ready for video, try to capture now
-        let thumbBlob = _meThumbnailBlob;
-        if (!thumbBlob && file.type.startsWith('video')) {
-            thumbBlob = await _extractVideoThumbnail(file).catch(() => null);
-        }
-        if (thumbBlob) fd.append('preview', thumbBlob, 'thumb.jpg');
-        return fd;
+    const setProgress = (pct) => {
+        const bar = document.getElementById('_mt_bar');
+        if (bar) bar.style.width = pct + '%';
     };
 
-    const _doUpload = (fd) => new Promise((resolve) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/create_moment', true);
-        xhr.withCredentials = true;
-        xhr.upload.onprogress = (ev) => {
-            if (ev.lengthComputable) {
-                clearInterval(timer);
-                _updateUploadProgress(Math.round((ev.loaded / ev.total) * 95));
-            }
-        };
-        xhr.onload = () => {
-            clearInterval(timer);
-            _updateUploadProgress(100);
-            if (xhr.status === 413) {
-                resolve({ ok: false, data: { error: 'Файл слишком большой. Обрежь видео или выбери другое.' } });
-                return;
-            }
-            if (xhr.status === 429) {
-                resolve({ ok: false, data: { error: 'Слишком много загрузок. Подожди минуту.' } });
-                return;
-            }
-            try {
-                const d = JSON.parse(xhr.responseText);
-                resolve({ ok: !!d.success, data: d });
-            } catch(e) {
-                resolve({ ok: xhr.status >= 200 && xhr.status < 300, data: { error: 'Ошибка сервера (' + xhr.status + ')' } });
-            }
-        };
-        xhr.onerror   = () => { clearInterval(timer); resolve({ ok: false, data: {} }); };
-        xhr.timeout   = 120000;
-        xhr.ontimeout = () => { clearInterval(timer); resolve({ ok: false, data: {} }); };
-        xhr.send(fd);
-    });
+    // Build FormData
+    const fd = new FormData();
+    fd.append('file', file);
+    if (caption) fd.append('text', caption);
+    if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
+    let thumbBlob = _meThumbnailBlob;
+    if (!thumbBlob && file.type.startsWith('video')) {
+        thumbBlob = await _extractVideoThumbnail(file).catch(() => null);
+    }
+    if (thumbBlob) fd.append('preview', thumbBlob, 'thumb.jpg');
 
-    const MAX_RETRIES = 3;
-    let uploadResult = { ok: false };
+    // Одна попытка — без retry
+    let ok = false, errMsg = 'Ошибка загрузки';
     try {
-        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                const fd = await _buildMomentFD();
-                uploadResult = await _doUpload(fd);
-                if (uploadResult.ok) break;
-                if (attempt < MAX_RETRIES) {
-                    _updateUploadProgress(0);
-                    const delay = attempt * 1500;
-                    console.warn(`[moment] attempt ${attempt} failed, retry in ${delay}ms`);
-                    await new Promise(res => setTimeout(res, delay));
-                }
-            } catch(attemptErr) {
-                console.error(`[moment] attempt ${attempt} error:`, attemptErr);
-                if (attempt === MAX_RETRIES) break;
-                await new Promise(res => setTimeout(res, attempt * 1500));
-            }
-        }
+        await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/create_moment', true);
+            xhr.withCredentials = true;
+            xhr.upload.onprogress = (ev) => {
+                if (ev.lengthComputable) setProgress(Math.round((ev.loaded / ev.total) * 92));
+            };
+            xhr.onload = () => {
+                setProgress(100);
+                if (xhr.status === 413) { reject(new Error('Файл слишком большой — обрежь видео')); return; }
+                if (xhr.status === 429) { reject(new Error('Слишком много загрузок, подожди минуту')); return; }
+                try {
+                    const d = JSON.parse(xhr.responseText);
+                    if (d.success) resolve(d);
+                    else reject(new Error(d.error || 'Ошибка сервера'));
+                } catch(e) { reject(new Error('Ошибка сервера (' + xhr.status + ')')); }
+            };
+            xhr.onerror   = () => reject(new Error('Нет соединения'));
+            xhr.ontimeout = () => reject(new Error('Таймаут загрузки'));
+            xhr.timeout   = 120000;
+            xhr.send(fd);
+        });
+        ok = true;
     } catch(e) {
-        clearInterval(timer);
-        console.error('[moment] publish error:', e);
+        errMsg = e.message || errMsg;
     }
 
-    await new Promise(res => setTimeout(res, 350));
-    if (uploadResult.ok) {
-        showToast('Момент опубликован! 🎉', 'success');
+    // Скрываем toast
+    await new Promise(res => setTimeout(res, 400));
+    if (toastEl) { toastEl.style.opacity = '0'; setTimeout(() => toastEl.remove(), 260); }
+
+    if (ok) {
+        showToast('Момент опубликован! 🎉', 'success', 3000);
+        momentsCache = null; momentsLastLoad = 0;
+        loadMoments();
     } else {
-        const _errMsg = uploadResult.data?.error || 'Ошибка загрузки — попробуй ещё раз';
-        showToast(_errMsg, 'error', 5000);
-        console.error('[moment] upload failed:', uploadResult);
+        showToast(errMsg, 'error', 6000);
     }
 
-    // Сброс + перезагрузка
     _momentUploading = false;
     _momentUploadFile = null;
     if (_momentUploadPreviewUrl) { try { URL.revokeObjectURL(_momentUploadPreviewUrl); } catch(e){} _momentUploadPreviewUrl = null; }
-    momentsCache = null;
-    momentsLastLoad = 0;
-    await loadMoments();
 }
 
 // ── Показать/скрыть moments bar ──────────────────────────
