@@ -3391,6 +3391,9 @@ def create_chat_route(partner_id):
 def handle_msg(data):
     if not current_user.is_authenticated:
         return
+    # FIX REALTIME: захватываем sid сразу — в threading-режиме request-прокси
+    # может потерять контекст после первого DB-вызова
+    _my_sid = getattr(request, 'sid', None)
     chat_id = data.get('chat_id')
     # Если chat_id нет но есть partner_id — создаём чат лениво (первое сообщение)
     if not chat_id:
@@ -3520,7 +3523,7 @@ def handle_msg(data):
                         # Не шлём в тот же sid, чтобы не было дубля в открытом чате.
                         # Другие устройства отправителя всё равно получат user_ событие.
                         emit('new_message', payload, room=f'user_{uid_str}',
-                             skip_sid=request.sid if hasattr(request, 'sid') else None)
+                             skip_sid=_my_sid)
 
     # FIX Task 5c: return ACK with real msg_id so client can replace optimistic
     return {'ok': True, 'msg_id': msg.id}
@@ -3643,6 +3646,7 @@ def _get_partner_id_sio(chat_id):
 def handle_typing(data):
     if not current_user.is_authenticated:
         return
+    _my_sid = getattr(request, 'sid', None)
     chat_id = data.get('chat_id')
     if not chat_id:
         return
@@ -3667,7 +3671,7 @@ def handle_typing(data):
 
     if chat.room_key.startswith('group_'):
         emit('is_typing', typing_payload, room=f'chat_{chat_id}',
-             skip_sid=request.sid if hasattr(request, 'sid') else None)
+             skip_sid=_my_sid)
     else:
         p_id = _get_partner_id_sio(chat_id)
         if p_id:
