@@ -161,18 +161,17 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — Telegram style: прилипает к низу, выше home indicator */
+        /* INPUT BAR — прозрачный, поднят над обоями, safe-area встроена в tg-input-row */
         .input-bar {
             position: relative !important;
             bottom: auto !important;
             left: auto !important; right: auto !important;
             transform: none !important;
             z-index: 10 !important;
-            background: rgba(30,30,33,0.96) !important;
-            backdrop-filter: blur(20px) !important;
-            -webkit-backdrop-filter: blur(20px) !important;
+            background: transparent !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
             padding: 0 !important;
-            padding-bottom: max(env(safe-area-inset-bottom, 0px), 8px) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -2114,7 +2113,7 @@ body {
 .date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
 
 /* ИНПУТ — floating над чатом */
-.input-bar { padding:8px 0 0;border:none !important;background:transparent; }
+.input-bar { padding:0;border:none !important;background:transparent !important; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:rgba(255,255,255,0.10); }
@@ -2162,33 +2161,65 @@ body {
 .msg-meta-inline { display:inline-flex;align-items:center;gap:2px;font-size:10.5px;opacity:0.6;white-space:nowrap;pointer-events:none;line-height:1; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
-/* ── INPUT BAR — Telegram style ── */
-:root {
-  --ib-bottom-offset: 0px;
-  --ib-side-margin: 8px;
-  --ib-pill-radius: 24px;
+/* ── INPUT BAR — точь-в-точь Telegram ── */
+
+/* Внешний контейнер — полностью прозрачный, только safe-area */
+.input-bar {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
 }
 
-/* Контейнер строки ввода — тёмная капсула как в TG */
+/* Строка: капсула + кнопка микро/отправить отдельно */
 .tg-input-row {
   display: flex;
   align-items: flex-end;
-  gap: 0px;
-  background: rgba(30, 30, 33, 0.96);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-radius: 0;
-  padding: 8px 4px 8px 4px;
-  min-height: 52px;
+  gap: 8px;
+  background: transparent;
+  padding: 8px 8px calc(env(safe-area-inset-bottom, 0px) + 10px) 8px;
   border: none;
   margin: 0;
   width: 100%;
   box-sizing: border-box;
 }
 
-/* Скрепка слева */
+/* Кнопки слева/справа от капсулы (смайлик, скрепка) */
 .tg-attach-btn {
-  width: 44px; height: 44px;
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  color: rgba(255,255,255,0.6);
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+  margin-bottom: 2px;
+}
+.tg-attach-btn:active { color: white; }
+
+/* КАПСУЛА — серая, не касается краёв, парит над обоями */
+.tg-text-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background: rgba(80, 80, 90, 0.82);
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 22px;
+  padding: 6px 6px 6px 6px;
+  min-height: 44px;
+  max-height: 120px;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Смайлик ВНУТРИ капсулы справа */
+.tg-inner-btn {
+  width: 34px; height: 34px;
   border-radius: 50%;
   background: transparent;
   border: none;
@@ -2196,47 +2227,12 @@ body {
   display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
   color: rgba(255,255,255,0.55);
-  transition: color 0.15s;
   -webkit-tap-highlight-color: transparent;
   padding: 0;
 }
-.tg-attach-btn:active { color: white; }
+.tg-inner-btn:active { color: white; }
 
-/* Поле ввода — закруглённая капсула как в TG */
-.tg-text-wrap {
-  flex: 1;
-  display: flex;
-  align-items: flex-end;
-  background: rgba(255,255,255,0.08);
-  border: none !important;
-  outline: none !important;
-  box-shadow: none !important;
-  border-radius: 22px;
-  padding: 10px 4px 10px 14px;
-  min-height: 44px;
-  max-height: 120px;
-  overflow: hidden;
-}
-.tg-text-wrap:focus-within { background: rgba(255,255,255,0.10); }
-
-/* Смайлик внутри поля — справа */
-.tg-inner-btn {
-  width: 36px; height: 36px;
-  border-radius: 50%;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  color: rgba(255,255,255,0.5);
-  align-self: flex-end;
-  margin-bottom: 1px;
-  -webkit-tap-highlight-color: transparent;
-  padding: 0;
-}
-.tg-inner-btn:active { color: rgba(255,255,255,0.9); }
-
-/* Кнопка отправить / микрофон — правее поля */
+/* Кнопка ОТПРАВИТЬ — цветной круг */
 .tg-send-btn {
   width: 44px; height: 44px;
   border-radius: 50%;
@@ -2248,17 +2244,18 @@ body {
   box-shadow: var(--glow);
   transition: transform 0.15s;
   -webkit-tap-highlight-color: transparent;
-  margin-left: 4px;
   padding: 0;
+  margin-bottom: 2px;
 }
 .tg-send-btn:active { transform: scale(0.88); }
+
+/* Микрофон — отдельный прозрачный круг справа */
 .tg-mic-btn {
   background: transparent !important;
   box-shadow: none !important;
-  color: rgba(255,255,255,0.55);
-  margin-left: 4px;
+  color: rgba(255,255,255,0.65) !important;
 }
-.tg-mic-btn:active { color: white; }
+.tg-mic-btn:active { color: white !important; transform: scale(0.88); }
 
 /* ── v9.0: FULLSCREEN PHOTO ── */
 #wc-img-viewer { position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.22s ease; }
@@ -2999,39 +2996,43 @@ body {
     <div class="input-bar">
         <div class="tg-input-row">
 
-            <!-- Смайлик — СЛЕВА как в TG -->
-            <button class="tg-attach-btn" onclick="insertEmoji()" aria-label="Эмодзи">
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-                    <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                    <circle cx="9" cy="9.5" r="1.2" fill="currentColor"/>
-                    <circle cx="15" cy="9.5" r="1.2" fill="currentColor"/>
-                </svg>
-            </button>
-
-            <!-- Поле ввода текста -->
+            <!-- КАПСУЛА: смайлик + поле + скрепка — всё единый серый блок как в TG -->
             <div class="tg-text-wrap" id="input-area">
+
+                <!-- Смайлик СЛЕВА внутри капсулы -->
+                <button class="tg-inner-btn" onclick="insertEmoji()" aria-label="Эмодзи" style="margin-right:4px;margin-left:-6px;flex-shrink:0">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+                        <circle cx="9" cy="9.5" r="1.2" fill="currentColor"/>
+                        <circle cx="15" cy="9.5" r="1.2" fill="currentColor"/>
+                    </svg>
+                </button>
+
+                <!-- Поле ввода -->
                 <textarea id="msg-input" rows="1"
                     placeholder="Сообщение..."
                     oninput="handleTyping(); autoResize(this); updateSendButton()"
-                    onkeydown="handleInputKeydown(event)"></textarea>
+                    onkeydown="handleInputKeydown(event)"
+                    style="flex:1;background:transparent;outline:none;border:none;color:white;font-size:16px;padding:0;resize:none;max-height:120px;line-height:1.5;font-family:inherit;-webkit-appearance:none;align-self:center"></textarea>
+
+                <!-- Скрепка СПРАВА внутри капсулы -->
+                <button class="tg-inner-btn" onclick="pickMedia('msg')" aria-label="Прикрепить" style="margin-left:4px;flex-shrink:0">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+
             </div>
 
-            <!-- Скрепка — СПРАВА от поля как в TG -->
-            <button class="tg-attach-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-            </button>
-
-            <!-- Отправить (появляется когда есть текст) -->
+            <!-- Отправить — отдельный цветной круг справа (появляется когда есть текст) -->
             <button id="send-btn-main" onclick="sendText()" class="tg-send-btn" style="display:none" aria-label="Отправить">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                     <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
             </button>
 
-            <!-- Микрофон (когда нет текста) -->
+            <!-- Микрофон — отдельный прозрачный круг справа (когда нет текста) -->
             <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое" style="touch-action:none;user-select:none;-webkit-user-select:none">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
                     <rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/>
