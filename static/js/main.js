@@ -384,7 +384,8 @@ const VirtualList=(()=>{
           const samePrev=prevM&&prevM.sender_id===m.sender_id&&getMessageDate(prevM)===getMessageDate(m);
           const sameNext=nextM&&nextM.sender_id===m.sender_id&&getMessageDate(nextM)===getMessageDate(m);
           m._grpFirst=!samePrev;m._grpLast=!sameNext;m._grpMid=samePrev&&sameNext;
-          const r=buildMessageRow(m,false);r.dataset.vi=i;f.appendChild(r);}
+          // FIX CRITICAL: buildMessageRow может вернуть null — без проверки весь рендер ломается
+          const r=buildMessageRow(m,false);if(!r)continue;r.dataset.vi=i;f.appendChild(r);}
         el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());ts.after(f);s=ns;e=ne;msr();phs();
         if(ks&&an){const na=el.querySelector('[data-vi="'+s+'"]');if(na)el.scrollTop+=na.getBoundingClientRect().top-of;}
     }
@@ -408,11 +409,19 @@ const VirtualList=(()=>{
         }
         _scrollAfterRender(0);}
     function append(msg){if(!el)return;
-        // FIX DUPLICATE: if real msg arrives, remove optimistic row with same content from same sender
+        // FIX: если пришло реальное сообщение — переиспользуем оптимистичный элемент вместо удаления
         if(!msg._optimistic && msg.id){
-            // Remove matching optimistic DOM rows
+            // Reuse matching optimistic DOM rows instead of removing them
+            let _reused=false;
             el.querySelectorAll('[data-optimistic="1"]').forEach(function(optEl){
-                if(optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:''))optEl.remove();
+                if(!_reused && optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:'') && !optEl.dataset.replaced){
+                    _reused=true;
+                    optEl.dataset.replaced='1';
+                    optEl.setAttribute('data-msg-id',String(msg.id));
+                    optEl.removeAttribute('data-optimistic');
+                    const si=optEl.querySelector('.status-icon');
+                    if(si){si.innerHTML=typeof ICONS!=='undefined'?ICONS.check:'✓';si.style.color='rgba(255,255,255,0.55)';}
+                }
             });
             // Remove matching temp entries from ms array (tmp_ prefixed)
             const prevLen=ms.length;
@@ -420,6 +429,8 @@ const VirtualList=(()=>{
             if(ms.length<prevLen){hc.clear();s=0;e=0;}
             // Dedup by real id
             if(ms.some(function(m){return String(m.id)===String(msg.id);}))return;
+            // If we reused a DOM row, add real msg to ms array but skip DOM append
+            if(_reused){ms.push(msg);return;}
         }
         ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120;
     // Set grouping flags on append
