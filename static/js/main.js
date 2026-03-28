@@ -620,84 +620,23 @@ function _updateScrollBtn(el) {
 // ══ END SCROLL UTILITY ═════════════════════════════════════════════
 
 // ══ INPUT BAR SETTINGS ══════════════════════════════════════════════
-const _IB_KEY = 'wc_ib_settings';
-let _ibSettings = (() => {
-    try { return JSON.parse(localStorage.getItem(_IB_KEY) || '{}'); } catch(e) { return {}; }
+// Настрой под себя — просто меняй значения ниже и деплой:
+//
+//   bottomOffset  — дополнительный отступ снизу в px (0 = вплотную к home indicator)
+//   sideMargin    — отступы по бокам в px
+//   pillRadius    — скругление капсулы в px
+//
+(function _applyInputBarSettings() {
+    const S = {
+        bottomOffset : 0,   // px — поднять панель выше (например 20)
+        sideMargin   : 8,   // px — отступы по бокам
+        pillRadius   : 26,  // px — скругление капсулы
+    };
+    const r = document.documentElement.style;
+    r.setProperty('--ib-bottom-offset', S.bottomOffset + 'px');
+    r.setProperty('--ib-side-margin',   S.sideMargin   + 'px');
+    r.setProperty('--ib-pill-radius',   S.pillRadius   + 'px');
 })();
-
-function _ibApply() {
-    const offset = (_ibSettings.bottomOffset ?? 0);
-    const margin = (_ibSettings.sideMargin ?? 8);
-    const radius = (_ibSettings.pillRadius ?? 26);
-    document.documentElement.style.setProperty('--ib-bottom-offset', offset + 'px');
-    document.documentElement.style.setProperty('--ib-side-margin', margin + 'px');
-    document.documentElement.style.setProperty('--ib-pill-radius', radius + 'px');
-}
-_ibApply();
-
-function openInputBarSettings() {
-    const existing = document.getElementById('_ib_settings_sheet');
-    if (existing) { existing.remove(); return; }
-
-    const offset = (_ibSettings.bottomOffset ?? 0);
-    const margin = (_ibSettings.sideMargin ?? 8);
-    const radius = (_ibSettings.pillRadius ?? 26);
-
-    const sheet = document.createElement('div');
-    sheet.id = '_ib_settings_sheet';
-    sheet.style.cssText = `
-        position:fixed;bottom:0;left:0;right:0;z-index:9900;
-        background:rgba(22,22,28,0.97);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
-        border-radius:24px 24px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);
-        padding:12px 0 calc(env(safe-area-inset-bottom,0px)+24px);
-        transform:translateY(100%);transition:transform 0.32s cubic-bezier(0.22,1,0.36,1);
-        font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif;
-    `;
-
-    const mkSlider = (label, key, min, max, val, unit='px') => `
-        <div style="padding:0 20px;margin-bottom:18px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                <span style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.7)">${label}</span>
-                <span id="ib_lbl_${key}" style="font-size:13px;font-weight:700;color:var(--accent,#10b981);min-width:42px;text-align:right">${val}${unit}</span>
-            </div>
-            <input type="range" min="${min}" max="${max}" value="${val}"
-                style="width:100%;height:4px;accent-color:var(--accent,#10b981);cursor:pointer"
-                oninput="
-                    _ibSettings['${key}']=+this.value;
-                    document.getElementById('ib_lbl_${key}').textContent=this.value+'${unit}';
-                    _ibApply();
-                    try{localStorage.setItem('${_IB_KEY}',JSON.stringify(_ibSettings));}catch(e){}
-                ">
-        </div>`;
-
-    sheet.innerHTML = `
-        <div style="width:36px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;margin:0 auto 20px"></div>
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:0 20px;margin-bottom:20px">
-            <div style="font-size:17px;font-weight:800;color:#fff">Настройки панели ввода</div>
-            <button onclick="document.getElementById('_ib_settings_sheet').remove()"
-                style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:rgba(255,255,255,0.6);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px">✕</button>
-        </div>
-        ${mkSlider('Отступ снизу', 'bottomOffset', 0, 80, offset)}
-        ${mkSlider('Боковые отступы', 'sideMargin', 0, 32, margin)}
-        ${mkSlider('Скругление', 'pillRadius', 0, 32, radius)}
-        <div style="padding:0 20px;margin-top:4px">
-            <button onclick="
-                _ibSettings={};
-                _ibApply();
-                try{localStorage.removeItem('${_IB_KEY}');}catch(e){}
-                document.getElementById('_ib_settings_sheet').remove();
-                openInputBarSettings();
-            " style="width:100%;padding:13px;background:rgba(255,255,255,0.07);border:none;border-radius:14px;color:rgba(255,255,255,0.55);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">
-                Сбросить по умолчанию
-            </button>
-        </div>`;
-
-    document.body.appendChild(sheet);
-    requestAnimationFrame(() => { sheet.style.transform = 'translateY(0)'; });
-
-    // Закрыть по тапу вне
-    sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.remove(); });
-}
 // ══ END INPUT BAR SETTINGS ═══════════════════════════════════════════
 
 
@@ -3005,13 +2944,6 @@ body {
             </button>
             <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое" style="touch-action:none;user-select:none;-webkit-user-select:none">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="2"/><path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            </button>
-        </div>
-        <!-- Кнопка настроек панели — появляется при долгом тапе на поле ввода -->
-        <div id="ib-settings-hint" style="display:flex;justify-content:center;margin-top:4px">
-            <button onclick="openInputBarSettings()" style="background:none;border:none;color:rgba(255,255,255,0.18);font-size:11px;cursor:pointer;padding:2px 8px;font-family:inherit;-webkit-tap-highlight-color:transparent;display:flex;align-items:center;gap:4px">
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" opacity="0.5"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2"/></svg>
-                Настроить панель
             </button>
         </div>
     </div>
