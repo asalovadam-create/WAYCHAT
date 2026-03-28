@@ -857,6 +857,41 @@ class PushSubscription(db.Model):
     __table_args__ = (db.UniqueConstraint('user_id', 'endpoint', name='uq_push_sub'),)
 
 
+class PendingCode(db.Model):
+    """Временные коды подтверждения — хранятся в БД чтобы не терялись при перезапуске сервера"""
+    __tablename__ = 'pending_code'
+    phone    = db.Column(db.String(20),  primary_key=True)
+    code     = db.Column(db.String(6),   nullable=False)
+    name     = db.Column(db.String(120), default='')
+    username = db.Column(db.String(80),  default='')
+    expires  = db.Column(db.Float,       nullable=False)
+    is_login = db.Column(db.Boolean,     default=False)
+
+    @classmethod
+    def set(cls, phone, code, name='', username='', is_login=False):
+        obj = db.session.get(cls, phone)
+        if obj:
+            obj.code = code; obj.name = name; obj.username = username
+            obj.expires = time.time() + 600; obj.is_login = is_login
+        else:
+            obj = cls(phone=phone, code=code, name=name, username=username,
+                      expires=time.time()+600, is_login=is_login)
+            db.session.add(obj)
+        db.session.commit()
+        return obj
+
+    @classmethod
+    def get(cls, phone):
+        return db.session.get(cls, phone)
+
+    @classmethod
+    def delete(cls, phone):
+        obj = db.session.get(cls, phone)
+        if obj:
+            db.session.delete(obj)
+            db.session.commit()
+
+
 @login_manager.user_loader
 def load_user(uid):
     """Всегда загружаем свежий объект из БД для flask-login"""
@@ -1056,7 +1091,7 @@ def register():
     return render_template('login.html')
 
 
-_pending_registrations = {}
+_pending_registrations = {}  # Legacy — заменён на PendingCode (БД), оставлен для совместимости
 
 
 def _gen_code():
@@ -1107,15 +1142,14 @@ def send_code():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
 
         code    = str(random.randint(100000, 999999))
-        expires = time.time() + 600
 
-        _pending_registrations[phone] = {
-            'name':     name or (existing.name if existing else ''),
-            'username': username or (existing.username if existing else ''),
-            'code':     code,
-            'expires':  expires,
-            'is_login': existing is not None,
-        }
+        PendingCode.set(
+            phone    = phone,
+            code     = code,
+            name     = name or (existing.name if existing else ''),
+            username = username or (existing.username if existing else ''),
+            is_login = existing is not None,
+        )
 
         print(f'\n{"="*50}')
         print(f'📱 КОД для {phone}: {code}')
@@ -1139,25 +1173,25 @@ def verify_code():
         if not phone or not code:
             return jsonify({'success': False, 'error': 'Заполните все поля'}), 400
 
-        pending = _pending_registrations.get(phone)
+        pending = PendingCode.get(phone)
         if not pending:
             return jsonify({'success': False, 'error': 'Сначала запросите код'}), 400
-        if time.time() > pending['expires']:
-            _pending_registrations.pop(phone, None)
+        if time.time() > pending.expires:
+            PendingCode.delete(phone)
             return jsonify({'success': False, 'error': 'Код истёк, запросите новый'}), 400
-        if pending['code'] != code:
+        if pending.code != code:
             return jsonify({'success': False, 'error': 'Неверный код'}), 400
 
-        _pending_registrations.pop(phone, None)
+        PendingCode.delete(phone)
 
         u = User.query.filter_by(phone=phone).first()
         if not u:
-            if User.query.filter_by(username=pending['username']).first():
+            if User.query.filter_by(username=pending.username).first():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
             u = User(
                 phone         = phone,
-                name          = pending['name'][:120],
-                username      = pending['username'][:80],
+                name          = pending.name[:120],
+                username      = pending.username[:80],
                 password_hash = generate_password_hash('__passwordless__'),
             )
             db.session.add(u)
@@ -1219,10 +1253,7 @@ def register_step1():
             return jsonify({'success': False, 'error': errors[0]}), 400
 
         code    = _gen_code()
-        expires = time.time() + 600
-        _pending_registrations[phone] = {
-            'name': name, 'username': username, 'code': code, 'expires': expires,
-        }
+        PendingCode.set(phone=phone, code=code, name=name, username=username, is_login=False)
         print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
         return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
 
@@ -1242,31 +1273,31 @@ def register_step2_page():
         phone = (data.get('phone', '') or '').strip()
         code  = (data.get('code',  '') or '').strip()
 
-        pending = _pending_registrations.get(phone)
+        pending = PendingCode.get(phone)
         if not pending:
             return jsonify({'success': False, 'error': 'Сначала введите данные на шаге 1'}), 400
-        if time.time() > pending['expires']:
-            _pending_registrations.pop(phone, None)
+        if time.time() > pending.expires:
+            PendingCode.delete(phone)
             return jsonify({'success': False, 'error': 'Код истёк, попробуйте снова'}), 400
-        if pending['code'] != code:
+        if pending.code != code:
             return jsonify({'success': False, 'error': 'Неверный код'}), 400
         if User.query.filter_by(phone=phone).first():
             return jsonify({'success': False, 'error': 'Номер уже зарегистрирован'}), 400
-        if User.query.filter_by(username=pending['username']).first():
+        if User.query.filter_by(username=pending.username).first():
             return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
 
         ip_addr = _get_ip()
         u = User(
             phone         = phone,
-            name          = pending['name'][:120],
-            username      = pending['username'][:80],
+            name          = pending.name[:120],
+            username      = pending.username[:80],
             password_hash = generate_password_hash('__passwordless__'),
             reg_ip        = ip_addr,
             last_ip       = ip_addr,
         )
         db.session.add(u)
         db.session.commit()
-        _pending_registrations.pop(phone, None)
+        PendingCode.delete(phone)
         session.permanent = True
         login_user(u, remember=True)
         return jsonify({'success': True, 'redirect': url_for('index')})
