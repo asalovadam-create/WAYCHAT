@@ -5732,18 +5732,20 @@ async function sendText() {
     if (!currentChatId) { _sendInFlight = false; return; }
 
     // ── Оптимистичный рендер (мгновенно) ──
+    const _tempNow = new Date().toISOString();
     const tempMsg = {
-        id:          'tmp_' + Date.now(),
-        chat_id:     currentChatId,
-        sender_id:   currentUser.id,
-        sender_name: currentUser.name,
-        type:        'text',
-        type_msg:    'text',
-        content:     text,
-        file_url:    null,
-        is_read:     false,
-        timestamp:   _nowMoscow(),
-        _optimistic: true,
+        id:            'tmp_' + Date.now(),
+        chat_id:       currentChatId,
+        sender_id:     currentUser.id,
+        sender_name:   currentUser.name,
+        type:          'text',
+        type_msg:      'text',
+        content:       text,
+        file_url:      null,
+        is_read:       false,
+        timestamp:     _tempNow,
+        raw_timestamp: _tempNow,
+        _optimistic:   true,
     };
     renderNewMessage(tempMsg, true);
 
@@ -5759,11 +5761,13 @@ async function sendText() {
         // OPT Task 5c: emit with ACK — server returns {ok, msg_id}
         socket.timeout(5000).emit('send_message', _msgPayload, (err, ack) => {
             if (!err && ack && ack.msg_id) {
-                // Replace tempId with real id in DOM
+                // Replace tempId with real id in DOM and mark as confirmed
                 const tempEl = document.querySelector(`[data-msg-id="${tempMsg.id}"]`);
                 if (tempEl) {
                     tempEl.dataset.msgId = ack.msg_id;
                     tempEl.setAttribute('data-msg-id', ack.msg_id);
+                    tempEl.dataset.replaced = '1';         // FIX: предотвращаем повторную обработку в onNewMessage
+                    tempEl.removeAttribute('data-optimistic'); // FIX: снимаем флаг оптимистичного
                     const si = tempEl.querySelector('.status-icon');
                     if (si) si.innerHTML = ICONS.check;
                 }
@@ -5833,12 +5837,27 @@ function onNewMessage(msg) {
             +msg.sender_id === +currentPartnerId || +msg.to_id === +currentPartnerId
         ));
     if (_isOpenChat) {
-        // Удаляем оптимистичные дубликаты с тем же контентом
-        if (+msg.sender_id === currentUser.id) {
+        // Переиспользуем оптимистичный элемент — НЕ удаляем, а помечаем как замененный
+        // FIX: el.remove() вызывал исчезновение сообщений — заменяем на reuse-логику
+        if (+msg.sender_id === currentUser.id && _mid) {
             const container = document.getElementById('messages');
+            let _reused = false;
             container?.querySelectorAll('[data-optimistic="1"]').forEach(el => {
-                if (el.dataset.content === (msg.content || '')) el.remove();
+                if (!_reused && el.dataset.content === (msg.content || '') && !el.dataset.replaced) {
+                    _reused = true;
+                    el.dataset.replaced = '1';
+                    el.setAttribute('data-msg-id', _mid);
+                    el.removeAttribute('data-optimistic');
+                    const si = el.querySelector('.status-icon');
+                    if (si) { si.innerHTML = ICONS.check; si.style.color = 'rgba(255,255,255,0.55)'; }
+                }
             });
+            if (_reused) {
+                // Элемент уже правильно отображён в DOM — обновляем кэши и выходим
+                _debouncedLoadChats();
+                if (msg.id) _setLastMsgId(currentChatId, msg.id);
+                return;
+            }
         }
         // Защита от дублей в DOM
         if (_mid && document.querySelector(`[data-msg-id="${CSS.escape(_mid)}"]`)) return;
