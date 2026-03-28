@@ -2738,9 +2738,10 @@ def get_moments():
 
 @app.route('/debug_moments')
 @login_required
-@require_admin
 def debug_moments():
-    """Полный debug — показывает ВСЁ"""
+    """Полный debug — показывает ВСЁ (только для суперадминов)"""
+    if not current_user.is_super_admin:
+        return jsonify({'error': 'Forbidden'}), 403
     uid     = current_user.id
     now_utc = datetime.utcnow()
     cutoff  = now_utc - timedelta(hours=24)
