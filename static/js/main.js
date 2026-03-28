@@ -161,7 +161,7 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — floating pill, transparent container */
+        /* INPUT BAR — прозрачный контейнер, поднятый над home indicator */
         .input-bar {
             position: relative !important;
             bottom: auto !important;
@@ -169,11 +169,12 @@ const WCCache = (() => {
             transform: none !important;
             z-index: 10 !important;
             background: transparent !important;
-            padding: 10px 10px !important;
-            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px) !important;
+            padding: 10px 0 !important;
+            padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 20px + var(--ib-bottom-offset, 0px)) !important;
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
+            border: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
         /* Убрать белую обводку у поля ввода */
@@ -617,6 +618,87 @@ function _updateScrollBtn(el) {
     }
 }
 // ══ END SCROLL UTILITY ═════════════════════════════════════════════
+
+// ══ INPUT BAR SETTINGS ══════════════════════════════════════════════
+const _IB_KEY = 'wc_ib_settings';
+let _ibSettings = (() => {
+    try { return JSON.parse(localStorage.getItem(_IB_KEY) || '{}'); } catch(e) { return {}; }
+})();
+
+function _ibApply() {
+    const offset = (_ibSettings.bottomOffset ?? 0);
+    const margin = (_ibSettings.sideMargin ?? 8);
+    const radius = (_ibSettings.pillRadius ?? 26);
+    document.documentElement.style.setProperty('--ib-bottom-offset', offset + 'px');
+    document.documentElement.style.setProperty('--ib-side-margin', margin + 'px');
+    document.documentElement.style.setProperty('--ib-pill-radius', radius + 'px');
+}
+_ibApply();
+
+function openInputBarSettings() {
+    const existing = document.getElementById('_ib_settings_sheet');
+    if (existing) { existing.remove(); return; }
+
+    const offset = (_ibSettings.bottomOffset ?? 0);
+    const margin = (_ibSettings.sideMargin ?? 8);
+    const radius = (_ibSettings.pillRadius ?? 26);
+
+    const sheet = document.createElement('div');
+    sheet.id = '_ib_settings_sheet';
+    sheet.style.cssText = `
+        position:fixed;bottom:0;left:0;right:0;z-index:9900;
+        background:rgba(22,22,28,0.97);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);
+        border-radius:24px 24px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);
+        padding:12px 0 calc(env(safe-area-inset-bottom,0px)+24px);
+        transform:translateY(100%);transition:transform 0.32s cubic-bezier(0.22,1,0.36,1);
+        font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif;
+    `;
+
+    const mkSlider = (label, key, min, max, val, unit='px') => `
+        <div style="padding:0 20px;margin-bottom:18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-size:13px;font-weight:600;color:rgba(255,255,255,0.7)">${label}</span>
+                <span id="ib_lbl_${key}" style="font-size:13px;font-weight:700;color:var(--accent,#10b981);min-width:42px;text-align:right">${val}${unit}</span>
+            </div>
+            <input type="range" min="${min}" max="${max}" value="${val}"
+                style="width:100%;height:4px;accent-color:var(--accent,#10b981);cursor:pointer"
+                oninput="
+                    _ibSettings['${key}']=+this.value;
+                    document.getElementById('ib_lbl_${key}').textContent=this.value+'${unit}';
+                    _ibApply();
+                    try{localStorage.setItem('${_IB_KEY}',JSON.stringify(_ibSettings));}catch(e){}
+                ">
+        </div>`;
+
+    sheet.innerHTML = `
+        <div style="width:36px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;margin:0 auto 20px"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:0 20px;margin-bottom:20px">
+            <div style="font-size:17px;font-weight:800;color:#fff">Настройки панели ввода</div>
+            <button onclick="document.getElementById('_ib_settings_sheet').remove()"
+                style="width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:rgba(255,255,255,0.6);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px">✕</button>
+        </div>
+        ${mkSlider('Отступ снизу', 'bottomOffset', 0, 80, offset)}
+        ${mkSlider('Боковые отступы', 'sideMargin', 0, 32, margin)}
+        ${mkSlider('Скругление', 'pillRadius', 0, 32, radius)}
+        <div style="padding:0 20px;margin-top:4px">
+            <button onclick="
+                _ibSettings={};
+                _ibApply();
+                try{localStorage.removeItem('${_IB_KEY}');}catch(e){}
+                document.getElementById('_ib_settings_sheet').remove();
+                openInputBarSettings();
+            " style="width:100%;padding:13px;background:rgba(255,255,255,0.07);border:none;border-radius:14px;color:rgba(255,255,255,0.55);font-size:14px;font-weight:600;cursor:pointer;font-family:inherit">
+                Сбросить по умолчанию
+            </button>
+        </div>`;
+
+    document.body.appendChild(sheet);
+    requestAnimationFrame(() => { sheet.style.transform = 'translateY(0)'; });
+
+    // Закрыть по тапу вне
+    sheet.addEventListener('click', (e) => { if (e.target === sheet) sheet.remove(); });
+}
+// ══ END INPUT BAR SETTINGS ═══════════════════════════════════════════
 
 
 
@@ -2139,13 +2221,28 @@ body {
 .msg-meta-inline { display:inline-flex;align-items:center;gap:2px;font-size:10.5px;opacity:0.6;white-space:nowrap;pointer-events:none;line-height:1; }
 .msg-media-time { position:absolute;bottom:6px;right:8px;background:rgba(0,0,0,0.48);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);border-radius:8px;padding:2px 6px;font-size:10px;color:rgba(255,255,255,0.9);display:flex;align-items:center;gap:3px;z-index:2;pointer-events:none; }
 
-/* ── v9.0: TELEGRAM INPUT BAR ── */
-/* FIX INPUT BAR: raise above home indicator, proper height */
-.tg-input-row { display:flex;align-items:flex-end;gap:6px;background:rgba(28,28,30,0.88);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-radius:26px;padding:6px 8px;box-shadow:0 4px 24px rgba(0,0,0,0.35),0 1px 0 rgba(255,255,255,0.05) inset;margin:0 4px; }
+/* ── v9.1: INPUT BAR — прозрачный, поднятый, настраиваемый ── */
+/* Настройки позиции (меняются через _ibSettings) */
+:root {
+  --ib-bottom-offset: 0px;   /* доп. отступ снизу — настраивается пользователем */
+  --ib-side-margin: 8px;     /* боковые отступы */
+  --ib-pill-radius: 26px;    /* скругление капсулы */
+}
+.tg-input-row {
+  display:flex;align-items:flex-end;gap:6px;
+  background:rgba(36,36,40,0.82);
+  backdrop-filter:blur(24px) saturate(200%);
+  -webkit-backdrop-filter:blur(24px) saturate(200%);
+  border-radius:var(--ib-pill-radius);
+  padding:6px 8px;
+  box-shadow:0 2px 20px rgba(0,0,0,0.28), 0 1px 0 rgba(255,255,255,0.06) inset;
+  margin:0 var(--ib-side-margin);
+  border:0.5px solid rgba(255,255,255,0.08);
+}
 .tg-attach-btn { width:42px;height:42px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.5);transition:color 0.15s;-webkit-tap-highlight-color:transparent; }
 .tg-attach-btn:active { color:white;background:rgba(255,255,255,0.08); }
-.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:#2c2c2e;border:none !important;outline:none !important;box-shadow:none !important;border-radius:22px;padding:6px 6px 6px 14px;min-height:44px; }
-.tg-text-wrap:focus-within { background:#333335; }
+.tg-text-wrap { flex:1;display:flex;align-items:flex-end;background:rgba(255,255,255,0.07);border:none !important;outline:none !important;box-shadow:none !important;border-radius:20px;padding:6px 6px 6px 14px;min-height:44px; }
+.tg-text-wrap:focus-within { background:rgba(255,255,255,0.10); }
 .tg-inner-btn { width:32px;height:32px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;color:rgba(255,255,255,0.45);align-self:flex-end;margin-bottom:3px;-webkit-tap-highlight-color:transparent; }
 .tg-inner-btn:active { color:white; }
 .tg-send-btn { width:42px;height:42px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:var(--glow);transition:transform 0.15s;-webkit-tap-highlight-color:transparent; }
@@ -2908,6 +3005,13 @@ body {
             </button>
             <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое" style="touch-action:none;user-select:none;-webkit-user-select:none">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="2"/><path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+        </div>
+        <!-- Кнопка настроек панели — появляется при долгом тапе на поле ввода -->
+        <div id="ib-settings-hint" style="display:flex;justify-content:center;margin-top:4px">
+            <button onclick="openInputBarSettings()" style="background:none;border:none;color:rgba(255,255,255,0.18);font-size:11px;cursor:pointer;padding:2px 8px;font-family:inherit;-webkit-tap-highlight-color:transparent;display:flex;align-items:center;gap:4px">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" opacity="0.5"><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="2"/></svg>
+                Настроить панель
             </button>
         </div>
     </div>
@@ -8059,7 +8163,6 @@ function _extractVideoThumbnail(file) {
 }
 
 function _showMomentEditor(file) {
-    // Client-side size guard: warn if > 50MB (server limit is ~100MB after our fix)
     const MAX_MB = 50;
     if (file.size > MAX_MB * 1024 * 1024) {
         showToast(`Файл слишком большой (макс ${MAX_MB} МБ). Обрежь видео в галерее.`, 'error', 5000);
@@ -8069,59 +8172,69 @@ function _showMomentEditor(file) {
     const isVid = file.type.startsWith('video');
     const url   = URL.createObjectURL(file);
 
-    // Pre-extract thumbnail for video in background
-    if (isVid) {
-        _extractVideoThumbnail(file).then(blob => { _meThumbnailBlob = blob; });
-    }
+    if (isVid) _extractVideoThumbnail(file).then(blob => { _meThumbnailBlob = blob; });
 
+    // ── Оверлей ──
     const ov = document.createElement('div');
     ov.id = 'me-ov';
-    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:9500;background:#000;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif;display:flex;flex-direction:column';
 
-    // ── Медиа-фон (заполняет экран с закруглёнными углами снизу) ──
-    const bg = document.createElement('div');
-    bg.style.cssText = 'position:absolute;inset:0;border-radius:0 0 28px 28px;overflow:hidden';
+    // ── Медиа (полный экран) ──
+    const mediaWrap = document.createElement('div');
+    mediaWrap.style.cssText = 'position:absolute;inset:0;overflow:hidden';
     if (isVid) {
         const vid = document.createElement('video');
         vid.src=url; vid.autoplay=true; vid.muted=true; vid.loop=true; vid.playsInline=true;
         vid.style.cssText='width:100%;height:100%;object-fit:cover';
-        bg.appendChild(vid);
+        mediaWrap.appendChild(vid);
     } else {
         const img = document.createElement('img');
         img.src=url; img.style.cssText='width:100%;height:100%;object-fit:cover';
-        bg.appendChild(img);
+        mediaWrap.appendChild(img);
     }
-    // Градиент сверху для кнопок
+    // Градиент снизу для панели
+    const botGrad = document.createElement('div');
+    botGrad.style.cssText='position:absolute;bottom:0;left:0;right:0;height:220px;background:linear-gradient(to top,rgba(0,0,0,0.75),transparent);pointer-events:none';
+    mediaWrap.appendChild(botGrad);
+    // Градиент сверху
     const topGrad = document.createElement('div');
-    topGrad.style.cssText='position:absolute;top:0;left:0;right:0;height:140px;background:linear-gradient(to bottom,rgba(0,0,0,0.55),transparent);pointer-events:none';
-    bg.appendChild(topGrad);
-    ov.appendChild(bg);
+    topGrad.style.cssText='position:absolute;top:0;left:0;right:0;height:140px;background:linear-gradient(to bottom,rgba(0,0,0,0.5),transparent);pointer-events:none';
+    mediaWrap.appendChild(topGrad);
+    ov.appendChild(mediaWrap);
 
-    // ── Кнопка закрыть (сверху слева) ──
+    // ── Шапка: кнопка закрыть + подпись ──
+    const header = document.createElement('div');
+    header.style.cssText='position:absolute;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;padding:max(env(safe-area-inset-top,0px),48px) 16px 16px;gap:12px';
     const closeBtn = document.createElement('button');
-    closeBtn.style.cssText='position:absolute;top:max(env(safe-area-inset-top),50px);left:16px;z-index:20;width:34px;height:34px;border-radius:50%;background:rgba(0,0,0,0.4);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center';
-    closeBtn.innerHTML='<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1 1l10 10M11 1L1 11" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
+    closeBtn.style.cssText='width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0';
+    closeBtn.innerHTML='<svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M1 1l12 12M13 1L1 13" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
     closeBtn.onclick = () => { ov.remove(); URL.revokeObjectURL(url); };
-    ov.appendChild(closeBtn);
+    const headerTitle = document.createElement('div');
+    headerTitle.style.cssText='flex:1;font-size:16px;font-weight:700;color:#fff;text-align:center';
+    headerTitle.textContent = 'Новый момент';
+    const spacer = document.createElement('div');
+    spacer.style.cssText='width:36px;flex-shrink:0'; // баланс для центрирования
+    header.appendChild(closeBtn);
+    header.appendChild(headerTitle);
+    header.appendChild(spacer);
+    ov.appendChild(header);
 
-    // ── Инструменты справа (гео + текст) — iOS Camera style ──
+    // ── Инструменты справа ──
     const toolsRight = document.createElement('div');
-    toolsRight.style.cssText='position:absolute;right:14px;top:50%;transform:translateY(-50%);z-index:20;display:flex;flex-direction:column;gap:12px';
-
-    const geoBtn = document.createElement('button');
+    toolsRight.style.cssText='position:absolute;right:14px;top:50%;transform:translateY(-50%);z-index:20;display:flex;flex-direction:column;gap:10px';
+    const mkToolBtn = (html) => {
+        const b = document.createElement('button');
+        b.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.5);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.18);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent';
+        b.innerHTML=html; return b;
+    };
+    const geoBtn = mkToolBtn('<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg>');
     geoBtn.id='me-geo-btn';
-    geoBtn.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.2);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center';
-    geoBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke="white" stroke-width="2"/><circle cx="12" cy="9" r="2.5" stroke="white" stroke-width="2"/></svg>';
-
-    const txtBtn = document.createElement('button');
-    txtBtn.style.cssText='width:44px;height:44px;border-radius:50%;background:rgba(0,0,0,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.2);color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center';
-    txtBtn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
-
+    const txtBtn = mkToolBtn('<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M17 3a2.828 2.828 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>');
     toolsRight.appendChild(geoBtn);
     toolsRight.appendChild(txtBtn);
     ov.appendChild(toolsRight);
 
-    // ── Гео-метка (перетаскиваемая) ──
+    // ── Гео-метка ──
     const geoTag = document.createElement('div');
     geoTag.id = 'me-geo-tag';
     geoTag.style.cssText = 'position:absolute;left:50%;top:30%;background:rgba(0,0,0,0.6);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,0.25);border-radius:22px;padding:9px 16px;color:#fff;font-size:14px;font-weight:600;cursor:grab;display:none;align-items:center;gap:7px;white-space:nowrap;user-select:none;-webkit-user-select:none;z-index:20;transform:translateX(-50%)';
@@ -8129,45 +8242,43 @@ function _showMomentEditor(file) {
     _makeDraggable(geoTag, ov);
     ov.appendChild(geoTag);
 
-    // ── Текстовая надпись (перетаскиваемая) ──
+    // ── Текстовая надпись ──
     const capTag = document.createElement('div');
     capTag.id = 'me-cap-tag';
-    capTag.style.cssText = 'position:absolute;left:50%;bottom:220px;transform:translateX(-50%);background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:16px;padding:2px 6px;display:none;z-index:20;min-width:120px;max-width:80vw';
+    capTag.style.cssText = 'position:absolute;left:50%;bottom:200px;transform:translateX(-50%);background:rgba(0,0,0,0.5);backdrop-filter:blur(10px);border-radius:16px;padding:2px 6px;display:none;z-index:20;min-width:140px;max-width:82vw';
     const capInput = document.createElement('input');
-    capInput.id='me-cap'; capInput.placeholder='Текст...';
-    capInput.style.cssText='background:transparent;border:none;outline:none;color:#fff;font-size:18px;font-weight:600;text-align:center;padding:10px 14px;width:100%;font-family:inherit';
+    capInput.id='me-cap'; capInput.placeholder='Подпись к моменту...';
+    capInput.style.cssText='background:transparent;border:none;outline:none;color:#fff;font-size:17px;font-weight:600;text-align:center;padding:10px 14px;width:100%;font-family:inherit';
     capTag.appendChild(capInput);
     _makeDraggable(capTag, ov);
     ov.appendChild(capTag);
 
-    // ── Нижняя панель iOS 26 стиль ──
-    //const panel = document.createElement('div');
+    // ── Нижняя панель ──
+    const panel = document.createElement('div');
+    panel.style.cssText='position:absolute;bottom:0;left:0;right:0;z-index:20;padding:16px 16px calc(env(safe-area-inset-bottom,0px) + 24px)';
 
-    //panel.style.display = 'none';
-
-    // Строка: аватар + "Ваша история" + кнопка Опубликовать
+    // Строка: аватар + "Ваша история" + кнопка
     const bottomRow = document.createElement('div');
     bottomRow.style.cssText='display:flex;align-items:center;gap:12px';
 
-    // Аватар пользователя
     const avaDiv = document.createElement('div');
-    avaDiv.style.cssText='width:42px;height:42px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,0.3);flex-shrink:0';
+    avaDiv.style.cssText='width:44px;height:44px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,0.35);flex-shrink:0';
     const _ava = window.currentUser?.avatar;
-    avaDiv.innerHTML = _ava && _ava !== 'null' && !_ava.startsWith('emoji:')
-        ? '<img src="'+_ava+'" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display=\'none\'">'
-        : '<div style="width:100%;height:100%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#000">'+(window.currentUser?.name||'?')[0].toUpperCase()+'</div>';
+    avaDiv.innerHTML = _ava && _ava !== 'null' && !_ava.includes('default') && !_ava.startsWith('emoji:')
+        ? `<img src="${_ava}" style="width:100%;height:100%;object-fit:cover" onerror="this.style.display='none'">`
+        : `<div style="width:100%;height:100%;background:var(--accent,#10b981);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:#000">${(window.currentUser?.name||'?')[0].toUpperCase()}</div>`;
 
-    // Текст
     const storyInfo = document.createElement('div');
     storyInfo.style.cssText='flex:1;min-width:0';
-    storyInfo.innerHTML='<div style="font-size:14px;font-weight:700;color:#fff">Ваша история</div>'
-        +'<div style="font-size:12px;color:rgba(255,255,255,0.5);margin-top:1px">Исчезнет через 24 часа · Все контакты</div>';
+    storyInfo.innerHTML='<div style="font-size:15px;font-weight:700;color:#fff">'+(window.currentUser?.name||'Ваша история')+'</div>'
+        +'<div style="font-size:12px;color:rgba(255,255,255,0.55);margin-top:2px">Исчезнет через 24 ч</div>';
 
-    // Кнопка Опубликовать
     const sBtn = document.createElement('button');
     sBtn.id='me-share';
-    sBtn.style.cssText='padding:12px 20px;background:var(--accent,#10b981);border:none;border-radius:22px;color:#000;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;box-shadow:0 0 20px rgba(16,185,129,0.4);white-space:nowrap;flex-shrink:0';
-    sBtn.innerHTML='Опубликовать <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    sBtn.style.cssText='padding:13px 22px;background:var(--accent,#10b981);border:none;border-radius:24px;color:#000;font-size:15px;font-weight:800;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;box-shadow:0 0 24px rgba(16,185,129,0.45);white-space:nowrap;flex-shrink:0;-webkit-tap-highlight-color:transparent;transition:transform 0.12s,opacity 0.12s';
+    sBtn.innerHTML='Опубликовать <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    sBtn.onpointerdown=()=>{ sBtn.style.transform='scale(0.95)'; sBtn.style.opacity='0.85'; };
+    sBtn.onpointerup=()=>{ sBtn.style.transform=''; sBtn.style.opacity=''; };
     sBtn.onclick = () => _publishMomentEditor(ov, file, url);
 
     bottomRow.appendChild(avaDiv);
@@ -8176,12 +8287,12 @@ function _showMomentEditor(file) {
     panel.appendChild(bottomRow);
     ov.appendChild(panel);
 
-    // ── Обработчики кнопок инструментов ──
+    // ── Обработчики ──
     geoBtn.onclick = () => _requestMeGeo(geoBtn, geoTag);
     txtBtn.onclick = () => {
         const sh = capTag.style.display === 'flex' ? 'none' : 'flex';
         capTag.style.display = sh;
-        if (sh === 'flex') { setTimeout(() => capInput.focus(), 50); }
+        if (sh === 'flex') setTimeout(() => capInput.focus(), 50);
     };
 
     document.body.appendChild(ov);
