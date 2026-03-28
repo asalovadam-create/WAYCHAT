@@ -312,6 +312,7 @@ def _run_early_migrations():
         # ── Индексы для 1k онлайн ──
         'CREATE INDEX IF NOT EXISTS idx_msg_chat_time_desc ON message(chat_id, timestamp DESC)',
         'CREATE INDEX IF NOT EXISTS idx_msg_unread_fast ON message(chat_id, is_read, sender_id) WHERE is_read = FALSE AND is_deleted = FALSE',
+        'CREATE INDEX IF NOT EXISTS idx_msg_chat_id_desc ON message(chat_id, id DESC) WHERE is_deleted = FALSE',
         'CREATE INDEX IF NOT EXISTS idx_user_username_lower ON "user"(lower(username))',
         'CREATE INDEX IF NOT EXISTS idx_saved_contact_both ON saved_contact(user_id, contact_id)',
         'CREATE INDEX IF NOT EXISTS idx_moment_user_time ON moment(user_id, timestamp DESC)',
@@ -1797,23 +1798,21 @@ def get_messages(chat_id):
         db.session.rollback()
     except Exception:
         pass
-    limit     = min(request.args.get('limit', 30, type=int), 60)
+    limit     = min(request.args.get('limit', 50, type=int), 100)
     before_id = request.args.get('before_id', None, type=int)
     uid       = current_user.id
 
     # Проверяем что чат существует и пользователь — участник
     chat = db.session.get(Chat, chat_id)
     if not chat:
-        return jsonify([])  # чат удалён — возвращаем пустой массив
+        return jsonify([])
 
-    # Проверка доступа: пользователь должен быть участником
     uid_str = str(uid)
     is_private = chat.room_key.startswith('chat_') and not chat.room_key.startswith('group_')
     if is_private:
         parts = chat.room_key.replace('chat_', '').split('_')
         if uid_str not in parts:
             return jsonify([])
-    # Для групповых — проверяем членство
     elif chat.room_key.startswith('group_'):
         try:
             group_id = int(chat.room_key.replace('group_', ''))
@@ -1822,6 +1821,7 @@ def get_messages(chat_id):
         except Exception:
             pass
 
+    # Быстрый mark-read через один SQL
     db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': uid}
@@ -1833,13 +1833,31 @@ def get_messages(chat_id):
         if p_id:
             emit_to_user(p_id, 'messages_read_bulk', {'chat_id': chat_id})
 
-    query = Message.query.filter_by(chat_id=chat_id, is_deleted=False)
+    # Быстрый SELECT через raw SQL с индексом по (chat_id, id DESC)
     if before_id:
-        query = query.filter(Message.id < before_id)
+        rows = db.session.execute(text('''
+            SELECT id, chat_id, sender_id, type, content, file_url, timestamp,
+                   is_read, is_deleted, reply_to_id, forwarded_from, duration,
+                   geo_lat, geo_lng, geo_name
+            FROM message
+            WHERE chat_id = :cid AND is_deleted = FALSE AND id < :bid
+            ORDER BY id DESC LIMIT :lim
+        '''), {'cid': chat_id, 'bid': before_id, 'lim': limit}).fetchall()
+    else:
+        rows = db.session.execute(text('''
+            SELECT id, chat_id, sender_id, type, content, file_url, timestamp,
+                   is_read, is_deleted, reply_to_id, forwarded_from, duration,
+                   geo_lat, geo_lng, geo_name
+            FROM message
+            WHERE chat_id = :cid AND is_deleted = FALSE
+            ORDER BY id DESC LIMIT :lim
+        '''), {'cid': chat_id, 'lim': limit}).fetchall()
 
-    msgs = query.order_by(Message.id.desc()).limit(limit).all()
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in reversed(msgs)])
+
+    # Конвертируем через to_dict только если нужен полный объект, иначе строим вручную
+    msgs = Message.query.filter(Message.id.in_([r.id for r in rows])).order_by(Message.id.asc()).all()
+    return jsonify([m.to_dict() for m in msgs])
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -3107,11 +3125,12 @@ def create_moment():
                     fname    = f'm_{uid}_{int(time.time())}_{uuid.uuid4().hex[:8]}{ext}'
                     savepath = os.path.join(MOMENTS_FOLDER, fname)
                     file.seek(0)
+                    os.makedirs(MOMENTS_FOLDER, exist_ok=True)
                     file.save(savepath)
                     media_url = f'/static/uploads/moments/{fname}'
                 except Exception as _fe:
                     app.logger.error(f'Local fallback save failed: {_fe}')
-                    return jsonify({'success': False, 'error': 'Ошибка сохранения медиа'}), 500
+                    return jsonify({'success': False, 'error': 'Cloudinary не настроен. Добавьте CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET в переменные окружения Render.'}), 500
 
     # ── Thumbnail / preview (optional, sent by client for video) ──
     if 'preview' in request.files:
