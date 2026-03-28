@@ -259,6 +259,14 @@ def _run_early_migrations():
         "ALTER TABLE user_track ADD COLUMN IF NOT EXISTS audio_mime VARCHAR(50) DEFAULT 'audio/mpeg'",
         "ALTER TABLE message ADD COLUMN IF NOT EXISTS extra_data TEXT DEFAULT ''",
         "ALTER TABLE message ADD COLUMN IF NOT EXISTS preview_url VARCHAR(500) DEFAULT ''",
+        # FIX: колонки которые запрашиваются в get_messages но могут отсутствовать в старой БД
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS reply_to_id INTEGER DEFAULT NULL",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS forwarded_from INTEGER DEFAULT NULL",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS duration REAL DEFAULT 0",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS geo_lat VARCHAR(30) DEFAULT NULL",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS geo_lng VARCHAR(30) DEFAULT NULL",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS geo_name VARCHAR(200) DEFAULT NULL",
+        "ALTER TABLE message ADD COLUMN IF NOT EXISTS sender_name VARCHAR(120) DEFAULT ''",
         # Channels
         '''CREATE TABLE IF NOT EXISTS channel (
             id SERIAL PRIMARY KEY,
@@ -1833,30 +1841,17 @@ def get_messages(chat_id):
         if p_id:
             emit_to_user(p_id, 'messages_read_bulk', {'chat_id': chat_id})
 
-    # Быстрый SELECT через raw SQL с индексом по (chat_id, id DESC)
+    # FIX: ORM-запрос вместо raw SQL — не падает при отсутствующих колонках в БД
+    q = Message.query.filter(
+        Message.chat_id == chat_id,
+        Message.is_deleted == False
+    )
     if before_id:
-        rows = db.session.execute(text('''
-            SELECT id, chat_id, sender_id, type, content, file_url, timestamp,
-                   is_read, is_deleted, reply_to_id, forwarded_from, duration,
-                   geo_lat, geo_lng, geo_name
-            FROM message
-            WHERE chat_id = :cid AND is_deleted = FALSE AND id < :bid
-            ORDER BY id DESC LIMIT :lim
-        '''), {'cid': chat_id, 'bid': before_id, 'lim': limit}).fetchall()
-    else:
-        rows = db.session.execute(text('''
-            SELECT id, chat_id, sender_id, type, content, file_url, timestamp,
-                   is_read, is_deleted, reply_to_id, forwarded_from, duration,
-                   geo_lat, geo_lng, geo_name
-            FROM message
-            WHERE chat_id = :cid AND is_deleted = FALSE
-            ORDER BY id DESC LIMIT :lim
-        '''), {'cid': chat_id, 'lim': limit}).fetchall()
+        q = q.filter(Message.id < before_id)
+    msgs = q.order_by(Message.id.desc()).limit(limit).all()
+    msgs = list(reversed(msgs))
 
     _chat_cache.delete(uid)
-
-    # Конвертируем через to_dict только если нужен полный объект, иначе строим вручную
-    msgs = Message.query.filter(Message.id.in_([r.id for r in rows])).order_by(Message.id.asc()).all()
     return jsonify([m.to_dict() for m in msgs])
 
 # ══════════════════════════════════════════════════════════
