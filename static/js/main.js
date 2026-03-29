@@ -634,7 +634,7 @@ function _updateScrollBtn(el) {
 //
 (function _applyInputBarSettings() {
     const S = {
-        bottomOffset : 50,  // ← МЕНЯЙ ЭТО чтобы поднять инпут выше (px)
+        bottomOffset : 100,  // ← МЕНЯЙ ЭТО чтобы поднять инпут выше (px)
         sideMargin   : 10,  // px — отступы по бокам от краёв экрана
         pillRadius   : 24,  // px — скругление капсулы
     };
