@@ -132,8 +132,8 @@ const WCCache = (() => {
         }
         /* Убиваем любой padding-bottom у прямых детей #app */
         #app > * { padding-bottom: 0 !important; margin-bottom: 0 !important; }
-        /* input-bar — исключение: safe-area через tg-input-row, не блокируем */
-        /* #app .input-bar padding-bottom НЕ обнуляем — это ломает подъём над home indicator */
+        /* input-bar — исключение: нужен padding-bottom для safe-area */
+        /* input-bar теперь position:fixed — не в потоке #app */
         /* Убиваем серый фон который может просвечивать под #app */
         * { -webkit-tap-highlight-color: transparent !important; }
         /* chat-view: flex-колонка на весь экран */
@@ -163,20 +163,18 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — прозрачный, поднят над обоями, safe-area встроена в tg-input-row */
+        /* INPUT BAR — position:fixed, всегда выше Safari toolbar и home indicator */
         .input-bar {
-            position: relative !important;
-            bottom: auto !important;
-            left: auto !important; right: auto !important;
-            transform: none !important;
-            z-index: 10 !important;
+            position: fixed !important;
+            bottom: env(safe-area-inset-bottom, 0px) !important;
+            left: 0 !important;
+            right: 0 !important;
+            z-index: 9999 !important;
             background: transparent !important;
             backdrop-filter: none !important;
             -webkit-backdrop-filter: none !important;
-            /* padding НЕ обнуляем — подъём над home indicator идёт через tg-input-row */
+            padding: 8px 0 !important;
             pointer-events: all !important;
-            flex-shrink: 0 !important;
-            border-top: none !important;
             border: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
@@ -193,9 +191,9 @@ const WCCache = (() => {
             box-shadow: none !important;
             -webkit-appearance: none !important;
         }
-        /* messages: нижний padding небольшой — input-bar теперь в потоке */
+        /* messages: padding-bottom чтобы последнее сообщение не скрывалось под fixed input-bar */
         #messages {
-            padding-bottom: 8px !important;
+            padding-bottom: 90px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:rgba(26,26,46,0.92) !important; backdrop-filter:blur(20px) !important; -webkit-backdrop-filter:blur(20px) !important; border-bottom:none !important; }
@@ -623,20 +621,17 @@ function _updateScrollBtn(el) {
 // ══ END SCROLL UTILITY ═════════════════════════════════════════════
 
 // ══ INPUT BAR SETTINGS ══════════════════════════════════════════════
-// ★ ПАРАМЕТРЫ ИНПУТА — меняй значения и деплой, больше ничего не нужно:
+// Настрой под себя — просто меняй значения ниже и деплой:
 //
-//   bottomOffset  — насколько px поднять инпут выше home indicator
-//                   0  = вплотную к home indicator
-//                   24 = поднят на 24px (сейчас)
-//                   50 = максимально высоко
-//   sideMargin    — отступы по бокам от края экрана в px
-//   pillRadius    — скругление углов капсулы в px
+//   bottomOffset  — дополнительный отступ снизу в px (0 = вплотную к home indicator)
+//   sideMargin    — отступы по бокам в px
+//   pillRadius    — скругление капсулы в px
 //
 (function _applyInputBarSettings() {
     const S = {
-        bottomOffset : 200,  // ← МЕНЯЙ ЭТО чтобы поднять инпут выше (px)
-        sideMargin   : 10,  // px — отступы по бокам от краёв экрана
-        pillRadius   : 24,  // px — скругление капсулы
+        bottomOffset : 0,   // px — поднять панель выше (например 20)
+        sideMargin   : 8,   // px — отступы по бокам
+        pillRadius   : 26,  // px — скругление капсулы
     };
     const r = document.documentElement.style;
     r.setProperty('--ib-bottom-offset', S.bottomOffset + 'px');
@@ -1964,7 +1959,7 @@ function renderApp() {
     --border: rgba(255,255,255,0.06);
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
-    --msg-in: #3a3a3c;
+    --msg-in: #2a2a2b;
     --msg-out: #1a7a52;
     --divider: rgba(255,255,255,0.05);
     --chat-bg: #1d1d1e;
@@ -2190,7 +2185,6 @@ body {
 .input-bar {
   background: transparent !important;
   border: none !important;
-  /* padding НЕ трогаем — tg-input-row сам управляет отступом над home indicator */
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -2201,9 +2195,8 @@ body {
   align-items: center;
   gap: 6px;
   background: transparent;
-  /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
-  /* safe-area-inset-bottom на iPhone X+ = 34px, плюс --ib-bottom-offset поднимает дополнительно */
-  padding: 10px var(--ib-side-margin, 10px) calc(max(env(safe-area-inset-bottom, 20px), 20px) + var(--ib-bottom-offset, 24px)) var(--ib-side-margin, 10px);
+  /* input-bar уже поднят через fixed+safe-area, просто нормальный padding */
+  padding: 8px 10px 8px 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -2553,7 +2546,7 @@ body {
 }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: 0 !important; padding-top: 0 !important; }
+    /* input-bar: position:fixed — desktop override не нужен */
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
