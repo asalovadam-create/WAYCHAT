@@ -120,7 +120,7 @@ class TTLCache:
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
 _user_dict_cache  = TTLCache(maxsize=3000, ttl=120.0)  # 3k юзеров × 2min
-_chat_cache       = TTLCache(maxsize=8000, ttl=15.0)   # больше чатов
+_chat_cache       = TTLCache(maxsize=8000, ttl=45.0)   # 45s — меньше нагрузки на БД
 _online_cache     = TTLCache(maxsize=8000, ttl=8.0)
 _partner_cache    = TTLCache(maxsize=3000, ttl=60.0)
 _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
@@ -164,7 +164,7 @@ try:
         'text/html', 'text/css', 'application/json',
         'application/javascript', 'text/javascript'
     ]
-    app.config['COMPRESS_LEVEL'] = 9  # 9: max compression
+    app.config['COMPRESS_LEVEL'] = 6  # 6: баланс скорость/размер
     app.config['COMPRESS_MIN_SIZE'] = 256  # 9: compress more
 except ImportError:
     pass
@@ -209,7 +209,7 @@ if _REDIS_URL:
         _rc = _redis_lib.from_url(_REDIS_URL, socket_connect_timeout=3, socket_timeout=3)
         _rc.ping()
         _REDIS_OK = True
-        print(f'✅ Redis подключён: {_REDIS_URL[:40]}...')
+        print(f'✅ Redis подключён')
     except Exception as _re:
         print(f'⚠️  Redis недоступен ({_re}), стартуем без него')
         _REDIS_URL = ''
@@ -1016,31 +1016,48 @@ def _get_ip():
 
 @app.before_request
 def _ensure_clean_session():
-    """Откатываем только при необходимости — не на каждый запрос (perf)"""
-    pass
+    """Откатываем сессию если предыдущая транзакция упала — предотвращает PendingRollbackError"""
+    try:
+        if db.session.is_active and db.session.get_bind().dialect.name:
+            pass  # сессия чистая
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
 
+
+_ban_check_cache = {}
 
 @app.before_request
 def _check_ban_and_ip():
-    """Снимаем временный бан если время вышло; обновляем IP"""
-    if current_user.is_authenticated:
-        try:
-            u = current_user._get_current_object()
-            changed = False
-            if u.ban_until and u.ban_until < datetime.utcnow():
-                u.is_blocked = False
-                u.ban_until  = None
-                u.ban_reason = ''
-                changed = True
-            ip = _get_ip()
-            if ip and u.last_ip != ip:
-                u.last_ip = ip
-                changed = True
-            if changed:
-                db.session.commit()
-                u.invalidate_cache()
-        except Exception:
-            pass
+    """Снимаем бан если вышел; обновляем IP. Throttle: 1 раз в 60с на юзера."""
+    if not current_user.is_authenticated:
+        return
+    if request.path.startswith('/static/') or request.path.startswith('/socket.io'):
+        return
+    try:
+        uid = current_user.id
+        now = time.monotonic()
+        if now - _ban_check_cache.get(uid, 0) < 60.0:
+            return
+        _ban_check_cache[uid] = now
+        u = current_user._get_current_object()
+        changed = False
+        if u.ban_until and u.ban_until < datetime.utcnow():
+            u.is_blocked = False
+            u.ban_until  = None
+            u.ban_reason = ''
+            changed = True
+        ip = _get_ip()
+        if ip and u.last_ip != ip:
+            u.last_ip = ip
+            changed = True
+        if changed:
+            db.session.commit()
+            u.invalidate_cache()
+    except Exception:
+        pass
 
 
 def broadcast_status(user_id, online, throttle_ms=500):
@@ -1709,23 +1726,26 @@ def get_my_chats():
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
     memberships = GroupMember.query.filter_by(user_id=uid).all()
+    _grp_ids = [m.group_id for m in memberships]
+    _grp_map = {}; _grp_last = {}; _grp_unread = {}
+    if _grp_ids:
+        for _g in db.session.execute(text('SELECT id, name, avatar, creator_id, chat_id, created_at FROM "group" WHERE id = ANY(:ids)'), {'ids': _grp_ids}).fetchall():
+            _grp_map[_g.id] = _g
+        _gcids = [_g.chat_id for _g in _grp_map.values() if _g.chat_id]
+        if _gcids:
+            for _r in db.session.execute(text('SELECT DISTINCT ON (chat_id) chat_id, id, type, content, file_url, timestamp, sender_id, sender_name FROM message WHERE chat_id = ANY(:ids) AND is_deleted = FALSE ORDER BY chat_id, id DESC'), {'ids': _gcids}).fetchall():
+                _grp_last[_r.chat_id] = _r
+            for _r in db.session.execute(text('SELECT chat_id, COUNT(*) as cnt FROM message WHERE chat_id = ANY(:ids) AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE GROUP BY chat_id'), {'ids': _gcids, 'uid': uid}).fetchall():
+                _grp_unread[_r.chat_id] = _r.cnt
     for m in memberships:
         try:
-            group = db.session.get(Group, m.group_id)
-            if not group:
+            group = _grp_map.get(m.group_id)
+            if not group or not group.chat_id:
                 continue
-            chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
-            if not chat:
-                continue
-
-            last_msg = Message.query.filter_by(
-                chat_id=chat.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
-
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': chat.id, 'uid': uid}
-            ).scalar() or 0
+            class _FC: id = group.chat_id
+            chat = _FC()
+            last_msg = _grp_last.get(group.chat_id)
+            unread   = _grp_unread.get(group.chat_id, 0)
 
             type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
             preview  = '👥 Группа создана'
@@ -1773,7 +1793,13 @@ def get_my_chats():
         r.pop('_sort', None)
 
     _chat_cache.set(uid, result)
-    return jsonify(result)
+    import hashlib as _hl2
+    _etag2 = _hl2.md5(str([(r.get("chat_id"), r.get("unread_count"), r.get("raw_timestamp")) for r in result]).encode()).hexdigest()[:16]
+    if request.headers.get("If-None-Match") == f'"{_etag2}"': return make_response("", 304)
+    _resp2 = make_response(jsonify(result))
+    _resp2.headers["ETag"] = f'"{_etag2}"'
+    _resp2.headers["Cache-Control"] = "no-cache"
+    return _resp2
 
 
 @app.route('/get_chat_id/<int:partner_id>')
@@ -1863,7 +1889,14 @@ def get_messages(chat_id):
     msgs = list(reversed(msgs))
 
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in msgs])
+    _msgs_data = [m.to_dict() for m in msgs]
+    import hashlib as _hl3
+    _etag3 = _hl3.md5(str([(m["id"], m.get("is_read")) for m in _msgs_data]).encode()).hexdigest()[:16]
+    if request.headers.get("If-None-Match") == f'"{_etag3}"': return make_response("", 304)
+    _resp3 = make_response(jsonify(_msgs_data))
+    _resp3.headers["ETag"] = f'"{_etag3}"'
+    _resp3.headers["Cache-Control"] = "no-cache"
+    return _resp3
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
