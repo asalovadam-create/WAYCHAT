@@ -2132,15 +2132,8 @@ body {
   border:none;
 }
 
-/* ИНПУТ — тёмный фон с блюром */
-.input-bar {
-  padding: 0 !important;
-  border: none !important;
-  background: rgba(29,29,30,0.97) !important;
-  backdrop-filter: blur(20px) !important;
-  -webkit-backdrop-filter: blur(20px) !important;
-  border-top: 0.5px solid rgba(255,255,255,0.08) !important;
-}
+/* ИНПУТ — floating над чатом */
+.input-bar { padding:0;border:none !important;background:transparent !important; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:rgba(255,255,255,0.10); }
@@ -13479,7 +13472,7 @@ if (window._pendingSWOpenChat) {
 
 // ══ INPUT BAR FORCE FIX ══
 (function fixInputBar() {
-    var _applying = false; // guard: предотвращает рекурсивный вызов из MutationObserver
+    var _applying = false; // guard против рекурсии
 
     function apply() {
         if (_applying) return;
@@ -13488,36 +13481,29 @@ if (window._pendingSWOpenChat) {
         var bar = document.querySelector('.input-bar');
         if (!bar) { _applying = false; return; }
 
-        // Safe area bottom — читаем CSS переменную без DOM-мутации
-        var safeH = 0;
-        try {
-            var raw = getComputedStyle(document.documentElement)
-                .getPropertyValue('--safe-area-bottom');
-            safeH = parseInt(raw, 10) || 0;
-        } catch(e) { safeH = 0; }
-
-        bar.style.setProperty('position',                'fixed',                             'important');
-        bar.style.setProperty('bottom',                  safeH + 'px',                        'important');
-        bar.style.setProperty('left',                    '0',                                  'important');
-        bar.style.setProperty('right',                   '0',                                  'important');
-        bar.style.setProperty('z-index',                 '9999',                               'important');
-        bar.style.setProperty('background',              'rgba(29,29,30,0.97)',                'important');
-        bar.style.setProperty('backdrop-filter',         'blur(20px)',                         'important');
-        bar.style.setProperty('-webkit-backdrop-filter', 'blur(20px)',                         'important');
-        bar.style.setProperty('border-top',              '0.5px solid rgba(255,255,255,0.08)', 'important');
-        bar.style.setProperty('padding',                 '0',                                  'important');
+        // position:fixed + bottom:0 — safe-area обрабатывается самим .tg-input-row
+        // через padding: calc(env(safe-area-inset-bottom) + 24px), не трогаем это
+        bar.style.setProperty('position',                'fixed',                'important');
+        bar.style.setProperty('bottom',                  '0',                   'important');
+        bar.style.setProperty('left',                    '0',                   'important');
+        bar.style.setProperty('right',                   '0',                   'important');
+        bar.style.setProperty('z-index',                 '9999',                'important');
+        bar.style.setProperty('background',              'transparent',         'important');
+        bar.style.setProperty('backdrop-filter',         'none',                'important');
+        bar.style.setProperty('-webkit-backdrop-filter', 'none',                'important');
+        bar.style.setProperty('border-top',              'none',                'important');
+        bar.style.setProperty('padding',                 '0',                   'important');
 
         // Поднимаем messages чтобы не прятались под input-bar
         var msgs = document.getElementById('messages');
         if (msgs) {
-            var barH = bar.offsetHeight || 64;
-            msgs.style.setProperty('padding-bottom', (barH + safeH + 8) + 'px', 'important');
+            var barH = bar.offsetHeight || 88;
+            msgs.style.setProperty('padding-bottom', (barH + 8) + 'px', 'important');
         }
 
         _applying = false;
     }
 
-    // Запускаем сразу и на стандартных событиях
     window.addEventListener('load', apply);
     document.addEventListener('DOMContentLoaded', apply);
     window.addEventListener('resize', apply, { passive: true });
@@ -13525,11 +13511,12 @@ if (window._pendingSWOpenChat) {
         window.visualViewport.addEventListener('resize', apply, { passive: true });
     }
 
-    // MutationObserver — только для первого появления .input-bar,
-    // после чего сразу отключается чтобы не вызывать бесконечный цикл
+    // MutationObserver — ждём появления .input-bar, затем сразу отключаемся
+    // disconnect() обязателен — без него каждая DOM-мутация вызывает apply()
+    // и браузер зависает в бесконечном цикле
     var _barObserver = new MutationObserver(function() {
         if (document.querySelector('.input-bar')) {
-            _barObserver.disconnect(); // отключаемся сразу — больше не нужен
+            _barObserver.disconnect();
             apply();
         }
     });
