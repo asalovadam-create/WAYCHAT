@@ -132,6 +132,8 @@ const WCCache = (() => {
         }
         /* Убиваем любой padding-bottom у прямых детей #app */
         #app > * { padding-bottom: 0 !important; margin-bottom: 0 !important; }
+        /* input-bar — исключение: нужен padding-bottom для safe-area */
+        #app .input-bar { padding-bottom: 0 !important; }
         /* Убиваем серый фон который может просвечивать под #app */
         * { -webkit-tap-highlight-color: transparent !important; }
         /* chat-view: flex-колонка на весь экран */
@@ -193,10 +195,10 @@ const WCCache = (() => {
         }
         /* messages: нижний padding небольшой — input-bar теперь в потоке */
         #messages {
-            padding-bottom: 4px !important;
+            padding-bottom: 8px !important;
         }
         /* header: не сжимается */
-        #chat-header { flex-shrink: 0 !important; background:var(--chat-bg,#1d1d1e) !important; backdrop-filter:none !important; -webkit-backdrop-filter:none !important; border-bottom:none !important; }
+        #chat-header { flex-shrink: 0 !important; background:rgba(26,26,46,0.92) !important; backdrop-filter:blur(20px) !important; -webkit-backdrop-filter:blur(20px) !important; border-bottom:none !important; }
         /* FAB: всегда поверх и кликабельна */
         .fab-btn {
             pointer-events: all !important;
@@ -2074,15 +2076,21 @@ body {
 .ava-pulse-anim{animation:avaPulse 0.4s cubic-bezier(0.34,1.56,0.64,1)}
 
 /* ЧАТ ОКНО — плавное открытие как в TG */
-.chat-view { position:fixed;inset:0;z-index:2000;background:var(--chat-bg);display:flex;flex-direction:column;overflow:hidden;transform:translateX(100%);transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);will-change:transform;-webkit-backface-visibility:hidden;backface-visibility:hidden; }
-.chat-view.active { transform:translateX(0); }
-.chat-wallpaper{
-    background-color: #1a1a2e;
-    background-image:
-        radial-gradient(ellipse at 20% 50%, rgba(16,185,129,0.04) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 50%),
-        url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.018'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+.chat-view {
+  position:fixed;inset:0;z-index:2000;
+  /* wallpaper на ВЕСЬ экран включая зону input bar */
+  background-color: #1a1a2e;
+  background-image:
+    radial-gradient(ellipse at 20% 50%, rgba(16,185,129,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 50%),
+    url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.018'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  display:flex;flex-direction:column;overflow:hidden;
+  transform:translateX(100%);
+  transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);
+  will-change:transform;-webkit-backface-visibility:hidden;backface-visibility:hidden;
 }
+.chat-view.active { transform:translateX(0); }
+.chat-wallpaper { background: transparent; }
 /* Эффект глубины на фоне при открытии чата */
 #main-content{transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94),filter 0.28s ease,opacity 0.28s ease}
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
@@ -2175,21 +2183,23 @@ body {
 
 /* ── INPUT BAR — точь-в-точь Telegram ── */
 
-/* Внешний контейнер — 100% прозрачный, виден wallpaper */
+/* Внешний контейнер — 100% прозрачный, виден wallpaper chat-view */
 .input-bar {
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
-/* Строка инпута: [капсула][скрепка][микро/отправить] */
+/* Строка инпута: [капсула][микро/отправить] */
 .tg-input-row {
   display: flex;
   align-items: center;
   gap: 6px;
   background: transparent;
-  /* поднимаем над home indicator на всех iPhone */
-  padding: 8px 10px calc(env(safe-area-inset-bottom, 0px) + 10px) 10px;
+  /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
+  padding: 10px 10px calc(env(safe-area-inset-bottom, 0px) + 24px) 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -2539,7 +2549,7 @@ body {
 }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    .input-bar { padding-bottom: max(env(safe-area-inset-bottom,0px), 8px) !important; padding-top: 0 !important; }
+    .input-bar { padding-bottom: 0 !important; padding-top: 0 !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
