@@ -4345,6 +4345,52 @@ def admin_logs():
     return jsonify({'logs': result, 'total': AdminLog.query.count()})
 
 
+@app.route('/admin/api/broadcast', methods=['POST'])
+@login_required
+@require_admin
+def admin_broadcast():
+    data    = request.get_json()
+    text    = (data.get('text') or '').strip()[:1000]
+    target  = data.get('target', 'all')   # 'all' | 'online'
+    if not text:
+        return jsonify({'error': 'Текст не может быть пустым'}), 400
+
+    if target == 'online':
+        users = User.query.filter_by(is_online=True, is_blocked=False).all()
+    else:
+        users = User.query.filter_by(is_blocked=False).all()
+
+    count = 0
+    for u in users:
+        try:
+            socketio.emit('admin_broadcast', {'text': text}, room=f'user_{u.id}')
+            count += 1
+        except Exception:
+            pass
+
+    _admin_log('broadcast', details=f'target={target} count={count}: {text[:100]}')
+    return jsonify({'success': True, 'sent': count})
+
+
+@app.route('/admin/api/registrations')
+@login_required
+@require_admin
+def admin_registrations():
+    """Регистрации за последние 30 дней — для графика на дашборде."""
+    from sqlalchemy import func, cast, Date
+    rows = (
+        db.session.query(
+            cast(User.created_at, Date).label('day'),
+            func.count(User.id).label('cnt')
+        )
+        .filter(User.created_at >= datetime.utcnow() - timedelta(days=30))
+        .group_by('day')
+        .order_by('day')
+        .all()
+    )
+    return jsonify([{'date': str(r.day), 'count': r.cnt} for r in rows])
+
+
 @app.route('/report_user', methods=['POST'])
 @login_required
 def report_user():
