@@ -623,17 +623,20 @@ function _updateScrollBtn(el) {
 // ══ END SCROLL UTILITY ═════════════════════════════════════════════
 
 // ══ INPUT BAR SETTINGS ══════════════════════════════════════════════
-// Настрой под себя — просто меняй значения ниже и деплой:
+// ★ ПАРАМЕТРЫ ИНПУТА — меняй значения и деплой, больше ничего не нужно:
 //
-//   bottomOffset  — дополнительный отступ снизу в px (0 = вплотную к home indicator)
-//   sideMargin    — отступы по бокам в px
-//   pillRadius    — скругление капсулы в px
+//   bottomOffset  — насколько px поднять инпут выше home indicator
+//                   0  = вплотную к home indicator
+//                   24 = поднят на 24px (сейчас)
+//                   50 = максимально высоко
+//   sideMargin    — отступы по бокам от края экрана в px
+//   pillRadius    — скругление углов капсулы в px
 //
 (function _applyInputBarSettings() {
     const S = {
-        bottomOffset : 0,   // px — поднять панель выше (например 20)
-        sideMargin   : 8,   // px — отступы по бокам
-        pillRadius   : 26,  // px — скругление капсулы
+        bottomOffset : 50,  // ← МЕНЯЙ ЭТО чтобы поднять инпут выше (px)
+        sideMargin   : 10,  // px — отступы по бокам от краёв экрана
+        pillRadius   : 24,  // px — скругление капсулы
     };
     const r = document.documentElement.style;
     r.setProperty('--ib-bottom-offset', S.bottomOffset + 'px');
@@ -2199,7 +2202,7 @@ body {
   gap: 6px;
   background: transparent;
   /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
-  padding: 10px 10px calc(env(safe-area-inset-bottom, 0px) + 24px) 10px;
+  padding: 10px var(--ib-side-margin, 10px) calc(env(safe-area-inset-bottom, 0px) + 8px + var(--ib-bottom-offset, 24px)) var(--ib-side-margin, 10px);
   border: none;
   margin: 0;
   width: 100%;
