@@ -173,7 +173,7 @@ const WCCache = (() => {
             background: transparent !important;
             backdrop-filter: none !important;
             -webkit-backdrop-filter: none !important;
-            padding: 0 !important;
+            /* padding НЕ обнуляем — подъём над home indicator идёт через tg-input-row */
             pointer-events: all !important;
             flex-shrink: 0 !important;
             border-top: none !important;
@@ -634,7 +634,7 @@ function _updateScrollBtn(el) {
 //
 (function _applyInputBarSettings() {
     const S = {
-        bottomOffset : 100,  // ← МЕНЯЙ ЭТО чтобы поднять инпут выше (px)
+        bottomOffset : 200,  // ← МЕНЯЙ ЭТО чтобы поднять инпут выше (px)
         sideMargin   : 10,  // px — отступы по бокам от краёв экрана
         pillRadius   : 24,  // px — скругление капсулы
     };
@@ -1964,7 +1964,7 @@ function renderApp() {
     --border: rgba(255,255,255,0.06);
     --text: #ffffff;
     --text-2: rgba(255,255,255,0.45);
-    --msg-in: #2a2a2b;
+    --msg-in: #3a3a3c;
     --msg-out: #1a7a52;
     --divider: rgba(255,255,255,0.05);
     --chat-bg: #1d1d1e;
@@ -2136,7 +2136,7 @@ body {
 }
 
 /* ИНПУТ — floating над чатом */
-.input-bar { padding:0;border:none !important;background:transparent !important; }
+.input-bar { border:none !important;background:transparent !important; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:rgba(255,255,255,0.10); }
@@ -2190,7 +2190,7 @@ body {
 .input-bar {
   background: transparent !important;
   border: none !important;
-  padding: 0 !important;
+  /* padding НЕ трогаем — tg-input-row сам управляет отступом над home indicator */
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
