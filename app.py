@@ -178,7 +178,7 @@ app.config.update(
         'pool_size':      25,    # 1k онлайн
         'max_overflow':   50,    # пик нагрузки
         'pool_timeout':   30,
-        'connect_args':   {'connect_timeout': 5, 'options': '-c statement_timeout=8000'},
+        'connect_args':   {'connect_timeout': 5},
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
     MAX_CONTENT_LENGTH       = 50 * 1024 * 1024,   # 50MB — достаточно для видео-моментов
