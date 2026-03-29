@@ -133,7 +133,7 @@ const WCCache = (() => {
         /* Убиваем любой padding-bottom у прямых детей #app */
         #app > * { padding-bottom: 0 !important; margin-bottom: 0 !important; }
         /* input-bar — исключение: нужен padding-bottom для safe-area */
-        /* input-bar теперь position:fixed — не в потоке #app */
+        #app .input-bar { padding-bottom: 0 !important; }
         /* Убиваем серый фон который может просвечивать под #app */
         * { -webkit-tap-highlight-color: transparent !important; }
         /* chat-view: flex-колонка на весь экран */
@@ -163,18 +163,20 @@ const WCCache = (() => {
             margin: 0 !important;
             padding-top: 4px !important;
         }
-        /* INPUT BAR — position:fixed, всегда выше Safari toolbar и home indicator */
+        /* INPUT BAR — прозрачный, поднят над обоями, safe-area встроена в tg-input-row */
         .input-bar {
-            position: fixed !important;
-            bottom: env(safe-area-inset-bottom, 0px) !important;
-            left: 0 !important;
-            right: 0 !important;
-            z-index: 9999 !important;
+            position: relative !important;
+            bottom: auto !important;
+            left: auto !important; right: auto !important;
+            transform: none !important;
+            z-index: 10 !important;
             background: transparent !important;
             backdrop-filter: none !important;
             -webkit-backdrop-filter: none !important;
-            padding: 8px 0 !important;
+            padding: 0 !important;
             pointer-events: all !important;
+            flex-shrink: 0 !important;
+            border-top: none !important;
             border: none !important;
         }
         .input-bar > * { pointer-events: all !important; }
@@ -191,9 +193,9 @@ const WCCache = (() => {
             box-shadow: none !important;
             -webkit-appearance: none !important;
         }
-        /* messages: padding-bottom чтобы последнее сообщение не скрывалось под fixed input-bar */
+        /* messages: нижний padding небольшой — input-bar теперь в потоке */
         #messages {
-            padding-bottom: 90px !important;
+            padding-bottom: 8px !important;
         }
         /* header: не сжимается */
         #chat-header { flex-shrink: 0 !important; background:rgba(26,26,46,0.92) !important; backdrop-filter:blur(20px) !important; -webkit-backdrop-filter:blur(20px) !important; border-bottom:none !important; }
@@ -2130,8 +2132,15 @@ body {
   border:none;
 }
 
-/* ИНПУТ — floating над чатом */
-.input-bar { border:none !important;background:transparent !important; }
+/* ИНПУТ — тёмный фон с блюром */
+.input-bar {
+  padding: 0 !important;
+  border: none !important;
+  background: rgba(29,29,30,0.97) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border-top: 0.5px solid rgba(255,255,255,0.08) !important;
+}
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
 .input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
 .input-inner:focus-within { background:rgba(255,255,255,0.10); }
@@ -2185,6 +2194,7 @@ body {
 .input-bar {
   background: transparent !important;
   border: none !important;
+  padding: 0 !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
@@ -2195,8 +2205,8 @@ body {
   align-items: center;
   gap: 6px;
   background: transparent;
-  /* input-bar уже поднят через fixed+safe-area, просто нормальный padding */
-  padding: 8px 10px 8px 10px;
+  /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
+  padding: 10px 10px calc(env(safe-area-inset-bottom, 0px) + 24px) 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -2269,13 +2279,14 @@ body {
 }
 .tg-send-btn:active { transform: scale(0.88); }
 
-/* Микрофон — прозрачный, того же размера */
+/* Микрофон — серый круг */
 .tg-mic-btn {
-  background: transparent !important;
+  background: rgba(255,255,255,0.12) !important;
   box-shadow: none !important;
-  color: rgba(255,255,255,0.55) !important;
+  color: rgba(255,255,255,0.85) !important;
+  border: none !important;
 }
-.tg-mic-btn:active { color: white !important; transform: scale(0.88); }
+.tg-mic-btn:active { background: rgba(255,255,255,0.22) !important; color: white !important; transform: scale(0.88); }
 
 /* ── v9.0: FULLSCREEN PHOTO ── */
 #wc-img-viewer { position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.22s ease; }
@@ -2546,7 +2557,7 @@ body {
 }
 
     /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
-    /* input-bar: position:fixed — desktop override не нужен */
+    .input-bar { padding-bottom: 0 !important; padding-top: 0 !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
@@ -13465,3 +13476,48 @@ if (window._pendingSWOpenChat) {
     `;
     document.head.appendChild(s);
 })();
+
+// ══ INPUT BAR FORCE FIX ══
+(function fixInputBar() {
+    function apply() {
+        const bar = document.querySelector('.input-bar');
+        if (!bar) return;
+
+        // Safe area bottom
+        const tmp = document.createElement('div');
+        tmp.style.cssText = 'position:fixed;bottom:0;height:env(safe-area-inset-bottom,0px);width:0;visibility:hidden;pointer-events:none';
+        document.body.appendChild(tmp);
+        const safeH = tmp.offsetHeight || 0;
+        document.body.removeChild(tmp);
+
+        bar.style.setProperty('position',   'fixed',                          'important');
+        bar.style.setProperty('bottom',     safeH + 'px',                     'important');
+        bar.style.setProperty('left',       '0',                               'important');
+        bar.style.setProperty('right',      '0',                               'important');
+        bar.style.setProperty('z-index',    '9999',                            'important');
+        bar.style.setProperty('background', 'rgba(29,29,30,0.97)',             'important');
+        bar.style.setProperty('backdrop-filter',          'blur(20px)',        'important');
+        bar.style.setProperty('-webkit-backdrop-filter',  'blur(20px)',        'important');
+        bar.style.setProperty('border-top', '0.5px solid rgba(255,255,255,0.08)', 'important');
+        bar.style.setProperty('padding',    '0',                               'important');
+
+        // Поднимаем messages чтобы не прятались под input-bar
+        const msgs = document.getElementById('messages');
+        if (msgs) {
+            const barH = bar.offsetHeight || 64;
+            msgs.style.setProperty('padding-bottom', (barH + safeH + 8) + 'px', 'important');
+        }
+    }
+
+    if (document.body) apply();
+    document.addEventListener('DOMContentLoaded', apply);
+    window.addEventListener('load', apply);
+    window.addEventListener('resize', apply, { passive: true });
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', apply, { passive: true });
+
+    // Следим за появлением input-bar если он рендерится позже
+    new MutationObserver(function() {
+        if (document.querySelector('.input-bar')) apply();
+    }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+// ══ END INPUT BAR FORCE FIX ══
