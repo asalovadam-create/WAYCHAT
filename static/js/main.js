@@ -13479,45 +13479,60 @@ if (window._pendingSWOpenChat) {
 
 // ══ INPUT BAR FORCE FIX ══
 (function fixInputBar() {
+    var _applying = false; // guard: предотвращает рекурсивный вызов из MutationObserver
+
     function apply() {
-        const bar = document.querySelector('.input-bar');
-        if (!bar) return;
+        if (_applying) return;
+        _applying = true;
 
-        // Safe area bottom
-        const tmp = document.createElement('div');
-        tmp.style.cssText = 'position:fixed;bottom:0;height:env(safe-area-inset-bottom,0px);width:0;visibility:hidden;pointer-events:none';
-        document.body.appendChild(tmp);
-        const safeH = tmp.offsetHeight || 0;
-        document.body.removeChild(tmp);
+        var bar = document.querySelector('.input-bar');
+        if (!bar) { _applying = false; return; }
 
-        bar.style.setProperty('position',   'fixed',                          'important');
-        bar.style.setProperty('bottom',     safeH + 'px',                     'important');
-        bar.style.setProperty('left',       '0',                               'important');
-        bar.style.setProperty('right',      '0',                               'important');
-        bar.style.setProperty('z-index',    '9999',                            'important');
-        bar.style.setProperty('background', 'rgba(29,29,30,0.97)',             'important');
-        bar.style.setProperty('backdrop-filter',          'blur(20px)',        'important');
-        bar.style.setProperty('-webkit-backdrop-filter',  'blur(20px)',        'important');
-        bar.style.setProperty('border-top', '0.5px solid rgba(255,255,255,0.08)', 'important');
-        bar.style.setProperty('padding',    '0',                               'important');
+        // Safe area bottom — читаем CSS переменную без DOM-мутации
+        var safeH = 0;
+        try {
+            var raw = getComputedStyle(document.documentElement)
+                .getPropertyValue('--safe-area-bottom');
+            safeH = parseInt(raw, 10) || 0;
+        } catch(e) { safeH = 0; }
+
+        bar.style.setProperty('position',                'fixed',                             'important');
+        bar.style.setProperty('bottom',                  safeH + 'px',                        'important');
+        bar.style.setProperty('left',                    '0',                                  'important');
+        bar.style.setProperty('right',                   '0',                                  'important');
+        bar.style.setProperty('z-index',                 '9999',                               'important');
+        bar.style.setProperty('background',              'rgba(29,29,30,0.97)',                'important');
+        bar.style.setProperty('backdrop-filter',         'blur(20px)',                         'important');
+        bar.style.setProperty('-webkit-backdrop-filter', 'blur(20px)',                         'important');
+        bar.style.setProperty('border-top',              '0.5px solid rgba(255,255,255,0.08)', 'important');
+        bar.style.setProperty('padding',                 '0',                                  'important');
 
         // Поднимаем messages чтобы не прятались под input-bar
-        const msgs = document.getElementById('messages');
+        var msgs = document.getElementById('messages');
         if (msgs) {
-            const barH = bar.offsetHeight || 64;
+            var barH = bar.offsetHeight || 64;
             msgs.style.setProperty('padding-bottom', (barH + safeH + 8) + 'px', 'important');
         }
+
+        _applying = false;
     }
 
-    if (document.body) apply();
-    document.addEventListener('DOMContentLoaded', apply);
+    // Запускаем сразу и на стандартных событиях
     window.addEventListener('load', apply);
+    document.addEventListener('DOMContentLoaded', apply);
     window.addEventListener('resize', apply, { passive: true });
-    if (window.visualViewport) window.visualViewport.addEventListener('resize', apply, { passive: true });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', apply, { passive: true });
+    }
 
-    // Следим за появлением input-bar если он рендерится позже
-    new MutationObserver(function() {
-        if (document.querySelector('.input-bar')) apply();
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    // MutationObserver — только для первого появления .input-bar,
+    // после чего сразу отключается чтобы не вызывать бесконечный цикл
+    var _barObserver = new MutationObserver(function() {
+        if (document.querySelector('.input-bar')) {
+            _barObserver.disconnect(); // отключаемся сразу — больше не нужен
+            apply();
+        }
+    });
+    _barObserver.observe(document.documentElement, { childList: true, subtree: true });
 })();
 // ══ END INPUT BAR FORCE FIX ══
