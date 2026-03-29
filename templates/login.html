@@ -287,12 +287,12 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
     <div id="err-reg-info" class="alert err"></div>
     <div class="field">
       <label>Имя</label>
-      <input id="r-name" type="text" placeholder="Иван Петров" autocomplete="name"
+      <input id="r-name" type="text" placeholder="Имя" autocomplete="name"
              onkeydown="if(event.key==='Enter')document.getElementById('r-un').focus()">
     </div>
     <div class="field">
       <label>Юзернейм</label>
-      <input id="r-un" type="text" placeholder="ivan123" maxlength="30"
+      <input id="r-un" type="text" placeholder="User95" maxlength="30"
              autocorrect="off" autocapitalize="off" spellcheck="false"
              oninput="checkUsername(this)" onkeydown="if(event.key==='Enter')doRegStep1()">
       <div class="hint" id="un-hint">Лат. буквы, цифры и _ , минимум 4 символа</div>
