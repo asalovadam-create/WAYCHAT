@@ -132,8 +132,8 @@ const WCCache = (() => {
         }
         /* Убиваем любой padding-bottom у прямых детей #app */
         #app > * { padding-bottom: 0 !important; margin-bottom: 0 !important; }
-        /* input-bar — исключение: нужен padding-bottom для safe-area */
-        #app .input-bar { padding-bottom: 0 !important; }
+        /* input-bar — исключение: safe-area через tg-input-row, не блокируем */
+        /* #app .input-bar padding-bottom НЕ обнуляем — это ломает подъём над home indicator */
         /* Убиваем серый фон который может просвечивать под #app */
         * { -webkit-tap-highlight-color: transparent !important; }
         /* chat-view: flex-колонка на весь экран */
@@ -2202,7 +2202,8 @@ body {
   gap: 6px;
   background: transparent;
   /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
-  padding: 10px var(--ib-side-margin, 10px) calc(env(safe-area-inset-bottom, 0px) + 8px + var(--ib-bottom-offset, 24px)) var(--ib-side-margin, 10px);
+  /* safe-area-inset-bottom на iPhone X+ = 34px, плюс --ib-bottom-offset поднимает дополнительно */
+  padding: 10px var(--ib-side-margin, 10px) calc(max(env(safe-area-inset-bottom, 20px), 20px) + var(--ib-bottom-offset, 24px)) var(--ib-side-margin, 10px);
   border: none;
   margin: 0;
   width: 100%;
