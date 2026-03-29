@@ -2199,7 +2199,7 @@ body {
   gap: 6px;
   background: transparent;
   /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
-  padding: 10px 10px calc(env(safe-area-inset-bottom, 0px) + 24px) 10px;
+  padding: 10px 10px calc(env(safe-area-inset-bottom, 34px) + 34px) 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -13495,10 +13495,11 @@ if (window._pendingSWOpenChat) {
         bar.style.setProperty('padding',                 '0',                   'important');
 
         // Поднимаем messages чтобы не прятались под input-bar
+        // barH уже включает safe-area-inset-bottom через padding в .tg-input-row
         var msgs = document.getElementById('messages');
         if (msgs) {
-            var barH = bar.offsetHeight || 88;
-            msgs.style.setProperty('padding-bottom', (barH + 8) + 'px', 'important');
+            var barH = bar.offsetHeight || 110;
+            msgs.style.setProperty('padding-bottom', (barH + 12) + 'px', 'important');
         }
 
         _applying = false;
