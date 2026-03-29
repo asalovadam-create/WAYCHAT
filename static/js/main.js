@@ -2109,8 +2109,20 @@ body {
 .reaction-chip.mine { background:var(--accent-10);border-color:var(--accent-30); }
 
 /* ДАТА-РАЗДЕЛИТЕЛЬ */
-.date-divider { text-align:center;padding:12px 0 4px;position:relative; }
-.date-divider-inner { display:inline-block;background:rgba(255,255,255,0.06);border:0.5px solid rgba(255,255,255,0.1);color:rgba(255,255,255,0.5);font-size:11px;font-weight:600;padding:4px 14px;border-radius:12px;letter-spacing:0.3px; }
+.date-divider { text-align:center;padding:14px 0 6px;position:relative;pointer-events:none; }
+.date-divider-inner {
+  display:inline-block;
+  background:rgba(30,33,40,0.72);
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+  color:rgba(255,255,255,0.82);
+  font-size:12px;
+  font-weight:500;
+  padding:5px 16px;
+  border-radius:14px;
+  letter-spacing:0.1px;
+  border:none;
+}
 
 /* ИНПУТ — floating над чатом */
 .input-bar { padding:0;border:none !important;background:transparent !important; }
@@ -2163,97 +2175,98 @@ body {
 
 /* ── INPUT BAR — точь-в-точь Telegram ── */
 
-/* Внешний контейнер — полностью прозрачный, только safe-area */
+/* Внешний контейнер — 100% прозрачный, виден wallpaper */
 .input-bar {
   background: transparent !important;
   border: none !important;
   padding: 0 !important;
 }
 
-/* Строка: капсула + кнопка микро/отправить отдельно */
+/* Строка инпута: [капсула][скрепка][микро/отправить] */
 .tg-input-row {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   background: transparent;
-  padding: 8px 8px calc(env(safe-area-inset-bottom, 0px) + 10px) 8px;
+  /* поднимаем над home indicator на всех iPhone */
+  padding: 8px 10px calc(env(safe-area-inset-bottom, 0px) + 10px) 10px;
   border: none;
   margin: 0;
   width: 100%;
   box-sizing: border-box;
 }
 
-/* Кнопки слева/справа от капсулы (смайлик, скрепка) */
-.tg-attach-btn {
-  width: 40px; height: 40px;
-  border-radius: 50%;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-  color: rgba(255,255,255,0.6);
-  -webkit-tap-highlight-color: transparent;
-  padding: 0;
-  margin-bottom: 2px;
-}
-.tg-attach-btn:active { color: white; }
-
-/* КАПСУЛА — серая, не касается краёв, парит над обоями */
+/* КАПСУЛА — серо-тёмная, не касается краёв, парит над обоями */
 .tg-text-wrap {
   flex: 1;
   display: flex;
   align-items: center;
-  background: rgba(80, 80, 90, 0.82);
+  /* точный цвет как в TG dark mode */
+  background: rgba(50, 50, 57, 0.95);
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
   border-radius: 22px;
-  padding: 6px 6px 6px 6px;
-  min-height: 44px;
-  max-height: 120px;
+  /* padding: вертикаль 5px, слева под смайлик уже, справа под скрепку */
+  padding: 5px 4px 5px 4px;
+  min-height: 46px;
+  max-height: 136px;
   overflow: hidden;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
-/* Смайлик ВНУТРИ капсулы справа */
+/* Смайлик и скрепка ВНУТРИ капсулы */
 .tg-inner-btn {
-  width: 34px; height: 34px;
+  width: 36px; height: 36px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: transparent;
   border: none;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
+  color: rgba(255,255,255,0.45);
+  -webkit-tap-highlight-color: transparent;
+  padding: 0;
+  transition: color 0.12s;
+}
+.tg-inner-btn:active { color: rgba(255,255,255,0.85); }
+
+/* Кнопки ВНЕ капсулы (скрепка + микро/отправить) */
+.tg-attach-btn {
+  width: 36px; height: 36px;
   flex-shrink: 0;
+  border-radius: 50%;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
   color: rgba(255,255,255,0.55);
   -webkit-tap-highlight-color: transparent;
   padding: 0;
+  transition: color 0.12s;
 }
-.tg-inner-btn:active { color: white; }
+.tg-attach-btn:active { color: white; }
 
 /* Кнопка ОТПРАВИТЬ — цветной круг */
 .tg-send-btn {
-  width: 44px; height: 44px;
+  width: 36px; height: 36px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
   border: none;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
   box-shadow: var(--glow);
   transition: transform 0.15s;
   -webkit-tap-highlight-color: transparent;
   padding: 0;
-  margin-bottom: 2px;
 }
 .tg-send-btn:active { transform: scale(0.88); }
 
-/* Микрофон — отдельный прозрачный круг справа */
+/* Микрофон — прозрачный, того же размера */
 .tg-mic-btn {
   background: transparent !important;
   box-shadow: none !important;
-  color: rgba(255,255,255,0.65) !important;
+  color: rgba(255,255,255,0.55) !important;
 }
 .tg-mic-btn:active { color: white !important; transform: scale(0.88); }
 
@@ -2996,48 +3009,54 @@ body {
     <div class="input-bar">
         <div class="tg-input-row">
 
-            <!-- КАПСУЛА: смайлик + поле + скрепка — всё единый серый блок как в TG -->
+            <!-- КАПСУЛА: [😊] [поле ввода...] [📎] -->
             <div class="tg-text-wrap" id="input-area">
 
-                <!-- Смайлик СЛЕВА внутри капсулы -->
-                <button class="tg-inner-btn" onclick="insertEmoji()" aria-label="Эмодзи" style="margin-right:4px;margin-left:-6px;flex-shrink:0">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.8"/>
-                        <path d="M8 14s1.5 2 4 2 4-2 4-2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                        <circle cx="9" cy="9.5" r="1.2" fill="currentColor"/>
-                        <circle cx="15" cy="9.5" r="1.2" fill="currentColor"/>
+                <!-- Смайлик — крайний левый внутри капсулы -->
+                <button class="tg-inner-btn" onclick="insertEmoji()" aria-label="Эмодзи">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.7"/>
+                        <path d="M8.5 14.5s1.5 2 3.5 2 3.5-2 3.5-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                        <circle cx="9" cy="9.5" r="1.3" fill="currentColor"/>
+                        <circle cx="15" cy="9.5" r="1.3" fill="currentColor"/>
                     </svg>
                 </button>
 
-                <!-- Поле ввода -->
+                <!-- Поле ввода текста -->
                 <textarea id="msg-input" rows="1"
                     placeholder="Сообщение..."
                     oninput="handleTyping(); autoResize(this); updateSendButton()"
                     onkeydown="handleInputKeydown(event)"
-                    style="flex:1;background:transparent;outline:none;border:none;color:white;font-size:16px;padding:0;resize:none;max-height:120px;line-height:1.5;font-family:inherit;-webkit-appearance:none;align-self:center"></textarea>
+                    style="flex:1;background:transparent;outline:none;border:none;
+                           color:#fff;font-size:16px;padding:2px 0;resize:none;
+                           max-height:120px;line-height:1.45;font-family:inherit;
+                           -webkit-appearance:none;align-self:center;
+                           caret-color:#fff;"></textarea>
 
-                <!-- Скрепка СПРАВА внутри капсулы -->
-                <button class="tg-inner-btn" onclick="pickMedia('msg')" aria-label="Прикрепить" style="margin-left:4px;flex-shrink:0">
+                <!-- Скрепка — крайняя правая внутри капсулы -->
+                <button class="tg-inner-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
+                              stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
                 </button>
 
             </div>
 
-            <!-- Отправить — отдельный цветной круг справа (появляется когда есть текст) -->
+            <!-- Отправить — отдельный цветной круг (показывается когда есть текст) -->
             <button id="send-btn-main" onclick="sendText()" class="tg-send-btn" style="display:none" aria-label="Отправить">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                     <path d="M22 2L11 13M22 2L15 22L11 13L2 9L22 2Z" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
             </button>
 
-            <!-- Микрофон — отдельный прозрачный круг справа (когда нет текста) -->
-            <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое" style="touch-action:none;user-select:none;-webkit-user-select:none">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                    <rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.8"/>
-                    <path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-                    <path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <!-- Микрофон — отдельный прозрачный круг (когда нет текста) -->
+            <button id="voice-btn-main" class="tg-send-btn tg-mic-btn" aria-label="Голосовое"
+                    style="touch-action:none;user-select:none;-webkit-user-select:none">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <rect x="9" y="2" width="6" height="12" rx="3" stroke="currentColor" stroke-width="1.7"/>
+                    <path d="M5 10a7 7 0 0014 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+                    <path d="M12 19v3M9 22h6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
                 </svg>
             </button>
 
