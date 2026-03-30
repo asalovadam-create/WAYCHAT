@@ -2428,7 +2428,7 @@ body {
 
     body { cursor: default; }
 
-    /* #app — горизонтальный flex как в Telegram */
+    /* #app — горизонтальный flex */
     #app {
         flex-direction: row !important;
         overflow: hidden !important;
@@ -2436,10 +2436,10 @@ body {
 
     /* ── Левая колонка: список чатов ── */
     #main-content {
-        width: 340px !important;
-        min-width: 280px !important;
-        max-width: 380px !important;
-        flex: 0 0 340px !important;
+        width: 320px !important;
+        min-width: 260px !important;
+        max-width: 360px !important;
+        flex: 0 0 320px !important;
         height: 100% !important;
         overflow-y: auto !important;
         overflow-x: hidden !important;
@@ -2449,9 +2449,9 @@ body {
     }
 
     /* ── Правая колонка: окно чата ── */
-    /* КЛЮЧЕВОЕ: на десктопе .chat-view НЕ position:fixed */
     .chat-view {
         position: relative !important;
+        inset: auto !important;
         flex: 1 1 0% !important;
         min-width: 0 !important;
         height: 100% !important;
@@ -2462,16 +2462,23 @@ body {
         flex-direction: column !important;
         overflow: hidden !important;
     }
-
-    /* На десктопе чат всегда виден (не translateX(100%)) */
-    .chat-view { transform: none !important; }
     .chat-view.active { transform: none !important; }
 
-    /* Пустое состояние — пока чат не выбран */
+    /* chat-window всегда виден на десктопе */
+    #chat-window {
+        flex: 1;
+        position: relative !important;
+        transform: none !important;
+        left: auto !important; right: auto !important;
+        top: auto !important; bottom: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        height: 100% !important;
+    }
+
+    /* Пустое состояние */
     #chat-window:not(.active) {
         background: var(--bg, #1d1d1e) !important;
-        transform: none !important;
-        display: flex !important;
         align-items: center !important;
         justify-content: center !important;
     }
@@ -2490,114 +2497,65 @@ body {
         pointer-events: all !important;
     }
 
-    /* Кнопка назад — скрываем на десктопе */
+    /* Кнопка назад — скрываем */
     #chat-back-btn { display: none !important; }
 
-    /* FAB — скрываем на десктопе */
-    .fab-btn { display: none !important; }
-    .fab-bd  { display: none !important; }
-    .fab-menu { display: none !important; }
+    /* FAB — скрываем */
+    .fab-btn, .fab-bd, .fab-menu { display: none !important; }
 
     /* Чаты: компактнее + hover */
     .chat-item {
-        padding: 8px 16px !important;
+        padding: 7px 14px !important;
         transition: background .1s !important;
         cursor: pointer !important;
     }
     .chat-item:hover { background: rgba(255,255,255,0.05) !important; }
 
-    /* Бабблы чуть уже */
+    /* Бабблы */
     .bubble { max-width: 62% !important; }
-    .msg-row.out .bubble { margin-left: 80px !important; }
-    .msg-row.in  .bubble { margin-right: 80px !important; }
+    .msg-row.out .bubble { margin-left: 60px !important; }
+    .msg-row.in  .bubble { margin-right: 60px !important; }
 
     /* Шапка чата */
-    #chat-header {
-        padding-top: 10px !important;
-    }
+    #chat-header { padding-top: 10px !important; }
 
-
-/* Desktop 2-column layout stability */
-@media (min-width: 768px) {
-    #main-content {
-        min-width: 280px !important;
-        max-width: 360px !important;
-    }
-    #chat-window {
-        flex: 1;
-        position: relative !important;
-        transform: none !important;
-        left: auto !important; right: auto !important;
-        top: auto !important; bottom: auto !important;
-    }
-}
-
-    /* FIX P2: на десктопе input-bar тоже floating, padding стандартный */
+    /* Input bar */
     .input-bar { padding-bottom: 0 !important; padding-top: 0 !important; }
     #messages { padding-bottom: 76px !important; }
 
     /* Скроллбары */
-    #main-content::-webkit-scrollbar { width: 5px; }
+    #main-content::-webkit-scrollbar { width: 4px; }
     #main-content::-webkit-scrollbar-track { background: transparent; }
     #main-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-    #main-content::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-
-    #messages::-webkit-scrollbar { width: 5px; }
+    #messages::-webkit-scrollbar { width: 4px; }
     #messages::-webkit-scrollbar-track { background: transparent; }
     #messages::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 3px; }
 
     /* Hover на кнопках */
-    button:hover { opacity: 0.82; }
     .icon-btn:hover { background: rgba(255,255,255,0.09) !important; }
-
-    /* Курсор */
     .chat-item, button, [onclick] { cursor: pointer; }
 
-    /* Моменты-бар на десктопе чуть компактнее */
+    /* Поиск */
+    #chat-search-bar { padding: 12px 16px 8px !important; }
+
+    /* Моменты */
     #moments-bar-scroll { gap: 10px; }
-
-    /* Поиск в шапке */
-    #chat-search-bar { padding: 10px 16px 8px; }
-
-    /* Safe-area top — на десктопе 0 */
-    #chat-search-bar {
-        padding-top: 14px !important;
-    }
 }
 
-/* ══ 1100px+ : широкий экран ══ */
-@media (min-width: 1100px) {
-    #main-content {
-        width: 380px !important;
-        max-width: 420px !important;
-    }
-    .bubble { max-width: 58% !important; }
-}
-
-/* ══ 1400px+ : очень широкий ══ */
-@media (min-width: 1400px) {
-    #main-content {
-        width: 420px !important;
-        max-width: 460px !important;
-    }
-}
-
-/* Очень широкие экраны */
+/* 1100px+ */
 @media (min-width: 1100px) {
     #main-content {
         width: 360px !important;
         max-width: 400px !important;
     }
+    .bubble { max-width: 58% !important; }
 }
 
-/* DESKTOP OVERRIDE: chat-view НЕ fixed на широких экранах */
-@media (min-width: 768px) {
-    .chat-view {
-        position: relative !important;
-        inset: auto !important;
-        height: 100% !important;
-        flex: 1 1 0% !important;
-        transform: none !important;
+/* 1400px+ */
+@media (min-width: 1400px) {
+    #main-content {
+        width: 400px !important;
+        max-width: 440px !important;
     }
 }
 </style>
@@ -5942,15 +5900,31 @@ function onNewMessage(msg) {
             +msg.sender_id === +currentPartnerId || +msg.to_id === +currentPartnerId
         ));
     if (_isOpenChat) {
-        // Удаляем оптимистичные дубликаты с тем же контентом
-        if (+msg.sender_id === currentUser.id) {
+        // Удаляем оптимистичные дубликаты — заменяем реальным id вместо удаления
+        if (!msg._optimistic && msg.id && +msg.sender_id === currentUser.id) {
             const container = document.getElementById('messages');
-            container?.querySelectorAll('[data-optimistic="1"]').forEach(el => {
-                if (el.dataset.content === (msg.content || '')) el.remove();
-            });
+            if (container) {
+                let reused = false;
+                container.querySelectorAll('[data-optimistic="1"]').forEach(el => {
+                    if (!reused && el.dataset.content === (msg.content || '')) {
+                        // Заменяем temp id на реальный — не удаляем элемент
+                        el.setAttribute('data-msg-id', msg.id);
+                        el.removeAttribute('data-optimistic');
+                        const si = el.querySelector('.status-icon');
+                        if (si) { si.innerHTML = ICONS.check; si.style.color = 'rgba(255,255,255,0.55)'; }
+                        reused = true;
+                    }
+                });
+                if (reused) {
+                    // Обновляем кэш и выходим — DOM уже актуален
+                    _debouncedLoadChats();
+                    if (msg.id) _setLastMsgId(currentChatId, msg.id);
+                    return;
+                }
+            }
         }
-        // Защита от дублей в DOM
-        if (_mid && document.querySelector(`[data-msg-id="${CSS.escape(_mid)}"]`)) return;
+        // Защита от дублей в DOM (не оптимистичных)
+        if (_mid && !msg._optimistic && document.querySelector(`[data-msg-id="${CSS.escape(_mid)}"]`)) return;
 
         hideTypingIndicator();
         // FIX: preserve scroll if user is reading history (not at bottom)
