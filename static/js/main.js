@@ -2215,8 +2215,8 @@ body {
   align-items: center;
   gap: 6px;
   background: transparent;
-  /* env() поднимает над home indicator; fallback 20px для старых браузеров */
-  padding: 8px 10px env(safe-area-inset-bottom, 20px) 10px;
+  /* 10px top/sides, 14px bottom как минимальный отступ от края бара */
+  padding: 10px 10px 14px 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -2287,13 +2287,16 @@ body {
 }
 .tg-send-btn:active { transform: scale(0.88); }
 
-/* Микрофон — плотный тёмно-серый круг, без прозрачности */
+/* Микрофон — большой непрозрачный тёмно-серый круг */
 .tg-mic-btn {
+  width: 44px !important;
+  height: 44px !important;
   background: #2c2c2e !important;
   box-shadow: none !important;
-  color: rgba(255,255,255,0.85) !important;
+  color: rgba(255,255,255,0.9) !important;
   border: none !important;
 }
+.tg-mic-btn svg { width: 22px !important; height: 22px !important; }
 .tg-mic-btn:active { background: #3a3a3c !important; color: white !important; transform: scale(0.88); }
 
 /* ── v9.0: FULLSCREEN PHOTO ── */
@@ -13485,6 +13488,23 @@ if (window._pendingSWOpenChat) {
 // ══ INPUT BAR FORCE FIX ══
 (function fixInputBar() {
     var _applying = false;
+    // Кэшируем safe-area чтобы не пересчитывать каждый раз
+    var _safeArea = -1;
+
+    function getSafeArea() {
+        // CSS.supports + getComputedStyle — единственный надёжный способ на iOS
+        try {
+            var el = document.documentElement;
+            var val = getComputedStyle(el).getPropertyValue('--wc-safe-bottom').trim();
+            var px = parseInt(val, 10);
+            if (!isNaN(px) && px >= 0) return px;
+        } catch(e) {}
+        // Fallback: если iPhone с home indicator — safe area обычно 34px
+        // Проверяем через соотношение сторон экрана
+        var ratio = window.screen.height / window.screen.width;
+        if (ratio > 1.9) return 34; // iPhone X и новее
+        return 0;
+    }
 
     function apply() {
         if (_applying) return;
@@ -13493,43 +13513,49 @@ if (window._pendingSWOpenChat) {
         var bar = document.querySelector('.input-bar');
         if (!bar) { _applying = false; return; }
 
-        // Читаем реальный safe-area-inset-bottom из CSS
-        var safeArea = 0;
-        try {
-            var tmp = document.createElement('div');
-            tmp.style.cssText = 'position:fixed;bottom:0;height:env(safe-area-inset-bottom,0px);width:1px;opacity:0;pointer-events:none;z-index:-1';
-            document.body.appendChild(tmp);
-            safeArea = tmp.offsetHeight || 0;
-            document.body.removeChild(tmp);
-        } catch(e) { safeArea = 0; }
+        // Пересчитываем только при первом вызове или resize
+        if (_safeArea < 0) _safeArea = getSafeArea();
+        var sa = _safeArea;
 
-        bar.style.setProperty('position',                'fixed',          'important');
-        // Ставим бар ровно над safe-area зоной (белой полоской)
-        bar.style.setProperty('bottom',                  safeArea + 'px',  'important');
-        bar.style.setProperty('left',                    '0',              'important');
-        bar.style.setProperty('right',                   '0',              'important');
-        bar.style.setProperty('z-index',                 '9999',           'important');
-        bar.style.setProperty('background',              'transparent',    'important');
-        bar.style.setProperty('backdrop-filter',         'none',           'important');
-        bar.style.setProperty('-webkit-backdrop-filter', 'none',           'important');
-        bar.style.setProperty('border-top',              'none',           'important');
-        bar.style.setProperty('padding',                 '0',              'important');
+        bar.style.setProperty('position',                'fixed',       'important');
+        bar.style.setProperty('bottom',                  sa + 'px',     'important');
+        bar.style.setProperty('left',                    '0',           'important');
+        bar.style.setProperty('right',                   '0',           'important');
+        bar.style.setProperty('z-index',                 '9999',        'important');
+        bar.style.setProperty('background',              'transparent', 'important');
+        bar.style.setProperty('backdrop-filter',         'none',        'important');
+        bar.style.setProperty('-webkit-backdrop-filter', 'none',        'important');
+        bar.style.setProperty('border-top',              'none',        'important');
+        bar.style.setProperty('padding',                 '0',           'important');
 
-        // Поднимаем messages чтобы последнее сообщение не скрывалось под баром
         var msgs = document.getElementById('messages');
         if (msgs) {
-            var barH = bar.offsetHeight || 64;
-            msgs.style.setProperty('padding-bottom', (barH + safeArea + 8) + 'px', 'important');
+            var barH = bar.offsetHeight || 68;
+            msgs.style.setProperty('padding-bottom', (barH + sa + 8) + 'px', 'important');
         }
 
         _applying = false;
     }
 
-    window.addEventListener('load', apply);
+    function applyFresh() {
+        _safeArea = -1; // сброс кэша при resize/ориентации
+        apply();
+    }
+
+    // Инжектируем CSS-переменную для safe-area через style тег
+    // Это работает даже до вызова apply()
+    var _st = document.createElement('style');
+    _st.textContent = ':root { --wc-safe-bottom: env(safe-area-inset-bottom, 0px); }';
+    document.head.appendChild(_st);
+
+    window.addEventListener('load', applyFresh);
     document.addEventListener('DOMContentLoaded', apply);
-    window.addEventListener('resize', apply, { passive: true });
+    window.addEventListener('resize', applyFresh, { passive: true });
+    window.addEventListener('orientationchange', function() {
+        setTimeout(applyFresh, 200);
+    }, { passive: true });
     if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', apply, { passive: true });
+        window.visualViewport.addEventListener('resize', applyFresh, { passive: true });
     }
 
     var _barObserver = new MutationObserver(function() {
