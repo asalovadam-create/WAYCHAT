@@ -612,7 +612,7 @@ class User(UserMixin, db.Model):
     reg_ip             = db.Column(db.String(64),   default='')      # IP при регистрации
     moments_visibility = db.Column(db.String(20),   default='all')  # all/contacts/nobody
     tracks_visibility  = db.Column(db.String(20),   default='all')  # all/contacts/nobody
-    is_bot             = db.Column(db.Boolean,      default=False)   # системный бот
+    # is_bot — хранится в БД но НЕ в модели, используем raw SQL чтобы не ломать старые инстансы
 
     @property
     def online_status(self):
@@ -1217,14 +1217,11 @@ def verify_code():
         if not u:
             if User.query.filter_by(username=pending.username).first():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
-            ip_addr = _get_ip()
             u = User(
                 phone         = phone,
                 name          = pending.name[:120],
                 username      = pending.username[:80],
                 password_hash = generate_password_hash('__passwordless__'),
-                reg_ip        = ip_addr,
-                last_ip       = ip_addr,
             )
             db.session.add(u)
             db.session.commit()
@@ -4057,19 +4054,18 @@ def run_migrations():
             app.logger.warning(f'migration skip: {e}')
 
     # ── Создаём системного бота WayChat если не существует ──
-    # Используем raw SQL чтобы избежать ошибки если is_bot колонка ещё не добавлена
+    # is_bot НЕ в модели SQLAlchemy — используем raw SQL чтобы не ломать запросы до миграции
     try:
         with db.engine.begin() as conn:
             conn.execute(text(
-                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT FALSE"
+                'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT FALSE'
             ))
-    except Exception:
-        pass
+    except Exception as e:
+        app.logger.warning(f'is_bot migration: {e}')
 
     try:
         bot = User.query.filter_by(username='waychat').first()
         if not bot:
-            # Генерируем уникальный phone чтобы не нарушить UNIQUE constraint
             import uuid as _uuid
             bot_phone = f'__bot_{_uuid.uuid4().hex[:12]}__'
             bot = User(
@@ -4080,20 +4076,19 @@ def run_migrations():
                 avatar        = 'emoji:💬',
                 is_verified   = True,
                 verified_type = 'official',
-                is_bot        = True,
                 is_online     = True,
                 password_hash = generate_password_hash('__bot_no_login__'),
             )
             db.session.add(bot)
             db.session.commit()
+            with db.engine.begin() as conn:
+                conn.execute(text('UPDATE "user" SET is_bot=TRUE WHERE id=:id'), {'id': bot.id})
             print(f'✅ WayChat bot created id={bot.id}')
         else:
-            changed = False
-            if not getattr(bot, 'is_bot', False):  bot.is_bot = True; changed = True
-            if not bot.is_verified:                bot.is_verified = True; changed = True
-            if bot.verified_type != 'official':    bot.verified_type = 'official'; changed = True
-            if changed:
-                db.session.commit()
+            with db.engine.begin() as conn:
+                conn.execute(text(
+                    "UPDATE \"user\" SET is_bot=TRUE, is_verified=TRUE, verified_type='official' WHERE username='waychat'"
+                ))
     except Exception as e:
         db.session.rollback()
         app.logger.warning(f'waychat bot init: {e}')
@@ -4482,21 +4477,21 @@ def _bot_send(user_id, text):
             sender_id=bot.id,
             sender_name=bot.name,
             content=text,
-            type='text',
+            msg_type='text',
             is_read=False,
         )
         db.session.add(msg)
         db.session.commit()
         payload = {
-            'id':            msg.id,
-            'chat_id':       chat.id,
-            'sender_id':     bot.id,
-            'sender_name':   bot.name,
+            'id':          msg.id,
+            'chat_id':     chat.id,
+            'sender_id':   bot.id,
+            'sender_name': bot.name,
             'sender_avatar': bot.avatar or '',
-            'content':       text,
-            'type':          'text',
-            'timestamp':     msg.timestamp.isoformat() if msg.timestamp else '',
-            'is_read':       False,
+            'content':     text,
+            'type':        'text',
+            'timestamp':   msg.timestamp.isoformat() if msg.timestamp else '',
+            'is_read':     False,
         }
         socketio.emit('new_message', payload, room=f'user_{user_id}')
         _chat_cache.delete(user_id)
