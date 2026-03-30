@@ -1551,6 +1551,16 @@ function initSocket() {
             el.appendChild(f);
         }
     });
+
+    // ── Заблокирован при попытке отправки ──
+    socket.on('banned', (d) => {
+        showBanScreen(d.ban_until, d.ban_reason);
+    });
+
+    // ── Рассылка от администратора ──
+    socket.on('admin_broadcast', (d) => {
+        showToast('📣 ' + (d.text || ''), 'info', 7000);
+    });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1600,6 +1610,62 @@ async function _preWarmMic() {
         console.error(e);
     }
 }
+
+// ══ BAN SCREEN ════════════════════════════════════════════════
+function showBanScreen(banUntil, banReason) {
+    // Убираем старый экран если был
+    const old = document.getElementById('wc-ban-screen');
+    if (old) old.remove();
+
+    let timeText = '';
+    if (banUntil) {
+        const d = new Date(banUntil);
+        timeText = 'до ' + d.toLocaleString('ru', {
+            day: '2-digit', month: 'long', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
+        });
+    } else {
+        timeText = 'навсегда';
+    }
+
+    const screen = document.createElement('div');
+    screen.id = 'wc-ban-screen';
+    screen.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:99999',
+        'background:#0d0d0f',
+        'display:flex', 'flex-direction:column',
+        'align-items:center', 'justify-content:center',
+        'padding:32px', 'text-align:center',
+        'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
+    ].join(';');
+
+    screen.innerHTML = `
+        <div style="width:88px;height:88px;border-radius:50%;background:rgba(239,68,68,0.12);
+             border:1.5px solid rgba(239,68,68,0.3);display:flex;align-items:center;
+             justify-content:center;margin-bottom:28px">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" stroke="#ef4444" stroke-width="1.8"/>
+                <path d="M4.93 4.93l14.14 14.14" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+        </div>
+        <div style="font-size:22px;font-weight:800;color:#fff;margin-bottom:10px">
+            Аккаунт заблокирован
+        </div>
+        <div style="font-size:15px;color:rgba(255,255,255,0.5);margin-bottom:8px">
+            Срок блокировки: <span style="color:rgba(255,255,255,0.8);font-weight:600">${timeText}</span>
+        </div>
+        ${banReason ? `<div style="margin-top:16px;padding:14px 20px;background:rgba(239,68,68,0.08);
+            border:1px solid rgba(239,68,68,0.18);border-radius:14px;
+            font-size:14px;color:rgba(255,255,255,0.6);max-width:340px;line-height:1.5">
+            <span style="color:rgba(239,68,68,0.9);font-weight:700">Причина:</span> ${banReason}
+        </div>` : ''}
+        <div style="margin-top:32px;font-size:13px;color:rgba(255,255,255,0.25)">
+            Если вы считаете это ошибкой — обратитесь в поддержку
+        </div>
+    `;
+    document.body.appendChild(screen);
+}
+// ══ END BAN SCREEN ════════════════════════════════════════════
 
 async function init() {
     // ── 1. Профиль из кэша — мгновенно ──
@@ -1679,6 +1745,19 @@ async function init() {
             window.visualViewport.addEventListener('resize', onVV, { passive: true });
         }
     })();
+
+    // ── Проверка бана при загрузке страницы ──
+    try {
+        const _meRes = await fetch('/api/me', { credentials: 'same-origin' });
+        if (_meRes.ok) {
+            const _me = await _meRes.json();
+            if (_me.is_blocked) {
+                showBanScreen(_me.ban_until, _me.ban_reason);
+                // Не инициализируем socket — заблокированный не должен подключаться
+                return;
+            }
+        }
+    } catch(e) {}
 
     initSocket();
     // Fallback 1: если socket не подключится за 2с — грузим чаты напрямую
@@ -2198,8 +2277,9 @@ body {
   align-items: center;
   gap: 6px;
   background: transparent;
-  /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
-  padding: 10px 10px calc(env(safe-area-inset-bottom, 34px) + 34px) 10px;
+  /* max() гарантирует минимум 28px снизу даже если env() вернёт 0.
+     На iPhone с home indicator env(safe-area-inset-bottom) = 34px → итого 46px */
+  padding: 10px 10px max(calc(env(safe-area-inset-bottom, 0px) + 12px), 28px) 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -13472,34 +13552,69 @@ if (window._pendingSWOpenChat) {
 
 // ══ INPUT BAR FORCE FIX ══
 (function fixInputBar() {
-    var _applying = false; // guard против рекурсии
+    var _applying = false;
+
+    // Единственный надёжный способ получить высоту safe-area-bottom на iPhone:
+    // window.innerHeight - visualViewport.height даёт высоту клавиатуры+safe-area.
+    // В покое visualViewport.height ≈ window.innerHeight, разница = safe-area снизу.
+    // Fallback: создаём div с height:env(safe-area-inset-bottom) и меряем offsetHeight.
+    function getSafeAreaBottom() {
+        // Метод 1: визуальный viewport
+        if (window.visualViewport) {
+            var diff = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+            if (diff > 0 && diff < 200) return diff; // клавиатура открыта — не то
+        }
+        // Метод 2: div с env()
+        try {
+            var el = document.createElement('div');
+            el.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden;z-index:-1';
+            document.body.appendChild(el);
+            var h = el.offsetHeight || 0;
+            document.body.removeChild(el);
+            if (h > 0) return h;
+        } catch(e) {}
+        // Метод 3: фолбэк для iPhone X+ (home indicator ≈ 34px)
+        var isIphoneX = /iPhone/.test(navigator.userAgent) &&
+            (window.screen.height >= 812 || window.screen.width >= 812);
+        return isIphoneX ? 34 : 0;
+    }
 
     function apply() {
         if (_applying) return;
         _applying = true;
 
-        var bar = document.querySelector('.input-bar');
+        var bar  = document.querySelector('.input-bar');
+        var row  = document.querySelector('.tg-input-row');
         if (!bar) { _applying = false; return; }
 
-        // position:fixed + bottom:0 — safe-area обрабатывается самим .tg-input-row
-        // через padding: calc(env(safe-area-inset-bottom) + 24px), не трогаем это
-        bar.style.setProperty('position',                'fixed',                'important');
-        bar.style.setProperty('bottom',                  '0',                   'important');
-        bar.style.setProperty('left',                    '0',                   'important');
-        bar.style.setProperty('right',                   '0',                   'important');
-        bar.style.setProperty('z-index',                 '9999',                'important');
-        bar.style.setProperty('background',              'transparent',         'important');
-        bar.style.setProperty('backdrop-filter',         'none',                'important');
-        bar.style.setProperty('-webkit-backdrop-filter', 'none',                'important');
-        bar.style.setProperty('border-top',              'none',                'important');
-        bar.style.setProperty('padding',                 '0',                   'important');
+        var safeH = getSafeAreaBottom();
 
-        // Поднимаем messages чтобы не прятались под input-bar
-        // barH уже включает safe-area-inset-bottom через padding в .tg-input-row
+        // input-bar: position:fixed, bottom:0, прозрачный
+        bar.style.setProperty('position',                'fixed',      'important');
+        bar.style.setProperty('bottom',                  '0px',        'important');
+        bar.style.setProperty('left',                    '0',          'important');
+        bar.style.setProperty('right',                   '0',          'important');
+        bar.style.setProperty('z-index',                 '9999',       'important');
+        bar.style.setProperty('background',              'transparent','important');
+        bar.style.setProperty('backdrop-filter',         'none',       'important');
+        bar.style.setProperty('-webkit-backdrop-filter', 'none',       'important');
+        bar.style.setProperty('border-top',              'none',       'important');
+        bar.style.setProperty('padding',                 '0',          'important');
+
+        // tg-input-row: padding-bottom = safe-area + 14px зазор
+        if (row) {
+            var pb = safeH + 14;
+            row.style.setProperty('padding-bottom', pb + 'px', 'important');
+        }
+
+        // messages: отступ снизу = высота бара + 8px
         var msgs = document.getElementById('messages');
         if (msgs) {
-            var barH = bar.offsetHeight || 110;
-            msgs.style.setProperty('padding-bottom', (barH + 12) + 'px', 'important');
+            // Даём бару отрисоваться, потом меряем реальную высоту
+            requestAnimationFrame(function() {
+                var barH = bar.offsetHeight || (54 + safeH + 14);
+                msgs.style.setProperty('padding-bottom', (barH + 8) + 'px', 'important');
+            });
         }
 
         _applying = false;
@@ -13510,11 +13625,10 @@ if (window._pendingSWOpenChat) {
     window.addEventListener('resize', apply, { passive: true });
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', apply, { passive: true });
+        window.visualViewport.addEventListener('scroll', apply, { passive: true });
     }
 
-    // MutationObserver — ждём появления .input-bar, затем сразу отключаемся
-    // disconnect() обязателен — без него каждая DOM-мутация вызывает apply()
-    // и браузер зависает в бесконечном цикле
+    // Ждём появления .input-bar, потом отключаемся
     var _barObserver = new MutationObserver(function() {
         if (document.querySelector('.input-bar')) {
             _barObserver.disconnect();
