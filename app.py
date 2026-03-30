@@ -612,6 +612,7 @@ class User(UserMixin, db.Model):
     reg_ip             = db.Column(db.String(64),   default='')      # IP при регистрации
     moments_visibility = db.Column(db.String(20),   default='all')  # all/contacts/nobody
     tracks_visibility  = db.Column(db.String(20),   default='all')  # all/contacts/nobody
+    is_bot             = db.Column(db.Boolean,      default=False)   # системный бот
 
     @property
     def online_status(self):
@@ -1507,7 +1508,15 @@ def get_current_user_route():
 @login_required
 def api_me():
     """Возвращает данные текущего пользователя — используется для auth check"""
-    u = current_user
+    u = db.session.get(User, current_user.id)
+    if not u:
+        return jsonify({'error': 'Not found'}), 404
+    # Снимаем временный бан если истёк
+    if u.is_blocked and u.ban_until and u.ban_until < datetime.utcnow():
+        u.is_blocked = False
+        u.ban_until  = None
+        u.ban_reason = ''
+        db.session.commit()
     return jsonify({
         'id':            u.id,
         'name':          u.name,
@@ -1517,6 +1526,10 @@ def api_me():
         'is_verified':   u.is_verified or False,
         'verified_type': u.verified_type or '',
         'phone':         u.phone or '',
+        # Поля бана — фронтенд показывает экран блокировки
+        'is_blocked':    u.is_blocked,
+        'ban_until':     u.ban_until.isoformat() if u.ban_until else None,
+        'ban_reason':    u.ban_reason or '',
     })
 
 
@@ -3386,6 +3399,24 @@ def create_chat_route(partner_id):
 def handle_msg(data):
     if not current_user.is_authenticated:
         return
+    # ── Проверка бана ──
+    try:
+        _sender = db.session.get(User, current_user.id)
+        if _sender and _sender.is_blocked:
+            if _sender.ban_until and _sender.ban_until < datetime.utcnow():
+                # Временный бан истёк — снимаем
+                _sender.is_blocked = False
+                _sender.ban_until  = None
+                _sender.ban_reason = ''
+                db.session.commit()
+            else:
+                emit('banned', {
+                    'ban_until': _sender.ban_until.isoformat() if _sender.ban_until else None,
+                    'ban_reason': _sender.ban_reason or '',
+                })
+                return
+    except Exception:
+        pass
     # FIX REALTIME: захватываем sid сразу — в threading-режиме request-прокси
     # может потерять контекст после первого DB-вызова
     _my_sid = getattr(request, 'sid', None)
@@ -4012,13 +4043,46 @@ def run_migrations():
             created_at TIMESTAMP DEFAULT NOW()
         )''',
         'CREATE INDEX IF NOT EXISTS ix_user_track_user ON user_track(user_id)',
+        # WayChat bot
+        'ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT FALSE',
     ]
     for sql in migrations:
         try:
-            with db.engine.begin() as conn:   # begin() = autocommit on success, rollback on error
+            with db.engine.begin() as conn:
                 conn.execute(text(sql))
         except Exception as e:
             app.logger.warning(f'migration skip: {e}')
+
+    # ── Создаём системного бота WayChat если не существует ──
+    try:
+        bot = User.query.filter_by(username='waychat').first()
+        if not bot:
+            bot = User(
+                phone='waychat_bot_system',
+                username='waychat',
+                name='WayChat',
+                bio='Официальный аккаунт WayChat. Здесь приходят коды, уведомления и новости.',
+                avatar='emoji:💬',
+                is_verified=True,
+                verified_type='official',
+                is_bot=True,
+                is_online=True,
+                password_hash=generate_password_hash('__bot_no_login__'),
+            )
+            db.session.add(bot)
+            db.session.commit()
+            print(f'✅ WayChat bot created id={bot.id}')
+        else:
+            # Обновляем флаги если бот уже есть
+            changed = False
+            if not bot.is_bot:       bot.is_bot = True; changed = True
+            if not bot.is_verified:  bot.is_verified = True; changed = True
+            if bot.verified_type != 'official': bot.verified_type = 'official'; changed = True
+            if changed:
+                db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.warning(f'waychat bot init: {e}')
 
     # ПРИНУДИТЕЛЬНО: moments_visibility 'contacts' -> 'all' для всех
     try:
@@ -4363,6 +4427,7 @@ def admin_broadcast():
     count = 0
     for u in users:
         try:
+            _bot_send(u.id, text)
             socketio.emit('admin_broadcast', {'text': text}, room=f'user_{u.id}')
             count += 1
         except Exception:
@@ -4389,6 +4454,66 @@ def admin_registrations():
         .all()
     )
     return jsonify([{'date': str(r.day), 'count': r.cnt} for r in rows])
+
+
+def _bot_send(user_id, text):
+    """Отправляет сообщение от бота WayChat пользователю. Используется для кодов и рассылок."""
+    try:
+        bot = User.query.filter_by(username='waychat', is_bot=True).first()
+        if not bot:
+            return
+        chat = get_or_create_chat(bot.id, user_id)
+        msg  = Message(
+            chat_id=chat.id,
+            sender_id=bot.id,
+            sender_name=bot.name,
+            content=text,
+            msg_type='text',
+            is_read=False,
+        )
+        db.session.add(msg)
+        db.session.commit()
+        payload = {
+            'id':          msg.id,
+            'chat_id':     chat.id,
+            'sender_id':   bot.id,
+            'sender_name': bot.name,
+            'sender_avatar': bot.avatar or '',
+            'content':     text,
+            'type':        'text',
+            'timestamp':   msg.timestamp.isoformat() if msg.timestamp else '',
+            'is_read':     False,
+        }
+        socketio.emit('new_message', payload, room=f'user_{user_id}')
+        _chat_cache.delete(user_id)
+    except Exception as e:
+        db.session.rollback()
+        app.logger.warning(f'_bot_send: {e}')
+
+
+@app.route('/admin/api/user/<int:uid>/contacts')
+@login_required
+@require_admin
+def admin_user_contacts(uid):
+    """Список контактов пользователя для админки."""
+    rows = db.session.execute(
+        text('''
+            SELECT u.id, u.name, u.username, u.avatar, u.is_online, u.last_seen, u.is_blocked
+            FROM saved_contact sc
+            JOIN "user" u ON u.id = sc.contact_id
+            WHERE sc.user_id = :uid
+            ORDER BY u.name
+        '''), {'uid': uid}
+    ).fetchall()
+    return jsonify([{
+        'id':         r.id,
+        'name':       r.name,
+        'username':   r.username,
+        'avatar':     r.avatar or '',
+        'is_online':  r.is_online,
+        'last_seen':  r.last_seen.isoformat() if r.last_seen else None,
+        'is_blocked': r.is_blocked,
+    } for r in rows])
 
 
 @app.route('/report_user', methods=['POST'])
