@@ -143,15 +143,31 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <div><span>WayChat</span><small>ADMIN PANEL</small></div>
   </div>
   <div style="padding:12px 8px;flex:1">
-    <div class="nav-item active" onclick="showPage('dashboard')">📊 &nbsp;Дашборд</div>
-    <div class="nav-item" onclick="showPage('users')">👥 &nbsp;Пользователи</div>
+    <div class="nav-item active" onclick="showPage('dashboard')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Дашборд
+    </div>
+    <div class="nav-item" onclick="showPage('users')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Пользователи
+    </div>
     <div class="nav-item" id="nav-channels" onclick="showPage('channels')">
-      <span>📢 &nbsp;Каналы</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 3.07 9.81a19.79 19.79 0 0 1-3.07-8.72A2 2 0 0 1 2 1h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L6.09 8.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      Каналы
       <span class="dot-blue" id="ch-verify-dot" style="display:none"></span>
     </div>
-    <div class="nav-item" onclick="showPage('reports')">🚨 &nbsp;Жалобы <span class="dot" id="reports-dot" style="display:none"></span></div>
-    <div class="nav-item" onclick="showPage('logs')">📋 &nbsp;Логи</div>
-    <div class="nav-item" onclick="showPage('broadcast')">📣 &nbsp;Рассылка</div>
+    <div class="nav-item" onclick="showPage('reports')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      Жалобы <span class="dot" id="reports-dot" style="display:none"></span>
+    </div>
+    <div class="nav-item" onclick="showPage('logs')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Логи
+    </div>
+    <div class="nav-item" onclick="showPage('broadcast')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 8.01c0-3.87-3.13-7-7-7a7 7 0 0 0-7 7 7 7 0 0 0 7 7c1.47 0 2.83-.46 3.96-1.23L22 17l-2.22-2.22A6.97 6.97 0 0 0 22 8.01z"/><circle cx="15" cy="8" r="2"/><path d="M2 22V12l7 4-7 6z"/></svg>
+      Рассылка
+    </div>
   </div>
   <div style="padding:12px 16px 20px;border-top:1px solid var(--border)">
     <div style="font-size:12px;color:var(--text2);margin-bottom:6px">Вы вошли как</div>
@@ -536,9 +552,11 @@ function renderUsersTable(users) {
       <td>${u.is_blocked?`<span class="badge badge-red">🚫 Забанен</span>${banInfo}`:`<span class="status-dot ${u.is_online?'online':'offline'}"></span><span style="font-size:13px">${u.is_online?'Онлайн':'Офлайн'}</span>`}</td>
       <td>${u.report_count>0?`<span class="badge badge-red">${u.report_count}</span>`:'—'}</td>
       <td><div class="action-btns">
-        <button class="btn btn-blue" onclick="openUserModal(${u.id})">👁</button>
-        ${u.is_blocked?`<button class="btn btn-green" onclick="quickUnban(${u.id})">✅</button>`:`<button class="btn btn-red" onclick="openBanModal(${u.id},'${esc(u.name)}')">🚫</button>`}
-        <button class="btn btn-purple" onclick="openVerifyModal(${u.id},'${esc(u.verified_type)}')">⭐</button>
+        <button class="btn btn-blue" onclick="openUserModal(${u.id})" title="Профиль"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+        ${u.is_blocked
+          ? `<button class="btn btn-green" onclick="quickUnban(${u.id})" title="Разбанить"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></button>`
+          : `<button class="btn btn-red" onclick="openBanModal(${u.id},'${esc(u.name)}')" title="Заблокировать"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></button>`}
+        <button class="btn btn-purple" onclick="openVerifyModal(${u.id},'${esc(u.verified_type)}')" title="Верификация"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></button>
       </div></td>
     </tr>`;
   }).join('');
@@ -557,25 +575,109 @@ async function openUserModal(uid) {
 }
 
 function renderUserModal(u) {
-  const badge=verifyBadge(u.verified_type);
-  document.getElementById('user-modal-body').innerHTML=`
-    <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">${avatarEl(u,56)}<div><div style="font-size:18px;font-weight:800">${esc(u.name)}${badge}</div><div style="color:var(--text2);font-size:14px">@${esc(u.username)} · ID ${u.id}</div>${u.is_blocked?'<span class="badge badge-red" style="margin-top:4px">🚫 Заблокирован</span>':''}</div></div>
-    <div class="profile-grid">
-      <div class="profile-field"><div class="pf-label">Телефон</div><div class="pf-val" style="color:var(--accent2)">${esc(u.phone)}</div></div>
-      <div class="profile-field"><div class="pf-label">Регистрация</div><div class="pf-val">${fmtDate(u.created_at)}</div></div>
-      <div class="profile-field"><div class="pf-label">Последний IP</div><div class="pf-val">${esc(u.last_ip)||'—'}</div></div>
-      <div class="profile-field"><div class="pf-label">IP регистрации</div><div class="pf-val">${esc(u.reg_ip)||'—'}</div></div>
-      <div class="profile-field"><div class="pf-label">Сообщений</div><div class="pf-val">${u.msg_count}</div></div>
-      <div class="profile-field"><div class="pf-label">Моментов</div><div class="pf-val">${u.moment_count}</div></div>
-      ${u.ban_reason?`<div class="profile-field wide"><div class="pf-label">Причина бана</div><div class="pf-val" style="color:var(--red)">${esc(u.ban_reason)}</div></div>`:''}
-      ${u.bio?`<div class="profile-field wide"><div class="pf-label">Bio</div><div class="pf-val">${esc(u.bio)}</div></div>`:''}
+  const badge = verifyBadge(u.verified_type);
+  document.getElementById('user-modal-body').innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">
+      ${avatarEl(u,56)}
+      <div>
+        <div style="font-size:18px;font-weight:800">${esc(u.name)}${badge}</div>
+        <div style="color:var(--text2);font-size:14px">@${esc(u.username)} · ID ${u.id}</div>
+        ${u.is_blocked ? '<span class="badge badge-red" style="margin-top:4px;display:inline-flex;align-items:center;gap:4px"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> Заблокирован</span>' : ''}
+      </div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px">
-      ${u.is_blocked?`<button class="btn btn-green" onclick="quickUnban(${u.id});closeModal('user-modal')">✅ Разбанить</button>`:`<button class="btn btn-red" onclick="closeModal('user-modal');openBanModal(${u.id},'${esc(u.name)}')">🚫 Заблокировать</button>`}
-      <button class="btn btn-purple" onclick="closeModal('user-modal');openVerifyModal(${u.id},'${esc(u.verified_type)}')">⭐ Верификация</button>
+
+    <!-- Табы -->
+    <div style="display:flex;gap:4px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:0">
+      <button class="um-tab active" onclick="umTab(this,'um-info')" style="padding:8px 14px;border:none;background:transparent;color:var(--accent);font-size:13px;font-weight:700;cursor:pointer;border-bottom:2px solid var(--accent);margin-bottom:-1px;font-family:inherit">Инфо</button>
+      <button class="um-tab" onclick="umTab(this,'um-contacts')" style="padding:8px 14px;border:none;background:transparent;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit">Контакты</button>
+      <button class="um-tab" onclick="umTab(this,'um-reports')" style="padding:8px 14px;border:none;background:transparent;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-family:inherit">Жалобы ${u.reports.length ? `<span class="badge badge-red" style="margin-left:4px">${u.reports.length}</span>` : ''}</button>
     </div>
-    ${u.reports.length?`<div style="font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">Жалобы (${u.reports.length})</div>${u.reports.slice(0,5).map(r=>`<div class="report-card"><div class="rc-head"><div class="rc-title">от @${esc(r.reporter)} · <span class="badge badge-red">${esc(r.reason)}</span></div><div class="rc-date">${fmtDate(r.date)}</div></div>${r.comment?`<div class="rc-comment">${esc(r.comment)}</div>`:''}</div>`).join('')}`:''}
+
+    <!-- Инфо -->
+    <div id="um-info">
+      <div class="profile-grid">
+        <div class="profile-field"><div class="pf-label">Телефон</div><div class="pf-val" style="color:var(--accent2)">${esc(u.phone)}</div></div>
+        <div class="profile-field"><div class="pf-label">Регистрация</div><div class="pf-val">${fmtDate(u.created_at)}</div></div>
+        <div class="profile-field"><div class="pf-label">Последний IP</div><div class="pf-val">${esc(u.last_ip)||'—'}</div></div>
+        <div class="profile-field"><div class="pf-label">IP регистрации</div><div class="pf-val">${esc(u.reg_ip)||'—'}</div></div>
+        <div class="profile-field"><div class="pf-label">Сообщений</div><div class="pf-val">${u.msg_count}</div></div>
+        <div class="profile-field"><div class="pf-label">Моментов</div><div class="pf-val">${u.moment_count}</div></div>
+        ${u.ban_reason ? `<div class="profile-field wide"><div class="pf-label">Причина бана</div><div class="pf-val" style="color:var(--red)">${esc(u.ban_reason)}</div></div>` : ''}
+        ${u.ban_until  ? `<div class="profile-field wide"><div class="pf-label">Бан до</div><div class="pf-val" style="color:var(--yellow)">${fmtDate(u.ban_until)}</div></div>` : ''}
+        ${u.bio        ? `<div class="profile-field wide"><div class="pf-label">Bio</div><div class="pf-val">${esc(u.bio)}</div></div>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${u.is_blocked
+          ? `<button class="btn btn-green" onclick="quickUnban(${u.id});closeModal('user-modal')" style="display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"/></svg> Разбанить</button>`
+          : `<button class="btn btn-red" onclick="closeModal('user-modal');openBanModal(${u.id},'${esc(u.name)}')" style="display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg> Заблокировать</button>`}
+        <button class="btn btn-purple" onclick="closeModal('user-modal');openVerifyModal(${u.id},'${esc(u.verified_type)}')" style="display:inline-flex;align-items:center;gap:6px"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Верификация</button>
+      </div>
+    </div>
+
+    <!-- Контакты -->
+    <div id="um-contacts" style="display:none">
+      <div id="um-contacts-body" style="min-height:60px"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+
+    <!-- Жалобы -->
+    <div id="um-reports" style="display:none">
+      ${u.reports.length
+        ? u.reports.slice(0,10).map(r => `
+          <div class="report-card">
+            <div class="rc-head">
+              <div class="rc-title">от @${esc(r.reporter)} · <span class="badge badge-red">${esc(r.reason)}</span></div>
+              <div class="rc-date">${fmtDate(r.date)}</div>
+            </div>
+            ${r.comment ? `<div class="rc-comment">${esc(r.comment)}</div>` : ''}
+          </div>`).join('')
+        : '<div class="empty"><div class="empty-icon" style="font-size:28px;opacity:.3">✅</div>Жалоб нет</div>'}
+    </div>
   `;
+  // Загружаем контакты сразу в фоне
+  _loadModalContacts(u.id);
+}
+
+function umTab(btn, tabId) {
+  document.querySelectorAll('.um-tab').forEach(b => {
+    b.style.color = 'var(--text2)';
+    b.style.borderBottomColor = 'transparent';
+  });
+  btn.style.color = 'var(--accent)';
+  btn.style.borderBottomColor = 'var(--accent)';
+  ['um-info','um-contacts','um-reports'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = id === tabId ? '' : 'none';
+  });
+}
+
+async function _loadModalContacts(uid) {
+  const el = document.getElementById('um-contacts-body');
+  if (!el) return;
+  try {
+    const contacts = await api(`/admin/api/user/${uid}/contacts`);
+    if (!contacts.length) {
+      el.innerHTML = '<div class="empty"><div class="empty-icon" style="font-size:28px;opacity:.3">👤</div>Контактов нет</div>';
+      return;
+    }
+    el.innerHTML = contacts.map(c => `
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)">
+        ${avatarEl(c, 36)}
+        <div style="flex:1">
+          <div style="font-size:14px;font-weight:600">${esc(c.name)}</div>
+          <div style="font-size:12px;color:var(--text2)">@${esc(c.username)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="status-dot ${c.is_online ? 'online' : 'offline'}"></span>
+          <span style="font-size:12px;color:var(--text2)">${c.is_online ? 'Онлайн' : fmtDate(c.last_seen)}</span>
+          ${c.is_blocked ? '<span class="badge badge-red" style="font-size:10px">бан</span>' : ''}
+        </div>
+        <button class="btn btn-blue" onclick="openUserModal(${c.id})" style="padding:5px 10px;font-size:11px;display:inline-flex;align-items:center;gap:4px">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>`).join('');
+  } catch(e) {
+    el.innerHTML = '<div style="color:var(--red);padding:16px;text-align:center">Ошибка загрузки</div>';
+  }
 }
 
 // ═══════ BAN ═══════
