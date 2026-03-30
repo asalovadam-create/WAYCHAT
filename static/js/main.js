@@ -198,7 +198,7 @@ const WCCache = (() => {
             padding-bottom: 8px !important;
         }
         /* header: не сжимается */
-        #chat-header { flex-shrink: 0 !important; background:rgba(26,26,46,0.92) !important; backdrop-filter:blur(20px) !important; -webkit-backdrop-filter:blur(20px) !important; border-bottom:none !important; }
+        #chat-header { flex-shrink: 0 !important; background: #1e1e20 !important; backdrop-filter: blur(20px) !important; -webkit-backdrop-filter: blur(20px) !important; border-bottom: 0.5px solid rgba(255,255,255,0.08) !important; }
         /* FAB: всегда поверх и кликабельна */
         .fab-btn {
             pointer-events: all !important;
@@ -578,9 +578,23 @@ function _ensureScrollBtn() {
 
     btn.addEventListener('click', function() {
         var msgs = document.getElementById('messages');
-        _scrollUnread = 0;
-        scrollToBottom(msgs, false);
-        // Mark messages read
+        if (!msgs) return;
+        // Сразу ставим флаги ДО скролла — иначе _updateScrollBtn покажет кнопку снова
+        _scrollUnread   = 0;
+        _scrollAtBottom = true;
+        _updateScrollBtn(msgs);
+        // Принудительно скроллим до самого низа (мгновенно через rAF)
+        requestAnimationFrame(function() {
+            msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
+            // Финальная коррекция через 500мс на случай lazy-рендера
+            setTimeout(function() {
+                if (msgs) {
+                    msgs.scrollTop = msgs.scrollHeight;
+                    _scrollAtBottom = true;
+                    _updateScrollBtn(msgs);
+                }
+            }, 520);
+        });
         if (currentChatId) {
             socket.emit('mark_read', { chat_id: currentChatId });
         }
@@ -1947,7 +1961,7 @@ function renderApp() {
     --msg-out: #1a7a52;
     --divider: rgba(255,255,255,0.05);
     --chat-bg: #1d1d1e;
-    --hdr: rgba(29,29,30,0.97);
+    --hdr: #1e1e20;
     --sep: rgba(255,255,255,0.07);
     --item-hover: rgba(255,255,255,0.05);
 }
@@ -2118,8 +2132,8 @@ body {
 /* ИНПУТ — floating над чатом */
 .input-bar { padding:0;border:none !important;background:transparent !important; }
 .input-wrap { display:flex;align-items:flex-end;gap:8px; }
-.input-inner { flex:1;display:flex;align-items:center;background:rgba(255,255,255,0.07);border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
-.input-inner:focus-within { background:rgba(255,255,255,0.10); }
+.input-inner { flex:1;display:flex;align-items:center;background:#2c2c2e;border:none;border-radius:22px;padding:4px 4px 4px 14px;min-height:44px; }
+.input-inner:focus-within { background:#333335; }
 #msg-input { flex:1;background:transparent;outline:none;color:white;font-size:16px;padding:6px 4px;resize:none;max-height:120px;line-height:1.4;font-family:inherit;-webkit-appearance:none; }
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
@@ -2144,12 +2158,32 @@ body {
 .msg-row.in.grp-mid    .bubble { border-radius: 6px 22px 22px 6px !important; }
 .msg-row.in.grp-last   .bubble { border-radius: 6px 22px 22px 22px !important; }
 
-/* Smooth message entry animation */
+/* Плавная анимация — новое сообщение появляется снизу, остальные поднимаются */
 @keyframes msgSlideIn {
-    from { opacity: 0; transform: translateY(6px) scale(0.98); }
-    to   { opacity: 1; transform: translateY(0) scale(1); }
+    0%   { opacity: 0; transform: translateY(14px) scale(0.97); }
+    60%  { opacity: 1; transform: translateY(-2px) scale(1.005); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
 }
-.animate-msg { animation: msgSlideIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@keyframes msgFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+/* Контейнер сообщений — плавный сдвиг при появлении нового */
+#messages {
+    scroll-behavior: smooth;
+}
+.animate-msg {
+    animation: msgSlideIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+}
+.animate-msg.out {
+    animation: msgSlideIn 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+    transform-origin: bottom right;
+}
+.animate-msg.in {
+    animation: msgSlideIn 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: bottom left;
+}
 
 /* Video message poster placeholder */
 .video-bubble-wrap { overflow:hidden;border-radius:14px;max-width:260px;background:#111;position:relative;border:none; }
@@ -2189,18 +2223,16 @@ body {
   box-sizing: border-box;
 }
 
-/* КАПСУЛА — серо-тёмная, не касается краёв, парит над обоями */
+/* КАПСУЛА — полностью непрозрачная тёмно-серая */
 .tg-text-wrap {
   flex: 1;
   display: flex;
   align-items: center;
-  /* точный цвет как в TG dark mode */
-  background: rgba(50, 50, 57, 0.95);
+  background: #2c2c2e !important;
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
   border-radius: 22px;
-  /* padding: вертикаль 5px, слева под смайлик уже, справа под скрепку */
   padding: 5px 4px 5px 4px;
   min-height: 46px;
   max-height: 136px;
@@ -2255,14 +2287,14 @@ body {
 }
 .tg-send-btn:active { transform: scale(0.88); }
 
-/* Микрофон — серый круг */
+/* Микрофон — плотный тёмно-серый круг, без прозрачности */
 .tg-mic-btn {
-  background: rgba(255,255,255,0.12) !important;
+  background: #2c2c2e !important;
   box-shadow: none !important;
   color: rgba(255,255,255,0.85) !important;
   border: none !important;
 }
-.tg-mic-btn:active { background: rgba(255,255,255,0.22) !important; color: white !important; transform: scale(0.88); }
+.tg-mic-btn:active { background: #3a3a3c !important; color: white !important; transform: scale(0.88); }
 
 /* ── v9.0: FULLSCREEN PHOTO ── */
 #wc-img-viewer { position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.96);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.22s ease; }
@@ -2415,7 +2447,6 @@ body {
 @keyframes msgIn { from{opacity:0;transform:translateY(6px);} to{opacity:1;transform:translateY(0);} }
 @keyframes toastIn { from{opacity:0;transform:translateY(-8px) scale(0.96);} to{opacity:1;transform:translateY(0) scale(1);} }
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
-.animate-msg { animation:msgIn 0.18s ease-out both; }
 .animate-up  { animation:slideUp 0.3s ease; }
 
 /* ════════════════════════════════════════════════════════
@@ -4409,23 +4440,41 @@ async function loadMessages(initial = false, retryCount = 0) {
         if (msgs.length < MESSAGES_PER_PAGE) hasMoreMessages = false;
 
         if (initial) {
-            // Единственный источник истины — сервер
+            // Сервер — единственный источник истины для истории
+            // НО: могли прийти новые сообщения через сокет пока грузили — мержим их
+            const existingCache = messagesByChatCache[cacheKey];
+            let finalMsgs = msgs;
+
+            if (existingCache?.messages?.length) {
+                const serverIds = new Set(msgs.map(m => String(m.id)));
+                // Берём из кэша только те что новее последнего серверного
+                const lastServerId = msgs.length ? msgs[msgs.length - 1].id : 0;
+                const newerMsgs = existingCache.messages.filter(m =>
+                    !String(m.id).startsWith('tmp_') &&
+                    !serverIds.has(String(m.id)) &&
+                    m.id > lastServerId
+                );
+                if (newerMsgs.length) {
+                    finalMsgs = [...msgs, ...newerMsgs];
+                }
+            }
+
             messagesByChatCache[cacheKey] = {
-                messages:  msgs,
+                messages:  finalMsgs,
                 lastFetch: Date.now(),
             };
             if (container) container.innerHTML = '';
 
-            if (!msgs.length) {
+            if (!finalMsgs.length) {
                 if (container) container.innerHTML = `<div style="padding:60px 0;text-align:center;opacity:0.2">
                     <div style="font-size:40px;margin-bottom:10px">👋</div>
                     <p>Начните переписку!</p>
                 </div>`;
                 return;
             }
-            renderMessagesFromCache(msgs);
+            renderMessagesFromCache(finalMsgs);
             scrollDown(false);
-            MsgDB.save(cacheKey, msgs).catch(() => {});
+            MsgDB.save(cacheKey, finalMsgs).catch(() => {});
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
             // Пагинация — добавляем в начало
@@ -5949,15 +5998,20 @@ function onNewMessage(msg) {
         const _ck = currentChatType === 'group'
             ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
         if (messagesByChatCache[_ck] && !_deletedMsgIds.has(String(msg.id))) {
-            // Avoid duplicates before pushing
             const _existing = messagesByChatCache[_ck].messages;
             if (!_existing.some(m => _normMsgId(m.id) === _mid)) {
                 messagesByChatCache[_ck].messages.push(msg);
+                // Персистируем в IDB чтобы при следующем заходе данные были актуальны
+                MsgDB.save(_ck, messagesByChatCache[_ck].messages).catch(() => {});
             }
         }
     } else {
+        // Сообщение пришло в закрытый чат — инвалидируем ОБА кэша (память + IDB)
+        // Иначе при следующем заходе показываются старые данные без нового сообщения
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
+        // IDB тоже удаляем — принудит loadMessages к свежей загрузке с сервера
+        MsgDB.delete(cacheKey).catch(() => {});
         _debouncedLoadChats();
         // Пульс аватара при новом сообщении
         const senderId = msg.is_group_msg ? msg.group_id : msg.sender_id;
