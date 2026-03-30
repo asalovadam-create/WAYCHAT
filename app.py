@@ -1217,11 +1217,14 @@ def verify_code():
         if not u:
             if User.query.filter_by(username=pending.username).first():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
+            ip_addr = _get_ip()
             u = User(
                 phone         = phone,
                 name          = pending.name[:120],
                 username      = pending.username[:80],
                 password_hash = generate_password_hash('__passwordless__'),
+                reg_ip        = ip_addr,
+                last_ip       = ip_addr,
             )
             db.session.add(u)
             db.session.commit()
@@ -4054,30 +4057,41 @@ def run_migrations():
             app.logger.warning(f'migration skip: {e}')
 
     # ── Создаём системного бота WayChat если не существует ──
+    # Используем raw SQL чтобы избежать ошибки если is_bot колонка ещё не добавлена
+    try:
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "ALTER TABLE \"user\" ADD COLUMN IF NOT EXISTS is_bot BOOLEAN DEFAULT FALSE"
+            ))
+    except Exception:
+        pass
+
     try:
         bot = User.query.filter_by(username='waychat').first()
         if not bot:
+            # Генерируем уникальный phone чтобы не нарушить UNIQUE constraint
+            import uuid as _uuid
+            bot_phone = f'__bot_{_uuid.uuid4().hex[:12]}__'
             bot = User(
-                phone='waychat_bot_system',
-                username='waychat',
-                name='WayChat',
-                bio='Официальный аккаунт WayChat. Здесь приходят коды, уведомления и новости.',
-                avatar='emoji:💬',
-                is_verified=True,
-                verified_type='official',
-                is_bot=True,
-                is_online=True,
-                password_hash=generate_password_hash('__bot_no_login__'),
+                phone         = bot_phone,
+                username      = 'waychat',
+                name          = 'WayChat',
+                bio           = 'Официальный аккаунт WayChat. Здесь приходят коды, уведомления и новости.',
+                avatar        = 'emoji:💬',
+                is_verified   = True,
+                verified_type = 'official',
+                is_bot        = True,
+                is_online     = True,
+                password_hash = generate_password_hash('__bot_no_login__'),
             )
             db.session.add(bot)
             db.session.commit()
             print(f'✅ WayChat bot created id={bot.id}')
         else:
-            # Обновляем флаги если бот уже есть
             changed = False
-            if not bot.is_bot:       bot.is_bot = True; changed = True
-            if not bot.is_verified:  bot.is_verified = True; changed = True
-            if bot.verified_type != 'official': bot.verified_type = 'official'; changed = True
+            if not getattr(bot, 'is_bot', False):  bot.is_bot = True; changed = True
+            if not bot.is_verified:                bot.is_verified = True; changed = True
+            if bot.verified_type != 'official':    bot.verified_type = 'official'; changed = True
             if changed:
                 db.session.commit()
     except Exception as e:
@@ -4459,7 +4473,7 @@ def admin_registrations():
 def _bot_send(user_id, text):
     """Отправляет сообщение от бота WayChat пользователю. Используется для кодов и рассылок."""
     try:
-        bot = User.query.filter_by(username='waychat', is_bot=True).first()
+        bot = User.query.filter_by(username='waychat').first()
         if not bot:
             return
         chat = get_or_create_chat(bot.id, user_id)
@@ -4468,21 +4482,21 @@ def _bot_send(user_id, text):
             sender_id=bot.id,
             sender_name=bot.name,
             content=text,
-            msg_type='text',
+            type='text',
             is_read=False,
         )
         db.session.add(msg)
         db.session.commit()
         payload = {
-            'id':          msg.id,
-            'chat_id':     chat.id,
-            'sender_id':   bot.id,
-            'sender_name': bot.name,
+            'id':            msg.id,
+            'chat_id':       chat.id,
+            'sender_id':     bot.id,
+            'sender_name':   bot.name,
             'sender_avatar': bot.avatar or '',
-            'content':     text,
-            'type':        'text',
-            'timestamp':   msg.timestamp.isoformat() if msg.timestamp else '',
-            'is_read':     False,
+            'content':       text,
+            'type':          'text',
+            'timestamp':     msg.timestamp.isoformat() if msg.timestamp else '',
+            'is_read':       False,
         }
         socketio.emit('new_message', payload, room=f'user_{user_id}')
         _chat_cache.delete(user_id)
