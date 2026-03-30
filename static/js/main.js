@@ -700,8 +700,8 @@ const ICONS = {
     call: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.72A2 2 0 012 1h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.09 8.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     video: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M23 7l-7 5 7 5V7z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     more: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="5" r="1.5" fill="white"/><circle cx="12" cy="12" r="1.5" fill="white"/><circle cx="12" cy="19" r="1.5" fill="white"/></svg>`,
-    attach: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
-    mic: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="11" rx="3" stroke="rgba(255,255,255,0.5)" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3M8 22h8" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+    attach: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="white" stroke-width="2.2" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="white" stroke-width="2.2" stroke-linecap="round"/></svg>`,
+    mic: `<svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="9" y="2" width="6" height="11" rx="3" stroke="white" stroke-width="2"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v3M8 22h8" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
     search: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="rgba(255,255,255,0.35)" stroke-width="2"/><path d="M21 21l-4.35-4.35" stroke="rgba(255,255,255,0.35)" stroke-width="2" stroke-linecap="round"/></svg>`,
     plus: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"><line x1="12" y1="5" x2="12" y2="19" stroke="black" stroke-width="2.5" stroke-linecap="round"/><line x1="5" y1="12" x2="19" y2="12" stroke="black" stroke-width="2.5" stroke-linecap="round"/></svg>`,
     check: `<svg width="16" height="12" viewBox="0 0 16 12" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1551,16 +1551,6 @@ function initSocket() {
             el.appendChild(f);
         }
     });
-
-    // ── Заблокирован при попытке отправки ──
-    socket.on('banned', (d) => {
-        showBanScreen(d.ban_until, d.ban_reason);
-    });
-
-    // ── Рассылка от администратора ──
-    socket.on('admin_broadcast', (d) => {
-        showToast('📣 ' + (d.text || ''), 'info', 7000);
-    });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1610,62 +1600,6 @@ async function _preWarmMic() {
         console.error(e);
     }
 }
-
-// ══ BAN SCREEN ════════════════════════════════════════════════
-function showBanScreen(banUntil, banReason) {
-    // Убираем старый экран если был
-    const old = document.getElementById('wc-ban-screen');
-    if (old) old.remove();
-
-    let timeText = '';
-    if (banUntil) {
-        const d = new Date(banUntil);
-        timeText = 'до ' + d.toLocaleString('ru', {
-            day: '2-digit', month: 'long', year: 'numeric',
-            hour: '2-digit', minute: '2-digit'
-        });
-    } else {
-        timeText = 'навсегда';
-    }
-
-    const screen = document.createElement('div');
-    screen.id = 'wc-ban-screen';
-    screen.style.cssText = [
-        'position:fixed', 'inset:0', 'z-index:99999',
-        'background:#0d0d0f',
-        'display:flex', 'flex-direction:column',
-        'align-items:center', 'justify-content:center',
-        'padding:32px', 'text-align:center',
-        'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
-    ].join(';');
-
-    screen.innerHTML = `
-        <div style="width:88px;height:88px;border-radius:50%;background:rgba(239,68,68,0.12);
-             border:1.5px solid rgba(239,68,68,0.3);display:flex;align-items:center;
-             justify-content:center;margin-bottom:28px">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
-                <circle cx="12" cy="12" r="10" stroke="#ef4444" stroke-width="1.8"/>
-                <path d="M4.93 4.93l14.14 14.14" stroke="#ef4444" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-        </div>
-        <div style="font-size:22px;font-weight:800;color:#fff;margin-bottom:10px">
-            Аккаунт заблокирован
-        </div>
-        <div style="font-size:15px;color:rgba(255,255,255,0.5);margin-bottom:8px">
-            Срок блокировки: <span style="color:rgba(255,255,255,0.8);font-weight:600">${timeText}</span>
-        </div>
-        ${banReason ? `<div style="margin-top:16px;padding:14px 20px;background:rgba(239,68,68,0.08);
-            border:1px solid rgba(239,68,68,0.18);border-radius:14px;
-            font-size:14px;color:rgba(255,255,255,0.6);max-width:340px;line-height:1.5">
-            <span style="color:rgba(239,68,68,0.9);font-weight:700">Причина:</span> ${banReason}
-        </div>` : ''}
-        <div style="margin-top:32px;font-size:13px;color:rgba(255,255,255,0.25)">
-            Если вы считаете это ошибкой — обратитесь в поддержку
-        </div>
-    `;
-    document.body.appendChild(screen);
-}
-// ══ END BAN SCREEN ════════════════════════════════════════════
 
 async function init() {
     // ── 1. Профиль из кэша — мгновенно ──
@@ -1745,19 +1679,6 @@ async function init() {
             window.visualViewport.addEventListener('resize', onVV, { passive: true });
         }
     })();
-
-    // ── Проверка бана при загрузке страницы ──
-    try {
-        const _meRes = await fetch('/api/me', { credentials: 'same-origin' });
-        if (_meRes.ok) {
-            const _me = await _meRes.json();
-            if (_me.is_blocked) {
-                showBanScreen(_me.ban_until, _me.ban_reason);
-                // Не инициализируем socket — заблокированный не должен подключаться
-                return;
-            }
-        }
-    } catch(e) {}
 
     initSocket();
     // Fallback 1: если socket не подключится за 2с — грузим чаты напрямую
@@ -1999,26 +1920,8 @@ function getMoscowTime(dateStr) {
             return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
         }
 
-        // Вчера
-        const yesterday = new Date(nowMsk);
-        yesterday.setDate(yesterday.getDate() - 1);
-        if (mDate === yesterday.toDateString()) return 'Вчера';
-
-        // Эта неделя (до 7 дней) — название дня
-        const diffDays = Math.floor((nowMsk - moscow) / 86400000);
-        if (diffDays < 7) {
-            const days = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
-            return days[moscow.getDay()];
-        }
-
-        // Этот год — день + месяц по-русски (без года)
-        const months = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
-        if (moscow.getFullYear() === nowMsk.getFullYear()) {
-            return moscow.getDate() + ' ' + months[moscow.getMonth()];
-        }
-
-        // Старше года — день.месяц.год
-        return moscow.getDate() + ' ' + months[moscow.getMonth()] + ' ' + moscow.getFullYear();
+        // Для всех остальных дат — только время HH:MM
+        return moscow.getHours().toString().padStart(2,'0') + ':' + moscow.getMinutes().toString().padStart(2,'0');
     } catch(e) { return dateStr; }
 }
 
@@ -2029,10 +1932,10 @@ function renderApp() {
     document.getElementById('root').innerHTML = `
 <style>
 :root {
-    --accent: #10b981;
-    --glow: 0 0 20px rgba(16,185,129,0.4);
-    --accent-10: rgba(16,185,129,0.1);
-    --accent-30: rgba(16,185,129,0.3);
+    --accent: #075E54;
+    --glow: 0 0 16px rgba(7,94,84,0.5);
+    --accent-10: rgba(7,94,84,0.1);
+    --accent-30: rgba(7,94,84,0.3);
     --bg: #1d1d1e;
     --bg2: #191919;
     --surface: #2a2a2b;
@@ -2158,11 +2061,12 @@ body {
 .chat-view {
   position:fixed;inset:0;z-index:2000;
   /* wallpaper на ВЕСЬ экран включая зону input bar */
-  background-color: #1a1a2e;
+  background-color: #0D1117;
   background-image:
-    radial-gradient(ellipse at 20% 50%, rgba(16,185,129,0.04) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 20%, rgba(99,102,241,0.04) 0%, transparent 50%),
-    url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.018'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+    radial-gradient(ellipse at 15% 25%, rgba(7,94,84,0.18) 0%, transparent 45%),
+    radial-gradient(ellipse at 85% 70%, rgba(18,140,126,0.12) 0%, transparent 45%),
+    radial-gradient(ellipse at 50% 50%, rgba(1,60,67,0.08) 0%, transparent 70%),
+    url("data:image/svg+xml,%3Csvg width='80' height='80' viewBox='0 0 80 80' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%2318c0a8' fill-opacity='0.028'%3E%3Ccircle cx='40' cy='40' r='3'/%3E%3Ccircle cx='0' cy='0' r='3'/%3E%3Ccircle cx='80' cy='0' r='3'/%3E%3Ccircle cx='0' cy='80' r='3'/%3E%3Ccircle cx='80' cy='80' r='3'/%3E%3Ccircle cx='40' cy='0' r='1.5'/%3E%3Ccircle cx='0' cy='40' r='1.5'/%3E%3Ccircle cx='80' cy='40' r='1.5'/%3E%3Ccircle cx='40' cy='80' r='1.5'/%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E");
   display:flex;flex-direction:column;overflow:hidden;
   transform:translateX(100%);
   transition:transform 0.28s cubic-bezier(0.25,0.46,0.45,0.94);
@@ -2183,7 +2087,7 @@ body {
 .msg-row.in  { justify-content:flex-start;align-items:flex-end; }
 
 .bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
-.msg-row.out .bubble { background:var(--accent);border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 12px rgba(16,185,129,0.25); }
+.msg-row.out .bubble { background:#128C7E;border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 8px rgba(0,0,0,0.35); }
 .msg-row.in .bubble  { background:var(--msg-in);border-radius:22px 22px 22px 6px;margin-left:6px;margin-right:44px;border:0.5px solid rgba(255,255,255,0.07);box-shadow:0 2px 8px rgba(0,0,0,0.3); }
 
 .msg-time { font-size:11px;opacity:0.6;display:flex;align-items:center;gap:3px;justify-content:flex-end;margin-top:4px;white-space:nowrap; }
@@ -2220,8 +2124,8 @@ body {
 #msg-input::placeholder { color:rgba(255,255,255,0.35); }
 .send-btn { width:44px;height:44px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;flex-shrink:0;transition:transform 0.15s,box-shadow 0.15s;box-shadow:var(--glow); }
 .send-btn:active { transform:scale(0.88); }
-.icon-btn { width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.06);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
-.icon-btn:active { background:rgba(255,255,255,0.14); }
+.icon-btn { width:36px;height:36px;border-radius:50%;background:transparent;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background 0.15s; }
+.icon-btn:active { background:rgba(255,255,255,0.10); }
 
 
 /* ── GROUPED BUBBLES — Telegram style ── */
@@ -2277,9 +2181,8 @@ body {
   align-items: center;
   gap: 6px;
   background: transparent;
-  /* max() гарантирует минимум 28px снизу даже если env() вернёт 0.
-     На iPhone с home indicator env(safe-area-inset-bottom) = 34px → итого 46px */
-  padding: 10px 10px max(calc(env(safe-area-inset-bottom, 0px) + 12px), 28px) 10px;
+  /* поднимаем над home indicator на всех iPhone 10-17 Pro Max */
+  padding: 10px 10px calc(env(safe-area-inset-bottom, 34px) + 34px) 10px;
   border: none;
   margin: 0;
   width: 100%;
@@ -3124,11 +3027,11 @@ body {
                            -webkit-appearance:none;align-self:center;
                            caret-color:#fff;"></textarea>
 
-                <!-- Скрепка — крайняя правая внутри капсулы -->
-                <button class="tg-inner-btn" onclick="pickMedia('msg')" aria-label="Прикрепить">
+                <!-- Плюс — крайняя правая внутри капсулы -->
+                <button class="tg-inner-btn" onclick="pickMedia('msg')" aria-label="Прикрепить" style="color:white">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-                        <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"
-                              stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+                        <line x1="12" y1="5" x2="12" y2="19" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
+                        <line x1="5" y1="12" x2="19" y2="12" stroke="white" stroke-width="2.2" stroke-linecap="round"/>
                     </svg>
                 </button>
 
@@ -5984,6 +5887,7 @@ async function sendText() {
     }
     input.value = '';
     input.style.height = 'auto';
+    updateSendButton();
     socket.emit('stop_typing', { chat_id: currentChatId });
     vibrate(8);
     // BUG-J FIX: use scrollDown() which goes through VirtualList + clears badge
@@ -13552,69 +13456,34 @@ if (window._pendingSWOpenChat) {
 
 // ══ INPUT BAR FORCE FIX ══
 (function fixInputBar() {
-    var _applying = false;
-
-    // Единственный надёжный способ получить высоту safe-area-bottom на iPhone:
-    // window.innerHeight - visualViewport.height даёт высоту клавиатуры+safe-area.
-    // В покое visualViewport.height ≈ window.innerHeight, разница = safe-area снизу.
-    // Fallback: создаём div с height:env(safe-area-inset-bottom) и меряем offsetHeight.
-    function getSafeAreaBottom() {
-        // Метод 1: визуальный viewport
-        if (window.visualViewport) {
-            var diff = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
-            if (diff > 0 && diff < 200) return diff; // клавиатура открыта — не то
-        }
-        // Метод 2: div с env()
-        try {
-            var el = document.createElement('div');
-            el.style.cssText = 'position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden;z-index:-1';
-            document.body.appendChild(el);
-            var h = el.offsetHeight || 0;
-            document.body.removeChild(el);
-            if (h > 0) return h;
-        } catch(e) {}
-        // Метод 3: фолбэк для iPhone X+ (home indicator ≈ 34px)
-        var isIphoneX = /iPhone/.test(navigator.userAgent) &&
-            (window.screen.height >= 812 || window.screen.width >= 812);
-        return isIphoneX ? 34 : 0;
-    }
+    var _applying = false; // guard против рекурсии
 
     function apply() {
         if (_applying) return;
         _applying = true;
 
-        var bar  = document.querySelector('.input-bar');
-        var row  = document.querySelector('.tg-input-row');
+        var bar = document.querySelector('.input-bar');
         if (!bar) { _applying = false; return; }
 
-        var safeH = getSafeAreaBottom();
+        // position:fixed + bottom:0 — safe-area обрабатывается самим .tg-input-row
+        // через padding: calc(env(safe-area-inset-bottom) + 24px), не трогаем это
+        bar.style.setProperty('position',                'fixed',                'important');
+        bar.style.setProperty('bottom',                  '0',                   'important');
+        bar.style.setProperty('left',                    '0',                   'important');
+        bar.style.setProperty('right',                   '0',                   'important');
+        bar.style.setProperty('z-index',                 '9999',                'important');
+        bar.style.setProperty('background',              'transparent',         'important');
+        bar.style.setProperty('backdrop-filter',         'none',                'important');
+        bar.style.setProperty('-webkit-backdrop-filter', 'none',                'important');
+        bar.style.setProperty('border-top',              'none',                'important');
+        bar.style.setProperty('padding',                 '0',                   'important');
 
-        // input-bar: position:fixed, bottom:0, прозрачный
-        bar.style.setProperty('position',                'fixed',      'important');
-        bar.style.setProperty('bottom',                  '0px',        'important');
-        bar.style.setProperty('left',                    '0',          'important');
-        bar.style.setProperty('right',                   '0',          'important');
-        bar.style.setProperty('z-index',                 '9999',       'important');
-        bar.style.setProperty('background',              'transparent','important');
-        bar.style.setProperty('backdrop-filter',         'none',       'important');
-        bar.style.setProperty('-webkit-backdrop-filter', 'none',       'important');
-        bar.style.setProperty('border-top',              'none',       'important');
-        bar.style.setProperty('padding',                 '0',          'important');
-
-        // tg-input-row: padding-bottom = safe-area + 14px зазор
-        if (row) {
-            var pb = safeH + 14;
-            row.style.setProperty('padding-bottom', pb + 'px', 'important');
-        }
-
-        // messages: отступ снизу = высота бара + 8px
+        // Поднимаем messages чтобы не прятались под input-bar
+        // barH уже включает safe-area-inset-bottom через padding в .tg-input-row
         var msgs = document.getElementById('messages');
         if (msgs) {
-            // Даём бару отрисоваться, потом меряем реальную высоту
-            requestAnimationFrame(function() {
-                var barH = bar.offsetHeight || (54 + safeH + 14);
-                msgs.style.setProperty('padding-bottom', (barH + 8) + 'px', 'important');
-            });
+            var barH = bar.offsetHeight || 110;
+            msgs.style.setProperty('padding-bottom', (barH + 12) + 'px', 'important');
         }
 
         _applying = false;
@@ -13625,10 +13494,11 @@ if (window._pendingSWOpenChat) {
     window.addEventListener('resize', apply, { passive: true });
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', apply, { passive: true });
-        window.visualViewport.addEventListener('scroll', apply, { passive: true });
     }
 
-    // Ждём появления .input-bar, потом отключаемся
+    // MutationObserver — ждём появления .input-bar, затем сразу отключаемся
+    // disconnect() обязателен — без него каждая DOM-мутация вызывает apply()
+    // и браузер зависает в бесконечном цикле
     var _barObserver = new MutationObserver(function() {
         if (document.querySelector('.input-bar')) {
             _barObserver.disconnect();
