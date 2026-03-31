@@ -134,6 +134,19 @@ tr:hover td{background:rgba(255,255,255,.02)}
 .ch-verify-badge{display:inline-flex;vertical-align:middle;margin-left:4px}
 
 @media(max-width:768px){.sidebar{display:none}.content{padding:16px}.stats-grid{grid-template-columns:repeat(2,1fr)}}
+
+/* ── Real-time ── */
+.rt-indicator{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:var(--accent);padding:3px 9px;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.25);border-radius:20px;letter-spacing:.3px}
+.rt-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:rtpulse 1.4s ease-in-out infinite}
+@keyframes rtpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
+.rt-dot.error{background:var(--red);animation:none}
+.stat-card .value.rt-updated{animation:rtflash .5s ease}
+@keyframes rtflash{0%{color:inherit}50%{color:var(--accent)}100%{color:inherit}}
+.rt-new-row{animation:rtnewrow .6s ease}
+@keyframes rtnewrow{from{background:rgba(16,185,129,.15)}to{background:transparent}}
+#rt-status-bar{position:fixed;bottom:16px;right:20px;z-index:500;display:flex;align-items:center;gap:8px}
+.rt-toast-new{position:fixed;top:72px;right:20px;z-index:9998;background:rgba(16,185,129,.95);backdrop-filter:blur(12px);color:#fff;padding:10px 18px;border-radius:14px;font-size:13px;font-weight:700;transform:translateX(120%);transition:transform .3s cubic-bezier(.34,1.56,.64,1);pointer-events:none}
+.rt-toast-new.show{transform:translateX(0)}
 </style>
 </head>
 <body>
@@ -182,6 +195,7 @@ tr:hover td{background:rgba(255,255,255,.02)}
     <h1 id="page-title">Дашборд</h1>
     <div class="topbar-right">
       <span id="admin-badge" class="badge badge-green">Admin</span>
+      <span class="rt-indicator" id="rt-indicator"><span class="rt-dot" id="rt-dot"></span>Live</span>
       <span id="clock" style="font-size:13px;color:var(--text2)"></span>
     </div>
   </div>
@@ -806,7 +820,221 @@ async function loadRegChart() {
   });
 }
 
-loadDashboard();
+<!-- RT new-event toast -->
+<div class="rt-toast-new" id="rt-toast-new"></div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// REAL-TIME ENGINE  –  polling every 5 s
+// ══════════════════════════════════════════════════════
+
+const RT = {
+  interval: 5000,          // мс между запросами
+  timer: null,
+  connected: true,
+  prevStats: null,
+  prevReportCount: null,
+  prevChPending: null,
+  newUserIds: new Set(),    // ID юзеров, замеченных впервые
+  toastTimer: null,
+
+  start() {
+    this.tick();
+    this.timer = setInterval(() => this.tick(), this.interval);
+  },
+
+  stop() { clearInterval(this.timer); },
+
+  async tick() {
+    try {
+      const stats = await api('/admin/api/stats');
+      this.setConnected(true);
+      this.handleStats(stats);
+    } catch(e) {
+      this.setConnected(false);
+    }
+
+    // Параллельно: кол-во открытых жалоб
+    try {
+      const rep = await api('/admin/api/reports?page=1');
+      this.handleReports(rep);
+    } catch(e) {}
+
+    // Параллельно: pending channel verify
+    try {
+      const ch = await api('/admin/api/channel_verify_requests?status=pending');
+      this.handleChPending(ch);
+    } catch(e) {}
+
+    // Если сейчас открыт дашборд — обновляем его без spinner
+    if (currentPageName === 'dashboard') {
+      try {
+        const [stats, rep, logs] = await Promise.all([
+          api('/admin/api/stats'),
+          api('/admin/api/reports?page=1'),
+          api('/admin/api/logs?page=1')
+        ]);
+        renderStats(stats);
+        renderDashReports(rep.reports.slice(0, 5));
+        renderDashLogs(logs.logs.slice(0, 8));
+      } catch(e) {}
+    }
+
+    // Если сейчас открыт список пользователей — тихо обновляем
+    if (currentPageName === 'users') {
+      try {
+        const d = await api(`/admin/api/users?page=${usersPage}&per=30&q=${encodeURIComponent(usersQuery)}&filter=${usersFilter}`);
+        this.detectNewUsers(d.users);
+        renderUsersTable(d.users);
+        renderUsersPagination(d.total, d.page, d.per);
+      } catch(e) {}
+    }
+
+    // Если сейчас открыты жалобы — тихо обновляем
+    if (currentPageName === 'reports') {
+      loadReports();
+    }
+
+    // Если каналы — тихо обновляем
+    if (currentPageName === 'channels') {
+      try {
+        const d = await api('/admin/api/channel_verify_requests?status=' + chTab);
+        if (chTab === 'pending') {
+          document.getElementById('ch-tab-pending').textContent = '🕐 Ожидают (' + (d.total || 0) + ')';
+          document.getElementById('ch-verify-dot').style.display = (d.total > 0) ? 'block' : 'none';
+        }
+        if (d.requests && d.requests.length) {
+          document.getElementById('ch-requests-list').innerHTML = d.requests.map(r => renderChReqCard(r)).join('');
+        }
+      } catch(e) {}
+    }
+  },
+
+  handleStats(stats) {
+    const prev = this.prevStats;
+
+    // Обновляем счётчик онлайна в сайдбаре (если не дашборд)
+    if (currentPageName !== 'dashboard') {
+      // Бесшумно обновим значения stat-card если они уже отрисованы
+      const cards = document.querySelectorAll('#stats-grid .stat-card .value');
+      if (cards.length >= 6) {
+        const vals = [stats.total_users, stats.online_users, stats.blocked_users, stats.verified_users, stats.open_reports, stats.total_messages.toLocaleString()];
+        cards.forEach((c, i) => {
+          if (c.textContent !== String(vals[i])) {
+            c.textContent = vals[i];
+            c.classList.remove('rt-updated');
+            void c.offsetWidth; // reflow
+            c.classList.add('rt-updated');
+          }
+        });
+      }
+    }
+
+    if (prev) {
+      // Новые регистрации
+      if (stats.total_users > prev.total_users) {
+        const diff = stats.total_users - prev.total_users;
+        this.showRtToast(`👤 +${diff} новых пользователей`);
+      }
+      // Изменение онлайна
+      if (stats.online_users !== prev.online_users) {
+        // Обновим badge в заголовке
+        const onlineBadge = document.querySelector('#stats-grid .stat-card.blue .value');
+        if (onlineBadge) {
+          onlineBadge.textContent = stats.online_users;
+          onlineBadge.classList.remove('rt-updated');
+          void onlineBadge.offsetWidth;
+          onlineBadge.classList.add('rt-updated');
+        }
+      }
+      // Новые жалобы
+      if (stats.open_reports > prev.open_reports) {
+        const diff = stats.open_reports - prev.open_reports;
+        this.showRtToast(`🚨 +${diff} новых жалоб`);
+        document.getElementById('reports-dot').style.display = 'block';
+      }
+    }
+
+    this.prevStats = stats;
+  },
+
+  handleReports(rep) {
+    const count = rep.total || 0;
+    const dot = document.getElementById('reports-dot');
+    if (count > 0) dot.style.display = 'block';
+    else dot.style.display = 'none';
+
+    if (this.prevReportCount !== null && count > this.prevReportCount) {
+      this.showRtToast(`🚨 +${count - this.prevReportCount} новых жалоб`);
+    }
+    this.prevReportCount = count;
+  },
+
+  handleChPending(ch) {
+    const total = ch.total || 0;
+    const dot = document.getElementById('ch-verify-dot');
+    dot.style.display = total > 0 ? 'block' : 'none';
+    document.getElementById('ch-tab-pending').textContent = '🕐 Ожидают (' + total + ')';
+
+    if (this.prevChPending !== null && total > this.prevChPending) {
+      this.showRtToast(`💙 +${total - this.prevChPending} заявок на верификацию`);
+    }
+    this.prevChPending = total;
+  },
+
+  detectNewUsers(users) {
+    users.forEach(u => {
+      if (!this.newUserIds.has(u.id)) {
+        if (this.newUserIds.size > 0) {
+          // Помечаем строку как новую после рендера
+          setTimeout(() => {
+            const rows = document.querySelectorAll('#users-table-body tr');
+            rows.forEach(row => {
+              const btn = row.querySelector(`[onclick*="openUserModal(${u.id})"]`);
+              if (btn) row.classList.add('rt-new-row');
+            });
+          }, 80);
+        }
+        this.newUserIds.add(u.id);
+      }
+    });
+  },
+
+  setConnected(ok) {
+    this.connected = ok;
+    const dot = document.getElementById('rt-dot');
+    const ind = document.getElementById('rt-indicator');
+    if (ok) {
+      dot.classList.remove('error');
+      ind.title = 'Данные обновляются в реальном времени';
+    } else {
+      dot.classList.add('error');
+      ind.title = 'Нет связи с сервером';
+    }
+  },
+
+  showRtToast(msg) {
+    const el = document.getElementById('rt-toast-new');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(this.toastTimer);
+    this.toastTimer = setTimeout(() => el.classList.remove('show'), 3500);
+  }
+};
+
+// Запускаем RT после первой загрузки дашборда
+const _origLoadDashboard = loadDashboard;
+loadDashboard = async function() {
+  await _origLoadDashboard();
+  if (!RT.timer) RT.start();
+};
+
+// Также запускаем если RT ещё не стартовал при переходе на другие страницы
+const _origShowPage = showPage;
+showPage = function(name) {
+  _origShowPage(name);
+  if (!RT.timer) RT.start();
+};
 </script>
 </body>
 </html>
