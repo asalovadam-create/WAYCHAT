@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="csrf-token" content="__CSRF_TOKEN__">
 <title>WayChat Admin</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -341,15 +342,15 @@ let chTab = 'pending';
 function showPage(name) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
-  const navMap = {dashboard:'Дашборд',users:'Пользователи',channels:'Каналы',reports:'Жалобы',logs:'Логи'};
+  document.getElementById('page-' + name)?.classList.add('active');
   document.querySelectorAll('.nav-item').forEach(n => {
     const txt = n.textContent.trim();
     if ((name==='dashboard'&&txt.includes('Дашборд'))||(name==='users'&&txt.includes('Пользователи'))||
-        (name==='channels'&&txt.includes('Каналы'))||(name==='reports'&&txt.includes('Жалобы'))||(name==='logs'&&txt.includes('Логи')))
+        (name==='channels'&&txt.includes('Каналы'))||(name==='reports'&&txt.includes('Жалобы'))||
+        (name==='logs'&&txt.includes('Логи'))||(name==='broadcast'&&txt.includes('Рассылка')))
       n.classList.add('active');
   });
-  const titles = {dashboard:'Дашборд',users:'Пользователи',channels:'Верификация каналов',reports:'Жалобы',logs:'Логи'};
+  const titles = {dashboard:'Дашборд',users:'Пользователи',channels:'Верификация каналов',reports:'Жалобы',logs:'Логи',broadcast:'Рассылка'};
   document.getElementById('page-title').textContent = titles[name] || name;
   currentPageName = name;
   if (name==='dashboard') loadDashboard();
@@ -357,11 +358,25 @@ function showPage(name) {
   if (name==='channels') loadChRequests();
   if (name==='reports') loadReports();
   if (name==='logs') loadLogs();
+  if (name==='broadcast') setTimeout(loadRegChart, 50);
 }
 
 // ═══════ API ═══════
-async function api(url) { const r=await fetch(url); if(!r.ok) throw new Error(r.status); return r.json(); }
-async function apiPost(url,data) { const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}); return r.json(); }
+function _csrf() { return document.querySelector('meta[name="csrf-token"]')?.content || ''; }
+async function api(url) {
+  const r = await fetch(url, {credentials:'same-origin'});
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+async function apiPost(url, data) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json', 'X-CSRFToken': _csrf()},
+    credentials: 'same-origin',
+    body: JSON.stringify(data)
+  });
+  return r.json();
+}
 
 // ═══════ DASHBOARD ═══════
 async function loadDashboard() {
@@ -400,7 +415,7 @@ function renderStats(s) {
 function renderDashReports(reports) {
   const el = document.getElementById('dash-reports');
   if (!reports.length) { el.innerHTML='<div class="empty"><div class="empty-icon">🎉</div>Жалоб нет</div>'; return; }
-  el.innerHTML = reports.map(r=>`<div class="report-card"><div class="rc-head"><div class="rc-title">@${esc(r.reporter.username)} → @${esc(r.target.username)}</div><span class="badge badge-red">${r.reason}</span></div><div class="rc-comment">${r.comment||'—'}</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><span style="font-size:12px;color:var(--text2)">${fmtDate(r.date)}</span><button class="btn btn-green" onclick="openUserModal(${r.target.id})">Смотреть</button></div></div>`).join('');
+  el.innerHTML = reports.map(r=>`<div class="report-card"><div class="rc-head"><div class="rc-title">@${esc(r.reporter.username)} → @${esc(r.target.username)}</div><span class="badge badge-red">${esc(r.reason)}</span></div><div class="rc-comment">${esc(r.comment||'—')}</div><div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px"><span style="font-size:12px;color:var(--text2)">${fmtDate(r.date)}</span><button class="btn btn-green" onclick="openUserModal(${r.target.id})">Смотреть</button></div></div>`).join('');
 }
 
 function renderDashLogs(logs) {
@@ -408,7 +423,7 @@ function renderDashLogs(logs) {
   if (!logs.length) { el.innerHTML='<div class="empty"><div class="empty-icon">📋</div>Нет действий</div>'; return; }
   const icons={ban_permanent:'🚫',ban_temp:'⏱',unban:'✅',verify:'✅',unverify:'❌',report_resolved:'🔍',verify_channel:'💙',reject_channel_verify:'❌'};
   el.innerHTML='<div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:8px 12px">'+
-    logs.map(l=>`<div class="log-entry"><div class="log-icon">${icons[l.action]||'📋'}</div><div class="log-text"><div class="lt-main">${l.admin} → ${l.action}${l.target?' @'+l.target:''}</div><div class="lt-sub">${l.details?l.details+' · ':''}${fmtDate(l.date)}</div></div></div>`).join('')+'</div>';
+    logs.map(l=>`<div class="log-entry"><div class="log-icon">${icons[l.action]||'📋'}</div><div class="log-text"><div class="lt-main">${esc(l.admin)} → ${esc(l.action)}${l.target?' @'+esc(l.target):''}</div><div class="lt-sub">${l.details?esc(l.details)+' · ':''}${fmtDate(l.date)}</div></div></div>`).join('')+'</div>';
 }
 
 // ═══════ CHANNEL VERIFY ═══════
@@ -721,7 +736,7 @@ async function loadLogs() {
   try {
     const d=await api(`/admin/api/logs?page=${logsPage}`);
     const icons={ban_permanent:'🚫',ban_temp:'⏱',unban:'✅',verify:'✅',unverify:'❌',verify_channel:'💙',reject_channel_verify:'❌',unverify_channel:'⚪'};
-    el.innerHTML=d.logs.map(l=>`<div class="log-entry"><div class="log-icon">${icons[l.action]||'📋'}</div><div class="log-text"><div class="lt-main"><b>${esc(l.admin)}</b> → ${esc(l.action)}${l.target?' — @'+esc(l.target):''}</div><div class="lt-sub">${l.details||''} · ${fmtDate(l.date)}</div></div></div>`).join('')||'<div class="empty"><div class="empty-icon">📋</div>Логов нет</div>';
+    el.innerHTML=d.logs.map(l=>`<div class="log-entry"><div class="log-icon">${icons[l.action]||'📋'}</div><div class="log-text"><div class="lt-main"><b>${esc(l.admin)}</b> → ${esc(l.action)}${l.target?' — @'+esc(l.target):''}</div><div class="lt-sub">${esc(l.details||'')} · ${fmtDate(l.date)}</div></div></div>`).join('')||'<div class="empty"><div class="empty-icon">📋</div>Логов нет</div>';
   } catch(e){el.innerHTML='<div style="color:var(--red);padding:24px">Ошибка</div>';}
 }
 
@@ -789,12 +804,6 @@ async function loadRegChart() {
       ctx.fillText(v, x, y - 3);
     }
   });
-}
-
-const _origShowPage = showPage;
-function showPage(name) {
-  _origShowPage(name);
-  if (name === 'broadcast') setTimeout(loadRegChart, 50);
 }
 
 loadDashboard();
