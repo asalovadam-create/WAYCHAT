@@ -23,9 +23,10 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from flask import (
-    Flask, render_template, request, redirect,
+    Flask, render_template, render_template_string, request, redirect,
     url_for, flash, jsonify, session, make_response, send_from_directory
 )
+import secrets as _secrets
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import (
     LoginManager, UserMixin, login_user, logout_user,
@@ -180,7 +181,7 @@ app.config.update(
         'pool_timeout':   30,
         'connect_args':   {'connect_timeout': 10},
     },
-    SECRET_KEY               = os.environ.get('SECRET_KEY', 'waychat-2026-ultra-secret-key-change-me'),
+    SECRET_KEY               = os.environ.get('SECRET_KEY') or __import__('sys').exit('FATAL: SECRET_KEY env variable not set! Add it in Render → Environment.'),
     MAX_CONTENT_LENGTH       = 50 * 1024 * 1024,   # 50MB — достаточно для видео-моментов
     SESSION_COOKIE_SAMESITE  = 'Lax',
     SESSION_COOKIE_SECURE    = True,    # HTTPS Render
@@ -358,9 +359,13 @@ with app.app_context():
                     name     VARCHAR(120) DEFAULT '',
                     username VARCHAR(80)  DEFAULT '',
                     expires  DOUBLE PRECISION NOT NULL,
-                    is_login BOOLEAN DEFAULT FALSE
+                    is_login BOOLEAN DEFAULT FALSE,
+                    attempts INTEGER DEFAULT 0
                 )
             '''))
+            db.session.execute(text(
+                'ALTER TABLE pending_code ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0'
+            ))
             db.session.commit()
             print('✅ pending_code table ready')
         except Exception as _tbl_e:
@@ -895,6 +900,7 @@ class PendingCode(db.Model):
     username = db.Column(db.String(80),  default='')
     expires  = db.Column(db.Float,       nullable=False)
     is_login = db.Column(db.Boolean,     default=False)
+    attempts = db.Column(db.Integer,     default=0)  # счётчик неверных попыток
 
     @classmethod
     def set(cls, phone, code, name='', username='', is_login=False):
@@ -902,9 +908,10 @@ class PendingCode(db.Model):
         if obj:
             obj.code = code; obj.name = name; obj.username = username
             obj.expires = time.time() + 600; obj.is_login = is_login
+            obj.attempts = 0  # сбрасываем попытки при новом коде
         else:
             obj = cls(phone=phone, code=code, name=name, username=username,
-                      expires=time.time()+600, is_login=is_login)
+                      expires=time.time()+600, is_login=is_login, attempts=0)
             db.session.add(obj)
         db.session.commit()
         return obj
@@ -1004,15 +1011,27 @@ def _get_ip():
     return (request.remote_addr or '')[:64]
 
 
-@app.before_request
-def _ensure_clean_session():
-    """Откатываем только при необходимости — не на каждый запрос (perf)"""
-    pass
+# ── ADMIN_TOKEN: второй фактор для входа в /admin ──────────────────
+# Выставь в Render → Environment: ADMIN_TOKEN=<длинная_случайная_строка>
+_ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', '').strip()
 
 
 @app.before_request
-def _check_ban_and_ip():
-    """Снимаем временный бан если время вышло; обновляем IP"""
+def _security_before():
+    """CSRF-токен + проверка CSRF admin POST + бан-проверка"""
+    # 1. Генерируем CSRF токен в сессию
+    if 'csrf_token' not in session:
+        session['csrf_token'] = _secrets.token_hex(32)
+
+    # 2. CSRF-защита для всех admin API изменяющих запросов
+    if request.method in ('POST', 'PUT', 'DELETE', 'PATCH') and request.path.startswith('/admin/api/'):
+        token    = (request.headers.get('X-CSRFToken') or '').strip()
+        expected = session.get('csrf_token', '')
+        if not token or not expected or not hmac_module.compare_digest(token, expected):
+            app.logger.warning(f'[CSRF] Admin blocked from {_get_ip()}')
+            return jsonify({'error': 'CSRF validation failed'}), 403
+
+    # 3. Снимаем временный бан + обновляем IP
     if current_user.is_authenticated:
         try:
             u = current_user._get_current_object()
@@ -1181,7 +1200,10 @@ def send_code():
         )
 
         print(f'\n{"="*50}')
-        print(f'📱 КОД для {phone}: {code}')
+        if app.debug:
+            print(f'📱 КОД для {phone}: {code}')
+        else:
+            print(f'📱 Код отправлен: {phone[:3]}***')
         print(f'{"="*50}\n')
 
         return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
@@ -1192,7 +1214,7 @@ def send_code():
 
 
 @app.route('/verify_code', methods=['POST'])
-@ip_rate_limit('verify_code', max_calls=10, window_sec=60)
+@ip_rate_limit('verify_code', max_calls=5, window_sec=60)
 def verify_code():
     try:
         data  = request.get_json() if request.is_json else request.form
@@ -1208,8 +1230,18 @@ def verify_code():
         if time.time() > pending.expires:
             PendingCode.delete(phone)
             return jsonify({'success': False, 'error': 'Код истёк, запросите новый'}), 400
+
+        # Неверный код — счётчик попыток; после 5 удаляем код
         if pending.code != code:
-            return jsonify({'success': False, 'error': 'Неверный код'}), 400
+            pending.attempts = (pending.attempts or 0) + 1
+            if pending.attempts >= 5:
+                PendingCode.delete(phone)
+                return jsonify({'success': False, 'error': 'Слишком много попыток. Запросите новый код'}), 429
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+            return jsonify({'success': False, 'error': f'Неверный код. Осталось попыток: {5 - pending.attempts}'}), 400
 
         PendingCode.delete(phone)
 
@@ -1283,7 +1315,10 @@ def register_step1():
 
         code    = _gen_code()
         PendingCode.set(phone=phone, code=code, name=name, username=username, is_login=False)
-        print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
+        if app.debug:
+            print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
+        else:
+            print(f'📱 Код отправлен: {phone[:3]}***')
         return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
 
     except Exception as e:
@@ -1398,6 +1433,18 @@ def add_cache_headers(response):
     response.headers['X-XSS-Protection']        = '1; mode=block'
     if not IS_DEV:
         response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+    # Content-Security-Policy — блокирует XSS и инъекции внешних скриптов
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.socket.io https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob: https://res.cloudinary.com; "
+        "media-src 'self' blob: https://res.cloudinary.com; "
+        "connect-src 'self' wss: https://res.cloudinary.com; "
+        "font-src 'self' data:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self';"
+    )
     return response
 
 
@@ -1894,7 +1941,9 @@ def create_group():
     if 'avatar' in request.files:
         file = request.files['avatar']
         if file and file.filename:
-            ext      = (file.filename.rsplit('.', 1)[-1] if '.' in file.filename else 'jpg').lower()
+            ext = (file.filename.rsplit('.', 1)[-1] if '.' in file.filename else '').lower()
+            if ext not in {'jpg', 'jpeg', 'png', 'gif', 'webp'}:
+                return jsonify({'success': False, 'error': 'Недопустимый формат файла'}), 400
             filename = f'group_{uuid.uuid4().hex[:10]}.{ext}'
             filepath = os.path.join(GROUP_AVA_FOLDER, filename)
             file.save(filepath)
@@ -4123,7 +4172,11 @@ def require_admin(f):
     @functools.wraps(f)
     def decorated(*args, **kwargs):
         if not current_user.is_authenticated or not current_user.is_super_admin:
+            app.logger.warning(f'[ADMIN] Unauthorised attempt ip={_get_ip()} user={getattr(current_user,"id","anon")}')
             return jsonify({'error': 'Forbidden'}), 403
+        # Проверяем что admin прошёл token-аутентификацию в этой сессии
+        if session.get('admin_verified') != current_user.id:
+            return jsonify({'error': 'Admin session not verified'}), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -4145,8 +4198,43 @@ def _admin_log(action, target_id=None, details=''):
 @login_required
 def admin_panel():
     if not current_user.is_super_admin:
+        app.logger.warning(f'[ADMIN] Non-admin tried /admin user={current_user.id} ip={_get_ip()}')
         return redirect(url_for('index'))
-    return send_from_directory(os.path.join(BASE_DIR, 'static'), 'admin.html')
+
+    # Второй фактор — ADMIN_TOKEN из env
+    # Доступ: /admin?token=<ADMIN_TOKEN>
+    # После проверки флаг хранится в сессии — повторно вводить не нужно
+    if _ADMIN_TOKEN:
+        if session.get('admin_verified') != current_user.id:
+            token = request.args.get('token', '').strip()
+            if not token or not hmac_module.compare_digest(token, _ADMIN_TOKEN):
+                app.logger.warning(f'[ADMIN] Wrong token from ip={_get_ip()}')
+                return (
+                    '<html><body style="font-family:sans-serif;display:flex;align-items:center;'
+                    'justify-content:center;height:100vh;margin:0;background:#0a0a0f;color:#fff">'
+                    '<div style="text-align:center">'
+                    '<div style="font-size:48px;margin-bottom:16px">🔒</div>'
+                    '<h2>403 — Доступ запрещён</h2>'
+                    '<p style="color:rgba(255,255,255,0.5);margin-top:8px">Неверный токен администратора</p>'
+                    '</div></body></html>'
+                ), 403
+            session['admin_verified'] = current_user.id
+            session.modified = True
+            app.logger.info(f'[ADMIN] Admin {current_user.id} verified from {_get_ip()}')
+    else:
+        # ADMIN_TOKEN не выставлен — разрешаем доступ только суперадмину (без второго фактора)
+        session['admin_verified'] = current_user.id
+
+    # Инжектируем CSRF-токен в HTML
+    admin_path = os.path.join(BASE_DIR, 'static', 'admin.html')
+    try:
+        with open(admin_path, 'r', encoding='utf-8') as f:
+            html = f.read()
+        csrf = session.get('csrf_token', '')
+        html = html.replace('__CSRF_TOKEN__', csrf)
+        return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    except Exception:
+        return send_from_directory(os.path.join(BASE_DIR, 'static'), 'admin.html')
 
 
 @app.route('/admin/api/stats')
