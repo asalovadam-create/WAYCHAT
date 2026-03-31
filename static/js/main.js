@@ -1002,10 +1002,21 @@ let savedContacts      = JSON.parse(localStorage.getItem('waychat_contacts') || 
 let contactCustomNames = JSON.parse(localStorage.getItem('waychat_contact_names') || '{}');
 
 // Данные пользователя
+// PATCHED: берём из window.currentUser (инжектится Flask шаблоном),
+// затем из localStorage кэша, затем дефолт
 const currentUser = Object.assign({
     id: 0, name: 'Пользователь', username: 'user',
     avatar: '/static/default_avatar.png', bio: '', phone: ''
-}, window.currentUser || {});
+}, (() => {
+    // 1. Из Flask шаблона (приоритет)
+    if (window.currentUser && window.currentUser.id) return window.currentUser;
+    // 2. Из localStorage кэша
+    try {
+        const c = localStorage.getItem('waychat_user_cache');
+        if (c) { const p = JSON.parse(c); if (p && p.id) return p; }
+    } catch(e) {}
+    return {};
+})());
 
 // WebRTC конфиг
 const rtcConfig = {
@@ -3295,13 +3306,13 @@ async function loadChats(force = false) {
     }
 
     const controller = new AbortController();
-    // FIXED: таймаут уменьшен до 8 сек + принудительный сброс флага
+    // PATCHED: таймаут увеличен до 45 сек — Render Free засыпает и просыпается ~30-50с
     const tid = setTimeout(() => {
         controller.abort();
         _chatsLoading = false;
         if (!recentChats.length) _showChatsError();
         _scheduleChatsRetry();
-    }, 8000);
+    }, 45000);
 
     try {
         const res = await fetch('/get_my_chats', {
@@ -3890,7 +3901,7 @@ async function apiFetch(url, options = {}, _retry = 0) {
     if (!_isQuiet) wcProgress?.start();
     const headers = { ...(options.headers || {}) };
     const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 15000); // 15s таймаут
+    const tid = setTimeout(() => controller.abort(), 50000); // PATCHED: 50s — для Render Free wake-up
     try {
         const res = await fetch(url, { ...options, headers: {...headers, 'Accept-Encoding': 'gzip, deflate'}, credentials: 'include', signal: controller.signal });
         clearTimeout(tid);
@@ -9761,7 +9772,26 @@ async function doLogout() {
     });
 })();
 
-window.onload = init;
+// PATCHED: wake-up пинг перед init() — будит Render Free если сервер спит
+window.onload = async function() {
+    // Показываем splash пока сервер просыпается
+    const _splash = document.getElementById('app');
+    if (_splash) _splash.style.opacity = '1';
+
+    try {
+        const _wakeStart = Date.now();
+        // Ждём /health максимум 60 секунд
+        await Promise.race([
+            fetch('/health', { credentials: 'include', cache: 'no-store' }),
+            new Promise(r => setTimeout(r, 60000))
+        ]);
+        console.log('[WayChat] Server ready in', Date.now() - _wakeStart, 'ms');
+    } catch(e) {
+        console.warn('[WayChat] Wake-up ping failed, continuing anyway');
+    }
+
+    init();
+};
 // ══════════════════════════════════════════════════════════════════
 //  🎵 MUSIC PLAYER v4 — Background play, Canvas EQ, Long video
 // ══════════════════════════════════════════════════════════════════
