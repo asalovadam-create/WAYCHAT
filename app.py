@@ -2308,7 +2308,18 @@ def upload_avatar():
     file.seek(0)
     url = upload_to_cloudinary(file, folder='waychat/avatars')
     if not url:
-        return jsonify({'success': False, 'error': 'Ошибка загрузки в Cloudinary'}), 500
+        # FIX: локальный fallback если Cloudinary не установлен / не настроен
+        try:
+            import os as _os
+            ext   = _os.path.splitext(file.filename or 'ava.jpg')[1] or '.jpg'
+            fname = f'ava_{uid}_{int(time.time())}{ext}'
+            path  = _os.path.join(AVATARS_FOLDER, fname)
+            file.seek(0)
+            file.save(path)
+            url = f'/static/uploads/avatars/{fname}'
+        except Exception as ex:
+            app.logger.error(f'Avatar local save error: {ex}')
+            return jsonify({'success': False, 'error': 'Ошибка сохранения файла'}), 500
 
     u.avatar = url
     db.session.commit()
@@ -2357,17 +2368,36 @@ def _do_async_upload(file_bytes, mime, folder, temp_id, chat_id, uid, uname, msg
     """Фоновая загрузка Cloudinary + WebSocket уведомление"""
     with app.app_context():
         try:
-            import cloudinary, cloudinary.uploader
-            cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
-            api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
-            api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
-            if not all([cloud_name, api_key, api_secret]):
-                raise Exception('Cloudinary not configured')
-            cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
-            result = cloudinary.uploader.upload(io.BytesIO(file_bytes), folder=folder, resource_type='auto')
-            url = result.get('secure_url', '')
+            url = ''
+            # Пробуем Cloudinary
+            try:
+                import cloudinary, cloudinary.uploader
+                cloud_name = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
+                api_key    = os.environ.get('CLOUDINARY_API_KEY', '').strip()
+                api_secret = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
+                if all([cloud_name, api_key, api_secret]):
+                    cloudinary.config(cloud_name=cloud_name, api_key=api_key, api_secret=api_secret, secure=True)
+                    result = cloudinary.uploader.upload(io.BytesIO(file_bytes), folder=folder, resource_type='auto')
+                    url = result.get('secure_url', '')
+            except Exception as _ce:
+                app.logger.warning(f'Cloudinary skip in async upload: {_ce}')
+
+            # FIX: локальный fallback если Cloudinary недоступен
             if not url:
-                raise Exception('Empty URL from Cloudinary')
+                try:
+                    import mimetypes as _mt
+                    ext = _mt.guess_extension(mime or 'application/octet-stream') or '.bin'
+                    if ext == '.jpe': ext = '.jpg'
+                    fname = f'media_{uid}_{int(time.time())}_{temp_id[:8] if temp_id else uuid.uuid4().hex[:6]}{ext}'
+                    path  = os.path.join(MESSAGES_FOLDER, fname)
+                    with open(path, 'wb') as fout:
+                        fout.write(file_bytes)
+                    url = f'/static/uploads/messages/{fname}'
+                except Exception as _le:
+                    raise Exception(f'Local save failed: {_le}')
+
+            if not url:
+                raise Exception('Upload failed: no URL')
 
             _pending_uploads[temp_id] = {'status': 'done', 'url': url, 'ts': time.monotonic()}
 
@@ -2477,7 +2507,18 @@ def upload_media():
     file.seek(0)
     url = upload_to_cloudinary(file, folder='waychat/messages')
     if not url:
-        return jsonify({'success': False, 'error': 'Ошибка загрузки файла'}), 500
+        # FIX: локальный fallback если Cloudinary не установлен
+        try:
+            import os as _os
+            ext   = _os.path.splitext(file.filename or 'media')[1] or '.bin'
+            fname = f'msg_{current_user.id}_{int(time.time())}_{uuid.uuid4().hex[:6]}{ext}'
+            path  = _os.path.join(MESSAGES_FOLDER, fname)
+            file.seek(0)
+            file.save(path)
+            url = f'/static/uploads/messages/{fname}'
+        except Exception as ex:
+            app.logger.error(f'Media local save error: {ex}')
+            return jsonify({'success': False, 'error': 'Ошибка загрузки файла'}), 500
     return jsonify({'success': True, 'url': url, 'type': file_type})
 
 
