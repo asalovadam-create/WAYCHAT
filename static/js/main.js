@@ -2543,7 +2543,274 @@ body {
 @keyframes toastOut { to{opacity:0;transform:translateY(-8px) scale(0.96);} }
 .animate-up  { animation:slideUp 0.3s ease; }
 
-/* ════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════════════════
+   TG-STYLE VOICE MESSAGE PLAYER
+   ══════════════════════════════════════════════════════════ */
+.tg-voice-msg {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 220px;
+    max-width: 280px;
+    padding: 4px 2px;
+    user-select: none;
+}
+.tg-voice-play-btn {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    border: none;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, transform 0.12s;
+    color: white;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+.tg-voice-play-btn:active { transform: scale(0.88); background: rgba(255,255,255,0.28); }
+.tg-voice-play-btn svg { width: 16px; height: 16px; }
+.tg-voice-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.tg-voice-waveform {
+    display: flex;
+    align-items: center;
+    gap: 1.5px;
+    height: 28px;
+    cursor: pointer;
+    padding: 2px 0;
+}
+.wv-bar {
+    width: 2px;
+    border-radius: 1px;
+    background: rgba(255,255,255,0.28);
+    flex-shrink: 0;
+    transition: background 0.08s, height 0.15s ease;
+    will-change: background;
+}
+.wv-bar.wv-played {
+    background: var(--accent) !important;
+}
+.tg-voice-footer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: rgba(255,255,255,0.5);
+    line-height: 1;
+}
+.tg-voice-dur {
+    font-variant-numeric: tabular-nums;
+    min-width: 28px;
+}
+.tg-voice-speed-btn {
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: rgba(255,255,255,0.6);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 5px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: background 0.12s, color 0.12s;
+    line-height: 1.4;
+    -webkit-tap-highlight-color: transparent;
+}
+.tg-voice-speed-btn:active { background: rgba(255,255,255,0.18); }
+.tg-voice-time {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+/* Outgoing voice — accent play button */
+.msg-row.out .tg-voice-play-btn {
+    background: rgba(255,255,255,0.25);
+}
+.msg-row.out .wv-bar {
+    background: rgba(255,255,255,0.35);
+}
+.msg-row.out .wv-bar.wv-played {
+    background: rgba(255,255,255,0.9) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   VIDEO BUBBLE — blurred poster background
+   ══════════════════════════════════════════════════════════ */
+.video-bubble-wrap {
+    overflow: hidden;
+    border-radius: 14px;
+    max-width: 280px;
+    background: #111;
+    position: relative;
+    border: none;
+    cursor: pointer;
+}
+.video-bubble-wrap video {
+    display: block;
+    width: 100%;
+    max-height: 320px;
+    object-fit: cover;
+    border: none;
+    outline: none;
+    position: relative;
+    z-index: 1;
+}
+.video-blur-poster {
+    position: absolute;
+    inset: 0;
+    background-size: cover;
+    background-position: center;
+    filter: blur(18px) brightness(0.55) saturate(1.2);
+    -webkit-filter: blur(18px) brightness(0.55) saturate(1.2);
+    transform: scale(1.08);
+    z-index: 0;
+    transition: opacity 0.3s ease;
+}
+.video-bubble-wrap:hover .video-blur-poster {
+    opacity: 0.7;
+}
+.video-play-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    pointer-events: none;
+}
+.video-play-btn {
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.52);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1.5px solid rgba(255,255,255,0.18);
+    transition: transform 0.15s, background 0.15s;
+}
+.video-bubble-wrap:hover .video-play-btn {
+    transform: scale(1.08);
+    background: rgba(0,0,0,0.68);
+}
+
+/* ══════════════════════════════════════════════════════════
+   CHAT SKELETON LOADING
+   ══════════════════════════════════════════════════════════ */
+.chat-skeleton-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    animation: wcSkPulse 1.5s ease-in-out infinite;
+}
+.chat-sk-ava {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    flex-shrink: 0;
+}
+.chat-sk-lines {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.chat-sk-line {
+    height: 10px;
+    border-radius: 5px;
+    background: rgba(255,255,255,0.06);
+}
+.chat-sk-line.short { width: 55%; }
+.chat-sk-line.shorter { width: 35%; }
+@keyframes wcSkPulse {
+    0%,100% { opacity: 1; }
+    50%      { opacity: 0.45; }
+}
+
+/* ══════════════════════════════════════════════════════════
+   SMOOTH SCROLL BUTTON
+   ══════════════════════════════════════════════════════════ */
+#wc-scroll-btn {
+    transition: opacity 0.25s cubic-bezier(0.4,0,0.2,1), transform 0.25s cubic-bezier(0.34,1.56,0.64,1);
+    will-change: opacity, transform;
+}
+#wc-scroll-btn.hidden {
+    opacity: 0 !important;
+    transform: scale(0.7) translateY(8px) !important;
+    pointer-events: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════
+   MESSAGE SEND ANIMATION IMPROVEMENT
+   ══════════════════════════════════════════════════════════ */
+@keyframes msgSlideIn {
+    0%   { opacity: 0; transform: translateY(16px) scale(0.96); }
+    55%  { opacity: 1; transform: translateY(-2px) scale(1.005); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-msg {
+    animation: msgSlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+}
+.animate-msg.out {
+    animation: msgSlideIn 0.26s cubic-bezier(0.34, 1.2, 0.64, 1) both;
+    transform-origin: bottom right;
+}
+.animate-msg.in {
+    animation: msgSlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: bottom left;
+}
+
+/* ══════════════════════════════════════════════════════════
+   CHAT LIST ITEM HOVER/ACTIVE TRANSITIONS
+   ══════════════════════════════════════════════════════════ */
+.chat-item {
+    transition: background 0.18s ease, transform 0.12s ease;
+    will-change: background;
+}
+.chat-item:active {
+    transform: scale(0.985);
+}
+
+/* ══════════════════════════════════════════════════════════
+   LOADING SPINNER
+   ══════════════════════════════════════════════════════════ */
+.wc-spinner {
+    width: 22px; height: 22px;
+    border: 2.5px solid rgba(255,255,255,0.15);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+/* ══════════════════════════════════════════════════════════
+   VOICE PREVIEW OVERLAY — TG Web style waveform
+   ══════════════════════════════════════════════════════════ */
+#voice-preview-overlay .vp-wv-bar {
+    width: 2.5px;
+    border-radius: 1.5px;
+    background: rgba(16,185,129,0.4);
+    transition: height 0.12s ease, background 0.08s;
+}
+#voice-preview-overlay .vp-wv-bar.vp-played {
+    background: var(--accent) !important;
+}
+
+/* ══════════════════════════════════════════════════════════
    DESKTOP LAYOUT — компактный двухколоночный (≥768px)
    Левая колонка: список чатов | Правая: открытый чат
    ════════════════════════════════════════════════════════ */
@@ -4667,6 +4934,9 @@ function buildMessageRow(msg, animate = true) {
     if (msg._optimistic) {
         row.dataset.optimistic = '1';
         row.dataset.content = msg.content || '';
+        // FIX VOICE: also track file_url for audio/video optimistic dedup
+        if (msg.file_url) row.dataset.fileUrl = msg.file_url;
+        if (msg.type === 'audio' || msg.type_msg === 'audio') row.dataset.msgType = 'audio';
     }
     if (animate) row.classList.add('animate-msg');
 
@@ -4801,17 +5071,17 @@ function buildMessageRow(msg, animate = true) {
         } else if (type === 'video') {
         const _vidId = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
         const _wrpId = 'wrp_' + _vidId;
-        const _vposter = msg.preview_url ? `poster="${msg.preview_url}"` : '';
-        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:pointer">
-            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="none" muted
-                   style="display:block;width:100%;max-height:380px;object-fit:cover;background:#111"
-                   oncanplay="(function(v){if(v._wct)return;v._wct=1;function _grab(){try{var cv=document.createElement('canvas');cv.width=v.videoWidth||320;cv.height=v.videoHeight||180;cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);var px=cv.getContext('2d').getImageData(0,0,8,8).data;var s=0;for(var i=0;i<px.length;i+=4)s+=px[i]+px[i+1]+px[i+2];if(s>400)v.setAttribute('poster',cv.toDataURL('image/jpeg',0.8));}catch(e){}}if(typeof v.requestVideoFrameCallback==='function'){v.requestVideoFrameCallback(_grab);}else{_grab();}})(this)"
-                   onclick="(function(v,w){if(!v)return;if(v.paused){document.querySelectorAll('#messages video').forEach(function(o){if(o!==v){o.pause();o.removeAttribute('controls');var ol=o.closest('.video-bubble-wrap');if(ol){var ob=ol.querySelector('.video-play-overlay');if(ob)ob.style.display='flex';}}});v.muted=false;v.removeAttribute('muted');v.controls=true;v.play();var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='none';}else{v.pause();var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';}})(document.getElementById('${_vidId}'),document.getElementById('${_wrpId}'))"
-                   onended="(function(v,w){v.removeAttribute('controls');v.muted=true;v.setAttribute('muted','');var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';})(this,document.getElementById('${_wrpId}'))"
-                   onerror="this.parentElement.innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
+        const _vidSrc = msg.file_url || '';
+        const _poster = msg.preview_url || '';
+        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster}')" style="cursor:pointer">
+            <video id="${_vidId}" src="${_vidSrc}" ${_poster ? `poster="${_poster}"` : ''} playsinline preload="metadata" muted
+                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:#111;pointer-events:none"
+                   onloadeddata="_grabVideoPoster('${_vidId}')"
+                   onerror="this.closest('.video-bubble-wrap').innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
+            ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}')"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}"></div>`}
             <div class="video-play-overlay">
                 <div class="video-play-btn">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="6 3 20 12 6 21 6 3"/></svg>
                 </div>
             </div>
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
@@ -4916,9 +5186,17 @@ function renderNewMessage(msg, animate = true) {
         const ck = currentChatType === 'group' ? `g_${currentPartnerId}` : `p_${currentPartnerId}`;
         if (messagesByChatCache[ck]) {
             // Dedup: never push if id already in cache
-            const _exists = messagesByChatCache[ck].messages.some(m =>
-                String(m.id) === String(msg.id) || (m._optimistic && m.content === msg.content && +m.sender_id === +msg.sender_id)
-            );
+            // FIX VOICE: also dedup by file_url for media messages
+            const _exists = messagesByChatCache[ck].messages.some(m => {
+                if (String(m.id) === String(msg.id)) return true;
+                if (m._optimistic && +m.sender_id === +msg.sender_id) {
+                    const mType = m.type || m.type_msg || 'text';
+                    const msgType = msg.type || msg.type_msg || 'text';
+                    if ((mType === 'audio' || mType === 'video') && m.file_url === msg.file_url) return true;
+                    if (mType === 'text' && m.content === msg.content) return true;
+                }
+                return false;
+            });
             if (!_exists) {
                 messagesByChatCache[ck].messages.push(msg);
                 clearTimeout(renderNewMessage._t);
@@ -5639,37 +5917,61 @@ const _wvCache = new Map(); // waveform height cache keyed by src URL
 function renderAudioPlayer(src, displayTime, isMe, isRead) {
     const uid = `au_${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
 
-    // Status icon (mountain)
+    // Status icon
     const _statusIcon = isMe
-        ? `<span class="status-icon" style="color:${isRead ? '#93c5fd' : 'rgba(255,255,255,0.6)'};display:inline-flex;align-items:center;vertical-align:middle">${isRead ? ICONS.checkDouble : ICONS.check}</span>`
+        ? `<span class="status-icon" style="color:${isRead ? '#93c5fd' : 'rgba(255,255,255,0.55)'};display:inline-flex;align-items:center;vertical-align:middle;margin-left:2px">${isRead ? ICONS.checkDouble : ICONS.check}</span>`
         : '';
 
-    // Initial bars — use cache if available, else random placeholders
+    // Waveform bars — 48 bars like TG Web
+    const N_BARS = 48;
     const _cached = _wvCache.get(src);
     const _bars = (_cached
-        ? _cached.map(h => `<div style="width:2px;background:rgba(255,255,255,${0.25+(h/26)*0.5});border-radius:1px;height:${h}px;transition:background 0.1s"></div>`)
-        : Array(30).fill(0).map(() => `<div style="width:2px;background:rgba(255,255,255,0.25);border-radius:1px;height:${Math.max(3,Math.floor(Math.random()*16))}px;transition:background 0.1s"></div>`)
+        ? _cached.map((h, i) => {
+            const norm = h / 26;
+            return `<div class="wv-bar" data-i="${i}" style="--bh:${h}px;height:${h}px"></div>`;
+          })
+        : Array(N_BARS).fill(0).map((_, i) => {
+            const h = Math.max(3, Math.floor(Math.random() * 20));
+            return `<div class="wv-bar" data-i="${i}" style="--bh:${h}px;height:${h}px"></div>`;
+          })
     ).join('');
 
     return `
-    <div class="audio-player" data-src="${src}" style="min-width:190px;max-width:250px">
-        <button class="audio-play-btn" onclick="toggleAudio('${uid}')">
-            <svg id="play-icon-${uid}" width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    <div class="tg-voice-msg" data-src="${src}" data-uid="${uid}" data-speed="1">
+        <button class="tg-voice-play-btn" onclick="toggleAudio('${uid}')" aria-label="Play">
+            <svg class="tg-voice-icon-play" id="play-icon-${uid}" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            <svg class="tg-voice-icon-pause" style="display:none" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
         </button>
-        <div class="audio-progress-wrap" style="flex:1;min-width:0">
-            <div class="audio-waveform" id="wv_${uid}" style="display:flex;align-items:center;gap:1.5px;height:24px;flex:1;cursor:pointer" onclick="seekAudio(event,'${uid}')">
+        <div class="tg-voice-body">
+            <div class="tg-voice-waveform" id="wv_${uid}" onclick="seekAudio(event,'${uid}')">
                 ${_bars}
             </div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-top:2px">
-                <div class="audio-dur" id="dur_${uid}" style="font-size:11px;color:rgba(255,255,255,0.55);line-height:1">0:00</div>
-                <div style="font-size:10.5px;color:rgba(255,255,255,0.55);display:inline-flex;align-items:center;gap:2px;line-height:1">${displayTime || ''}${_statusIcon}</div>
+            <div class="tg-voice-footer">
+                <span class="tg-voice-dur" id="dur_${uid}">0:00</span>
+                <button class="tg-voice-speed-btn" onclick="_cycleAudioSpeed('${uid}')" title="Скорость">1×</button>
+                <span class="tg-voice-time">${displayTime || ''}${_statusIcon}</span>
             </div>
         </div>
-        <audio id="${uid}" src="${src}"
+        <audio id="${uid}" src="${src}" preload="metadata"
             ontimeupdate="updateAudio('${uid}')"
             onended="onAudioEnd('${uid}')"
             onloadedmetadata="setAudioDur('${uid}');_loadWaveform('${uid}','${src}')"></audio>
     </div>`;
+}
+
+// Cycle playback speed: 1x → 1.5x → 2x → 0.5x → 1x
+function _cycleAudioSpeed(uid) {
+    const audio = document.getElementById(uid);
+    const wrap  = audio?.closest('.tg-voice-msg');
+    const btn   = wrap?.querySelector('.tg-voice-speed-btn');
+    if (!audio || !wrap || !btn) return;
+    const speeds = [1, 1.5, 2, 0.5];
+    const cur  = parseFloat(wrap.dataset.speed || '1');
+    const next = speeds[(speeds.indexOf(cur) + 1) % speeds.length];
+    wrap.dataset.speed = next;
+    audio.playbackRate = next;
+    btn.textContent = next === 1 ? '1×' : next + '×';
+    btn.style.background = next !== 1 ? 'rgba(255,255,255,0.18)' : 'rgba(255,255,255,0.08)';
 }
 
 
@@ -5684,29 +5986,35 @@ async function _loadWaveform(uid, src) {
         const decoded = await actx.decodeAudioData(buf);
         actx.close();
         const data = decoded.getChannelData(0);
-        const N    = 30;
+        const N    = 48; // 48 bars like TG Web
         const step = Math.floor(data.length / N);
         const hs   = [];
         for (let i = 0; i < N; i++) {
-            let mx = 0;
+            let rms = 0;
+            const start = i * step;
             for (let j = 0; j < step; j++) {
-                const v = Math.abs(data[i*step+j]||0);
-                if (v > mx) mx = v;
+                const v = data[start + j] || 0;
+                rms += v * v;
             }
-            hs.push(Math.max(3, Math.round(mx * 26)));
+            rms = Math.sqrt(rms / step);
+            hs.push(Math.max(3, Math.round(rms * 52)));
         }
-        _wvCache.set(src, hs);
-        _applyWvBars(uid, hs);
+        // Normalize to max 26px
+        const maxH = Math.max(...hs, 1);
+        const normalized = hs.map(h => Math.max(3, Math.round((h / maxH) * 26)));
+        _wvCache.set(src, normalized);
+        _applyWvBars(uid, normalized);
     } catch(e) {}
 }
 
 function _applyWvBars(uid, hs) {
     const wv = document.getElementById('wv_' + uid);
     if (!wv) return;
-    wv.querySelectorAll('div').forEach((bar, i) => {
+    const bars = wv.querySelectorAll('.wv-bar');
+    bars.forEach((bar, i) => {
         const h = hs[i] || 3;
-        bar.style.height     = h + 'px';
-        bar.style.background = 'rgba(255,255,255,' + (0.25 + (h/26)*0.5) + ')';
+        bar.style.setProperty('--bh', h + 'px');
+        bar.style.height = h + 'px';
     });
 }
 
@@ -5740,18 +6048,42 @@ async function drawWaveform(uid) {
 
 function toggleAudio(uid) {
     const audio = document.getElementById(uid);
-    const btn   = audio?.closest('.audio-player')?.querySelector('.audio-play-btn');
-    if (!audio || !btn) return;
+    const wrap  = audio?.closest('.tg-voice-msg') || audio?.closest('.audio-player');
+    const btn   = wrap?.querySelector('.tg-voice-play-btn') || wrap?.querySelector('.audio-play-btn');
+    if (!audio || !wrap) return;
+
+    // Pause all other audio players
+    document.querySelectorAll('audio').forEach(a => {
+        if (a === audio) return;
+        a.pause();
+        const w = a.closest('.tg-voice-msg') || a.closest('.audio-player');
+        if (!w) return;
+        const b = w.querySelector('.tg-voice-play-btn') || w.querySelector('.audio-play-btn');
+        const pi = w.querySelector('.tg-voice-icon-play');
+        const pa = w.querySelector('.tg-voice-icon-pause');
+        if (pi) pi.style.display = '';
+        if (pa) pa.style.display = 'none';
+        w.removeAttribute('data-playing');
+    });
+
     if (audio.paused) {
-        document.querySelectorAll('audio').forEach(a => {
-            if (a !== audio) { a.pause(); const b = a.closest('.audio-player')?.querySelector('.audio-play-btn'); if(b) b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>'; }
-        });
-        audio.play();
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+        // Restore speed
+        const spd = parseFloat(wrap.dataset.speed || '1');
+        audio.playbackRate = spd;
+        audio.play().catch(() => {});
+        wrap.dataset.playing = '1';
+        const pi = wrap.querySelector('.tg-voice-icon-play');
+        const pa = wrap.querySelector('.tg-voice-icon-pause');
+        if (pi) pi.style.display = 'none';
+        if (pa) pa.style.display = '';
         activeAudio = audio;
     } else {
         audio.pause();
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+        wrap.removeAttribute('data-playing');
+        const pi = wrap.querySelector('.tg-voice-icon-play');
+        const pa = wrap.querySelector('.tg-voice-icon-pause');
+        if (pi) pi.style.display = '';
+        if (pa) pa.style.display = 'none';
         activeAudio = null;
     }
 }
@@ -5763,14 +6095,16 @@ function updateAudio(uid) {
     const dur  = document.getElementById(`dur_${uid}`);
     const wv   = document.getElementById(`wv_${uid}`);
     if (dur) dur.textContent = fmtSec(audio.currentTime);
-    // Закрашиваем пройденные барики акцентом
+    // Highlight played bars with accent color
     if (wv) {
-        const bars     = wv.querySelectorAll('div');
+        const bars     = wv.querySelectorAll('.wv-bar');
         const progress = Math.floor(pct * bars.length);
         bars.forEach((bar, i) => {
-            bar.style.background = i < progress
-                ? `var(--accent)`
-                : `rgba(255,255,255,0.3)`;
+            if (i < progress) {
+                bar.classList.add('wv-played');
+            } else {
+                bar.classList.remove('wv-played');
+            }
         });
     }
 }
@@ -5782,19 +6116,31 @@ function setAudioDur(uid) {
 }
 
 function onAudioEnd(uid) {
-    const btn  = document.getElementById(uid)?.closest('.audio-player')?.querySelector('.audio-play-btn');
-    const fill = document.getElementById(`fill_${uid}`);
-    if (btn)  btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
-    if (fill) fill.style.width = '0%';
+    const audio = document.getElementById(uid);
+    const wrap  = audio?.closest('.tg-voice-msg') || audio?.closest('.audio-player');
+    if (wrap) {
+        wrap.removeAttribute('data-playing');
+        const pi = wrap.querySelector('.tg-voice-icon-play');
+        const pa = wrap.querySelector('.tg-voice-icon-pause');
+        if (pi) pi.style.display = '';
+        if (pa) pa.style.display = 'none';
+        // Reset waveform bars
+        wrap.querySelectorAll('.wv-bar').forEach(b => b.classList.remove('wv-played'));
+    }
+    // Reset duration display
+    const dur = document.getElementById(`dur_${uid}`);
+    if (dur && audio) dur.textContent = fmtSec(audio.duration);
     activeAudio = null;
 }
 
 function seekAudio(e, uid) {
     const audio = document.getElementById(uid);
     if (!audio?.duration) return;
-    const bar  = e.currentTarget;
-    const rect = bar.getBoundingClientRect();
-    audio.currentTime = ((e.clientX - rect.left) / rect.width) * audio.duration;
+    // Use getBoundingClientRect for accurate click position
+    const wv   = document.getElementById('wv_' + uid) || e.currentTarget;
+    const rect = wv.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = pct * audio.duration;
 }
 
 function fmtSec(s) {
@@ -5811,6 +6157,71 @@ function openFullImage(src) {
         <button style="position:absolute;top:max(20px,env(safe-area-inset-top));right:20px;background:rgba(255,255,255,0.1);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer">✕</button>
         <a href="${src}" download style="position:absolute;bottom:max(20px,0px);left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.1);border:none;color:white;font-size:13px;padding:10px 20px;border-radius:20px;text-decoration:none">⬇ Сохранить</a>`;
     document.body.appendChild(overlay);
+}
+
+// ══════════════════════════════════════════════════════════
+//  ВИДЕО МОДАЛЬНОЕ ОКНО (TG Web стиль)
+// ══════════════════════════════════════════════════════════
+function openVideoModal(src, poster) {
+    if (!src) return;
+    document.getElementById('_wc_vid_modal')?.remove();
+
+    const modal = document.createElement('div');
+    modal.id = '_wc_vid_modal';
+    modal.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:99999',
+        'background:rgba(0,0,0,0.96)',
+        'backdrop-filter:blur(20px)', '-webkit-backdrop-filter:blur(20px)',
+        'display:flex', 'align-items:center', 'justify-content:center',
+        'flex-direction:column',
+        'animation:fadeIn 0.22s ease',
+    ].join(';');
+
+    modal.innerHTML = `
+        <div style="position:relative;width:100%;max-width:860px;max-height:90vh;display:flex;align-items:center;justify-content:center">
+            <video id="_wc_vid_player" src="${src}" ${poster ? `poster="${poster}"` : ''}
+                controls playsinline
+                style="width:100%;max-height:85vh;object-fit:contain;border-radius:12px;outline:none;background:#000"
+                autoplay></video>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;margin-top:16px">
+            <button onclick="document.getElementById('_wc_vid_modal').remove()" style="background:rgba(255,255,255,0.12);border:0.5px solid rgba(255,255,255,0.15);color:white;font-size:14px;padding:10px 24px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;backdrop-filter:blur(8px)">✕ Закрыть</button>
+            <a href="${src}" download style="background:rgba(255,255,255,0.12);border:0.5px solid rgba(255,255,255,0.15);color:white;font-size:14px;padding:10px 24px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;text-decoration:none;backdrop-filter:blur(8px)">⬇ Сохранить</a>
+        </div>`;
+
+    // Close on backdrop click
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+    // Close on Escape
+    const _onKey = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', _onKey); } };
+    document.addEventListener('keydown', _onKey);
+
+    document.body.appendChild(modal);
+}
+
+// Grab first frame as poster for video bubbles (blur preview)
+function _grabVideoPoster(vidId) {
+    const v = document.getElementById(vidId);
+    if (!v || v._posterGrabbed) return;
+    v._posterGrabbed = true;
+    try {
+        const cv = document.createElement('canvas');
+        cv.width  = v.videoWidth  || 320;
+        cv.height = v.videoHeight || 180;
+        const ctx = cv.getContext('2d');
+        ctx.drawImage(v, 0, 0, cv.width, cv.height);
+        const dataUrl = cv.toDataURL('image/jpeg', 0.75);
+        // Apply as poster
+        v.setAttribute('poster', dataUrl);
+        // Apply as blurred background
+        const blrId = 'blr_' + vidId;
+        const blr = document.getElementById(blrId);
+        if (blr) blr.style.backgroundImage = `url('${dataUrl}')`;
+        // Store in wrap
+        const wrap = v.closest('.video-bubble-wrap');
+        if (wrap) wrap.dataset.poster = dataUrl;
+    } catch(e) {}
 }
 
 // ══════════════════════════════════════════════════════════
@@ -6042,7 +6453,21 @@ function onNewMessage(msg) {
             if (container) {
                 let reused = false;
                 container.querySelectorAll('[data-optimistic="1"]').forEach(el => {
-                    if (!reused && el.dataset.content === (msg.content || '')) {
+                    if (reused) return;
+                    const msgType = msg.type || msg.type_msg || 'text';
+                    const elType  = el.dataset.msgType || 'text';
+                    // FIX VOICE/MEDIA: match by file_url for audio/video/image messages
+                    if ((msgType === 'audio' || msgType === 'video' || msgType === 'image' || msgType === 'photo') && msg.file_url) {
+                        if (el.dataset.fileUrl === msg.file_url || elType === msgType) {
+                            el.setAttribute('data-msg-id', msg.id);
+                            el.removeAttribute('data-optimistic');
+                            el.removeAttribute('data-file-url');
+                            el.removeAttribute('data-msg-type');
+                            const si = el.querySelector('.status-icon');
+                            if (si) { si.innerHTML = ICONS.check; si.style.color = 'rgba(255,255,255,0.55)'; }
+                            reused = true;
+                        }
+                    } else if (el.dataset.content === (msg.content || '')) {
                         // Заменяем temp id на реальный — не удаляем элемент
                         el.setAttribute('data-msg-id', msg.id);
                         el.removeAttribute('data-optimistic');
@@ -6699,64 +7124,58 @@ function showVoicePreview(blob, ext, duration) {
     const blobUrl  = URL.createObjectURL(blob);
     const overlay  = document.createElement('div');
     overlay.id     = 'voice-preview-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.7);backdrop-filter:blur(16px);display:flex;align-items:flex-end;animation:fadeIn 0.2s';
+    overlay.style.cssText = 'position:fixed;inset:0;z-index:8500;background:rgba(0,0,0,0.75);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);display:flex;align-items:flex-end;animation:fadeIn 0.22s ease';
     overlay.innerHTML = `
-    <div style="background:rgba(14,14,20,0.97);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);width:100%;padding:20px 20px 20px">
-        <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 20px"></div>
-        <div style="font-size:15px;font-weight:700;text-align:center;margin-bottom:16px">Голосовое сообщение</div>
-
-        <!-- Плеер превью -->
-        <div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:14px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px">
-            <button id="preview-play-btn" onclick="toggleVoicePreview()" style="width:44px;height:44px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-                <svg id="preview-icon" width="16" height="16" viewBox="0 0 24 24" fill="black"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    <div style="background:rgba(14,14,22,0.98);border-radius:28px 28px 0 0;border-top:0.5px solid rgba(255,255,255,0.1);width:100%;padding:20px 20px calc(20px + env(safe-area-inset-bottom,0px));animation:slideUp 0.3s cubic-bezier(0.22,1,0.36,1)">
+        <div style="width:36px;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;margin:0 auto 18px"></div>
+        <div style="font-size:15px;font-weight:700;text-align:center;margin-bottom:18px;color:rgba(255,255,255,0.9)">Голосовое сообщение</div>
+        <div style="background:rgba(255,255,255,0.05);border:0.5px solid rgba(255,255,255,0.1);border-radius:22px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:12px">
+            <button id="preview-play-btn" onclick="toggleVoicePreview()" style="width:46px;height:46px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform 0.12s;-webkit-tap-highlight-color:transparent">
+                <svg id="preview-icon" width="18" height="18" viewBox="0 0 24 24" fill="black"><polygon points="6 3 20 12 6 21 6 3"/></svg>
             </button>
-            <div style="flex:1">
-                <div style="height:3px;background:rgba(255,255,255,0.15);border-radius:2px;overflow:hidden;margin-bottom:6px;cursor:pointer" onclick="seekVoicePreview(event)">
-                    <div id="preview-fill" style="height:100%;background:var(--accent);width:0%;transition:width 0.1s linear;border-radius:2px"></div>
+            <div style="flex:1;min-width:0">
+                <div id="preview-waveform" style="display:flex;align-items:center;gap:1.5px;height:28px;cursor:pointer;margin-bottom:5px" onclick="seekVoicePreviewWv(event)">
+                    ${Array(48).fill(0).map((_,i) => `<div class="vp-wv-bar" data-i="${i}" style="height:${Math.max(3,Math.floor(Math.random()*22))}px"></div>`).join('')}
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                    <span id="preview-time" style="font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums">0:00</span>
-                    <span style="font-size:12px;color:var(--text-2)">/${fmtSec(duration)}</span>
+                    <span id="preview-time" style="font-size:11px;color:rgba(255,255,255,0.5);font-variant-numeric:tabular-nums">0:00</span>
+                    <span style="font-size:11px;color:rgba(255,255,255,0.4)">/ ${fmtSec(duration)}</span>
                 </div>
             </div>
         </div>
-
-        <!-- Визуальные волны -->
-        <div id="preview-waveform" style="display:flex;align-items:center;gap:2px;height:36px;margin-bottom:20px;padding:0 4px;justify-content:center">
-            ${Array(40).fill(0).map(() => `<div style="width:2px;background:rgba(16,185,129,0.4);border-radius:1px;height:${Math.max(4,Math.floor(Math.random()*30))}px"></div>`).join('')}
-        </div>
-
-        <!-- Кнопки -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <button onclick="cancelVoicePreview()" style="padding:14px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:16px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">
-                ✕ Удалить
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <button onclick="cancelVoicePreview()" style="padding:14px;background:rgba(239,68,68,0.1);border:0.5px solid rgba(239,68,68,0.3);border-radius:18px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">
+                \u2715 \u0423\u0434\u0430\u043b\u0438\u0442\u044c
             </button>
-            <button onclick="sendVoicePreview()" style="padding:14px;background:var(--accent);border:none;border-radius:16px;color:black;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">
-                ➤ Отправить
+            <button id="preview-send-btn" onclick="sendVoicePreview()" style="padding:14px;background:var(--accent);border:none;border-radius:18px;color:black;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit">
+                \u27a4 \u041e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c
             </button>
         </div>
     </div>`;
     document.body.appendChild(overlay);
 
-    // Аудио для превью
     const audio = document.createElement('audio');
     audio.id    = 'preview-audio';
     audio.src   = blobUrl;
     audio.ontimeupdate = () => {
         if (!audio.duration) return;
-        const pct = (audio.currentTime / audio.duration) * 100;
-        const fill = document.getElementById('preview-fill');
+        const pct  = audio.currentTime / audio.duration;
         const time = document.getElementById('preview-time');
-        if (fill) fill.style.width = pct + '%';
         if (time) time.textContent = fmtSec(audio.currentTime);
+        const bars = document.querySelectorAll('#preview-waveform .vp-wv-bar');
+        const prog = Math.floor(pct * bars.length);
+        bars.forEach((b, i) => {
+            if (i < prog) b.classList.add('vp-played');
+            else b.classList.remove('vp-played');
+        });
     };
     audio.onended = () => {
         const icon = document.getElementById('preview-icon');
-        if (icon) icon.innerHTML = '<polygon points="5 3 19 12 5 21 5 3"/>';
+        if (icon) icon.innerHTML = '<polygon points="6 3 20 12 6 21 6 3"/>';
+        document.querySelectorAll('#preview-waveform .vp-wv-bar').forEach(b => b.classList.remove('vp-played'));
     };
     overlay.appendChild(audio);
 
-    // Рисуем реальную волну из blob
     _drawPreviewWaveform(blob);
     overlay._blobUrl = blobUrl;
     overlay._blob    = blob;
@@ -6771,17 +7190,25 @@ function _drawPreviewWaveform(blob) {
             const buf  = await ctx.decodeAudioData(e.target.result);
             ctx.close();
             const data = buf.getChannelData(0);
-            const bars = document.querySelectorAll('#preview-waveform div');
-            const step = Math.floor(data.length / bars.length);
-            bars.forEach((bar, i) => {
-                let max = 0;
+            const bars = document.querySelectorAll('#preview-waveform .vp-wv-bar');
+            if (!bars.length) return;
+            const N    = bars.length;
+            const step = Math.floor(data.length / N);
+            const hs   = [];
+            for (let i = 0; i < N; i++) {
+                let rms = 0;
+                const start = i * step;
                 for (let j = 0; j < step; j++) {
-                    const v = Math.abs(data[i * step + j] || 0);
-                    if (v > max) max = v;
+                    const v = data[start + j] || 0;
+                    rms += v * v;
                 }
-                const h = Math.max(3, Math.round(max * 36));
+                hs.push(Math.sqrt(rms / step));
+            }
+            const maxH = Math.max(...hs, 0.001);
+            bars.forEach((bar, i) => {
+                const norm = hs[i] / maxH;
+                const h = Math.max(3, Math.round(norm * 28));
                 bar.style.height = h + 'px';
-                bar.style.background = `rgba(16,185,129,${0.3 + max * 0.7})`;
             });
         } catch(ex) {}
     };
@@ -6806,6 +7233,16 @@ function seekVoicePreview(e) {
     if (!audio || !audio.duration) return;
     const bar = e.currentTarget;
     const pct = e.offsetX / bar.offsetWidth;
+    audio.currentTime = pct * audio.duration;
+}
+
+function seekVoicePreviewWv(e) {
+    const audio = document.getElementById('preview-audio');
+    if (!audio || !audio.duration) return;
+    const wv  = document.getElementById('preview-waveform');
+    if (!wv) return;
+    const rect = wv.getBoundingClientRect();
+    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     audio.currentTime = pct * audio.duration;
 }
 
@@ -6834,26 +7271,30 @@ async function sendVoicePreview() {
         if (!r) return;
         const data = await r.json();
         if (data.url) {
+            const _tempId = 'tmp_' + Date.now();
             socket.emit('send_message', {
-                chat_id:   currentChatId,
-                type_msg:  'audio',
-                file_url:  data.url,
-                sender_id: currentUser.id
+                chat_id:       currentChatId,
+                type_msg:      'audio',
+                file_url:      data.url,
+                sender_id:     currentUser.id,
+                client_msg_id: _tempId,
             });
-            // Оптимистичный рендер голосового
+            // FIX VOICE: Оптимистичный рендер голосового с правильными маркерами
             const tempMsg = {
-                id:          'tmp_' + Date.now(),
+                id:          _tempId,
                 chat_id:     currentChatId,
                 sender_id:   currentUser.id,
                 sender_name: currentUser.name,
                 type:        'audio',
                 type_msg:    'audio',
                 file_url:    data.url,
+                content:     '',
                 is_read:     false,
                 timestamp:   _nowMoscow(),
                 _optimistic: true,
             };
             renderNewMessage(tempMsg, true);
+            scrollDown(true);
         }
         if (overlay._blobUrl) URL.revokeObjectURL(overlay._blobUrl);
         overlay.remove();
