@@ -1345,47 +1345,55 @@ function _stopRingtone() {
 function initSocket() {
     socket = io({
         path:                  '/socket.io',
+        // websocket первым — polling только если ws недоступен
         transports:            ['websocket', 'polling'],
+        upgrade:               true,
+        rememberUpgrade:       true,
         reconnection:          true,
-        reconnectionAttempts:  Infinity,   // OPT Task 5e: never give up
-        reconnectionDelay:     1000,
-        reconnectionDelayMax:  10000,
-        randomizationFactor:   0.5,
-        timeout:               15000,      // OPT: faster failure detection
+        reconnectionAttempts:  Infinity,
+        reconnectionDelay:     500,       // быстрее начинаем переподключение
+        reconnectionDelayMax:  3000,      // максимум 3с между попытками (было 10с)
+        randomizationFactor:   0.2,
+        timeout:               8000,      // быстрее детектируем обрыв (было 15с)
         forceNew:              false,
         withCredentials:       true,
-        ackTimeout:            5000,       // OPT: 5s ACK timeout
+        ackTimeout:            4000,
     });
 
+    socket.on('disconnect', (reason) => {
+        wsConnected = false;
+        updateConnStatus(false);
+        // При потере соединения — покажем статус
+        console.warn('[socket] disconnected:', reason);
+    });
+    socket.on('connect_error', (err) => {
+        wsConnected = false;
+        updateConnStatus(false);
+        console.warn('[socket] connect_error:', err.message);
+    });
+
+    // Используем событие 'connect' вместо 'reconnect' — надёжнее
+    // 'reconnect' не всегда срабатывает при смене сети
     socket.on('connect', () => {
         wsConnected = true;
         updateConnStatus(true);
         socket.emit('join', { user_id: currentUser.id });
-        // Не грузим чаты если только что загрузили (< 5 сек) — избегаем тройного вызова
-        if (Date.now() - _lastChatsLoad > 5000) loadChats();
-    // Предзагружаем моменты сразу при старте
-    setTimeout(() => loadMoments(), 800);
-        if (currentChatId) socket.emit('enter_chat', { chat_id: currentChatId });
-        wsReconnected = true;
-    });
-
-    socket.on('disconnect', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('connect_error', () => { wsConnected = false; updateConnStatus(false); });
-    socket.on('reconnect', () => {
-        wsConnected = true;
-        updateConnStatus(true);
-        // FIX Task 5e: re-join rooms and load missed messages on reconnect
-        socket.emit('join', { user_id: currentUser.id });
+        // Обновляем список чатов при каждом подключении
+        if (Date.now() - _lastChatsLoad > 3000) loadChats();
+        setTimeout(() => loadMoments(), 800);
         if (currentChatId) {
             socket.emit('enter_chat', { chat_id: currentChatId });
-            // OPT: load messages that arrived while disconnected
+            // Грузим пропущенные сообщения с момента последнего
             var lastId = _getLastMsgId(currentChatId);
-            if (lastId) loadMessagesSince(currentChatId, lastId);
+            if (lastId) {
+                loadMessagesSince(currentChatId, lastId);
+            } else {
+                // Нет lastId — грузим последние сообщения полностью
+                setTimeout(() => loadMessages(true), 200);
+            }
         }
-        // Flush offline message queue (Task 5f)
         _flushOfflineQueue();
-        loadChats();
-    loadMoments(); // INIT: загружаем моменты при старте
+        wsReconnected = true;
     });
 
     socket.on('new_message', onNewMessage);
@@ -2284,14 +2292,14 @@ body {
 
 /* Кнопка ОТПРАВИТЬ — цветной круг */
 .tg-send-btn {
-  width: 36px; height: 36px;
+  width: 44px; height: 44px;
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--accent);
   border: none;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  box-shadow: var(--glow);
+  box-shadow: none;
   transition: transform 0.15s;
   -webkit-tap-highlight-color: transparent;
   padding: 0;
@@ -2346,7 +2354,7 @@ body {
 .record-ui .wave-bar { animation:wave 0.8s ease infinite; }
 
 /* ЗВОНОК */
-.call-screen { position:fixed;inset:0;z-index:99999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);overflow:hidden;transition:opacity 0.3s; }
+.call-screen { position:fixed;inset:0;z-index:999999;background:linear-gradient(160deg,#080810 0%,#0d0d18 100%);overflow:hidden;transition:opacity 0.3s; }
 .hidden { display:none !important; }
 .call-screen.hidden { display:none; }
 .call-bg { position:absolute;inset:0;z-index:0;opacity:0.15;filter:blur(60px);background:radial-gradient(circle at 50% 30%,var(--accent) 0%,transparent 60%);animation:callBgPulse 3s ease infinite; }
@@ -2369,7 +2377,7 @@ body {
 .call-timer { font-size:14px;color:var(--text-2);font-variant-numeric:tabular-nums; }
 .video-container { position:absolute;inset:0;z-index:0;background:#000; }
 #remote-video { width:100%;height:100%;object-fit:cover;display:none; }
-#local-video  { position:absolute;bottom:160px;right:16px;width:90px;height:130px;object-fit:cover;border-radius:14px;border:2px solid rgba(255,255,255,0.2);display:none;z-index:5;box-shadow:0 4px 20px rgba(0,0,0,0.5); }
+#local-video  { position:absolute;bottom:160px;right:16px;width:90px;height:130px;object-fit:cover;border-radius:14px;border:2px solid rgba(255,255,255,0.2);display:none;z-index:5;box-shadow:0 4px 20px rgba(0,0,0,0.5);transform:scaleX(-1); }
 
 /* НАСТРОЙКИ */
 .settings-hero { position:relative;height:280px;overflow:hidden;flex-shrink:0; }
@@ -3069,7 +3077,7 @@ body {
     <!-- Видео-контейнеры -->
     <div id="call-video-container" class="video-container" style="display:none">
         <video id="remote-video" autoplay playsinline style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover"></video>
-        <video id="local-video"  autoplay playsinline muted style="position:absolute;bottom:120px;right:16px;width:100px;height:140px;border-radius:16px;object-fit:cover;z-index:20;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 20px rgba(0,0,0,0.4)"></video>
+        <video id="local-video"  autoplay playsinline muted style="position:absolute;bottom:120px;right:16px;width:100px;height:140px;border-radius:16px;object-fit:cover;z-index:20;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 20px rgba(0,0,0,0.4);transform:scaleX(-1)"></video>
     </div>
 
     <!-- Pulse rings (1:1 звонок) -->
@@ -4522,7 +4530,7 @@ async function loadMessages(initial = false, retryCount = 0) {
 
 
 function renderMessagesFromCache(msgs) {
-    // FIX: filter deleted + deduplicate by ID (server may send dupes on reconnect)
+    // FIX: filter deleted + deduplicate by ID
     const seen = new Set();
     msgs = msgs
         .filter(m => !_deletedMsgIds.has(String(m.id)))
@@ -4533,18 +4541,13 @@ function renderMessagesFromCache(msgs) {
         });
     const container = document.getElementById('messages');
     if (!container) return;
-    // FIX SMOOTH TRANSITION: fade out before wiping, fade in after render
-    container.style.transition = 'opacity 0.12s ease';
-    container.style.opacity = '0';
-    requestAnimationFrame(() => {
-        if (!container.querySelector('.vl-ph')) {
-            VirtualList.mount(container);
-        }
-        VirtualList.setMessages(msgs);
-        requestAnimationFrame(() => {
-            container.style.opacity = '1';
-        });
-    });
+    // Без opacity-анимации — вызывает 1с мигание при каждом открытии чата
+    container.style.opacity = '1';
+    container.style.transition = '';
+    if (!container.querySelector('.vl-ph')) {
+        VirtualList.mount(container);
+    }
+    VirtualList.setMessages(msgs);
 }
 
 function getMessageDate(msg) {
@@ -4586,9 +4589,7 @@ function buildMessageRow(msg, animate = true) {
     // Grouped bubble class suffixes
     const _gcls = _grpFirst && _grpLast ? '' : _grpFirst ? ' grp-first' : _grpLast ? ' grp-last' : ' grp-mid';
     row.className = `msg-row ${isMe ? 'out' : 'in'}${_gcls}`;
-    // OPT Task 2c: content-visibility:auto defers paint for off-screen messages
-    row.style.contentVisibility = 'auto';
-    row.style.containIntrinsicSize = '0 72px'; // estimated height hint
+    // content-visibility:auto удалён — ломает touch-scroll на iOS Safari 14-17
     row.setAttribute('data-msg-id', msg.id || '');
     // FIX DUPLICATE: mark optimistic rows so onNewMessage cleanup finds them
     if (msg._optimistic) {
@@ -4730,7 +4731,7 @@ function buildMessageRow(msg, animate = true) {
         const _wrpId = 'wrp_' + _vidId;
         const _vposter = msg.preview_url ? `poster="${msg.preview_url}"` : '';
         contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:pointer">
-            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="auto" muted
+            <video id="${_vidId}" src="${msg.file_url}" ${_vposter} playsinline preload="none" muted
                    style="display:block;width:100%;max-height:380px;object-fit:cover;background:#111"
                    oncanplay="(function(v){if(v._wct)return;v._wct=1;function _grab(){try{var cv=document.createElement('canvas');cv.width=v.videoWidth||320;cv.height=v.videoHeight||180;cv.getContext('2d').drawImage(v,0,0,cv.width,cv.height);var px=cv.getContext('2d').getImageData(0,0,8,8).data;var s=0;for(var i=0;i<px.length;i+=4)s+=px[i]+px[i+1]+px[i+2];if(s>400)v.setAttribute('poster',cv.toDataURL('image/jpeg',0.8));}catch(e){}}if(typeof v.requestVideoFrameCallback==='function'){v.requestVideoFrameCallback(_grab);}else{_grab();}})(this)"
                    onclick="(function(v,w){if(!v)return;if(v.paused){document.querySelectorAll('#messages video').forEach(function(o){if(o!==v){o.pause();o.removeAttribute('controls');var ol=o.closest('.video-bubble-wrap');if(ol){var ob=ol.querySelector('.video-play-overlay');if(ob)ob.style.display='flex';}}});v.muted=false;v.removeAttribute('muted');v.controls=true;v.play();var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='none';}else{v.pause();var ov=w?w.querySelector('.video-play-overlay'):null;if(ov)ov.style.display='flex';}})(document.getElementById('${_vidId}'),document.getElementById('${_wrpId}'))"
@@ -12778,11 +12779,9 @@ function onIncomingCall(data) {
         return;
     }
 
-    // Убираем hidden и display:none
+    // Убираем hidden и display:none — принудительно показываем
     screen.classList.remove('hidden');
-    screen.style.display = '';
-    screen.style.opacity = '1';
-    screen.style.pointerEvents = 'all';
+    screen.style.cssText = 'display:flex !important; opacity:1 !important; pointer-events:all !important; z-index:999999 !important;';
 
     const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
     setEl('call-name',         el => el.textContent = data.from_name || 'Звонок');
