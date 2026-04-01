@@ -1,7 +1,7 @@
 /**
  * ╔══════════════════════════════════════════════════════════════╗
  * ║          WAYCHAT ULTIMATE ENGINE 2026                        ║
- * ║          Version: 9.0.0 — TG INPUT · FULLSCREEN · ASYNC     ║
+ * ║          Version: 10.0.0 — PREMIUM FIXES · REALTIME · VOICE RECEIVER ║
  * ║  Telegram input · Photo zoom · Inline time · Async upload   ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
@@ -5952,7 +5952,7 @@ function renderAudioPlayer(src, displayTime, isMe, isRead) {
                 <span class="tg-voice-time">${displayTime || ''}${_statusIcon}</span>
             </div>
         </div>
-        <audio id="${uid}" src="${src}" preload="metadata"
+        <audio id="${uid}" src="${src}" preload="metadata" crossorigin="anonymous"
             ontimeupdate="updateAudio('${uid}')"
             onended="onAudioEnd('${uid}')"
             onloadedmetadata="setAudioDur('${uid}');_loadWaveform('${uid}','${src}')"></audio>
@@ -6070,6 +6070,12 @@ function toggleAudio(uid) {
         // Restore speed
         const spd = parseFloat(wrap.dataset.speed || '1');
         audio.playbackRate = spd;
+        
+        // FIX: Переводим на receiver speaker (нижний динамик iPhone)
+        if (audio.setSinkId) {
+            audio.setSinkId('').catch(e => console.warn('setSinkId error:', e));
+        }
+        
         audio.play().catch(() => {});
         wrap.dataset.playing = '1';
         const pi = wrap.querySelector('.tg-voice-icon-play');
@@ -13972,9 +13978,12 @@ function toggleMute() {
 }
 
 function toggleSpeaker() {
+    // FIX: На iPhone голосовые сообщения ВСЕГДА через receiver speaker (нижний динамик)
+    // Эта функция только для звонков (call_audio/call_video)
     const btn = document.getElementById('speaker-btn');
     btn?.classList.toggle('active');
-    showToast('Громкая связь переключена', 'info', 1500); vibrate(10);
+    showToast('Громкая связь переключена (только для звонков)', 'info', 1500);
+    vibrate(10);
 }
 
 function toggleVideo() {
