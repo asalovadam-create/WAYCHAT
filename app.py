@@ -131,6 +131,53 @@ _ip_rate_limits  = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
 
 
+def db_safe_commit(retries=2):
+    """
+    Безопасный commit с автоматическим retry при SSL/connection ошибках.
+    Render Free усыпляет сервер → при пробуждении старые pool-соединения
+    падают с 'ssl/tls alert bad record mac'. pool_pre_ping помогает не всегда
+    потому что SSL handshake проходит но TLS-сессия уже инвалидна.
+    """
+    from sqlalchemy.exc import OperationalError as _SAOpErr
+    last_exc = None
+    for attempt in range(retries + 1):
+        try:
+            db.session.commit()
+            return True
+        except _SAOpErr as e:
+            last_exc = e
+            err_str = str(e).lower()
+            # SSL / connection ошибки — закрываем сессию и пробуем снова
+            if any(k in err_str for k in ('ssl', 'bad record mac', 'consuming input',
+                                           'connection', 'operational', 'server closed')):
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                try:
+                    db.session.remove()  # принудительно закрываем сессию из пула
+                except Exception:
+                    pass
+                if attempt < retries:
+                    time.sleep(0.3 * (attempt + 1))
+                    continue
+            else:
+                # Не SSL-ошибка — роллбэк и пробрасываем
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+                raise
+    # Все retry исчерпаны
+    if last_exc:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        app.logger.error(f'db_safe_commit failed after {retries+1} attempts: {last_exc}')
+    return False
+
+
 def ip_rate_limit(endpoint, max_calls=5, window_sec=60):
     """Rate limit по IP — защита логина/регистрации от брутфорса"""
     def decorator(f):
@@ -174,12 +221,17 @@ app.config.update(
     SQLALCHEMY_DATABASE_URI        = os.environ.get('DATABASE_URL', '').replace('postgres://', 'postgresql+psycopg://', 1).replace('postgresql://', 'postgresql+psycopg://', 1),
     SQLALCHEMY_TRACK_MODIFICATIONS = False,
     SQLALCHEMY_ENGINE_OPTIONS      = {
-        'pool_pre_ping':  True,
-        'pool_recycle':   300,
-        'pool_size':      25,    # 1k онлайн
-        'max_overflow':   50,    # пик нагрузки
+        'pool_pre_ping':  True,       # проверяет соединение перед использованием
+        'pool_recycle':   120,        # FIX: переоткрываем соединения каждые 2 мин
+                                      # (было 300s) — Render Free рвёт SSL за ~3 мин sleep
+        'pool_size':      10,         # FIX: уменьшено с 25 — меньше пула = меньше
+                                      # мёртвых соединений после пробуждения
+        'max_overflow':   20,         # FIX: уменьшено с 50
         'pool_timeout':   30,
-        'connect_args':   {'connect_timeout': 10},
+        'connect_args':   {
+            'connect_timeout': 10,
+            'sslmode': 'require',     # FIX: явно требуем SSL — без этого psycopg3
+        },                            # иногда делает plaintext и падает при handshake
     },
     SECRET_KEY               = os.environ.get('SECRET_KEY') or __import__('sys').exit('FATAL: SECRET_KEY env variable not set! Add it in Render → Environment.'),
     MAX_CONTENT_LENGTH       = 50 * 1024 * 1024,   # 50MB — достаточно для видео-моментов
@@ -366,7 +418,7 @@ with app.app_context():
             db.session.execute(text(
                 'ALTER TABLE pending_code ADD COLUMN IF NOT EXISTS attempts INTEGER DEFAULT 0'
             ))
-            db.session.commit()
+            db_safe_commit()
             print('✅ pending_code table ready')
         except Exception as _tbl_e:
             db.session.rollback()
@@ -588,7 +640,7 @@ def send_push_to_user(user_id, title, body, chat_id=None, icon=None, extra_push_
         if dead:
             try:
                 PushSubscription.query.filter(PushSubscription.id.in_(dead)).delete(synchronize_session=False)
-                db.session.commit()
+                db_safe_commit()
             except Exception:
                 db.session.rollback()
 
@@ -913,7 +965,7 @@ class PendingCode(db.Model):
             obj = cls(phone=phone, code=code, name=name, username=username,
                       expires=time.time()+600, is_login=is_login, attempts=0)
             db.session.add(obj)
-        db.session.commit()
+        db_safe_commit()
         return obj
 
     @classmethod
@@ -925,7 +977,7 @@ class PendingCode(db.Model):
         obj = db.session.get(cls, phone)
         if obj:
             db.session.delete(obj)
-            db.session.commit()
+            db_safe_commit()
 
 
 @login_manager.user_loader
@@ -994,7 +1046,7 @@ def get_or_create_chat(uid1, uid2):
     if not chat:
         chat = Chat(room_key=key)
         db.session.add(chat)
-        db.session.commit()
+        db_safe_commit()
     return chat
 
 
@@ -1046,7 +1098,7 @@ def _security_before():
                 u.last_ip = ip
                 changed = True
             if changed:
-                db.session.commit()
+                db_safe_commit()
                 u.invalidate_cache()
         except Exception:
             pass
@@ -1118,7 +1170,7 @@ def login():
             u.is_online = True
             u.last_seen = datetime.utcnow()
             u.last_ip   = _get_ip()
-            db.session.commit()
+            db_safe_commit()
             u.invalidate_cache()
             broadcast_status(u.id, True)
             if request.is_json:
@@ -1238,7 +1290,7 @@ def verify_code():
                 PendingCode.delete(phone)
                 return jsonify({'success': False, 'error': 'Слишком много попыток. Запросите новый код'}), 429
             try:
-                db.session.commit()
+                db_safe_commit()
             except Exception:
                 db.session.rollback()
             return jsonify({'success': False, 'error': f'Неверный код. Осталось попыток: {5 - pending.attempts}'}), 400
@@ -1256,13 +1308,13 @@ def verify_code():
                 password_hash = generate_password_hash('__passwordless__'),
             )
             db.session.add(u)
-            db.session.commit()
+            db_safe_commit()
 
         session.permanent = True
         login_user(u, remember=True)
         u.is_online  = True
         u.last_seen  = datetime.utcnow()
-        db.session.commit()
+        db_safe_commit()
         u.invalidate_cache()
         broadcast_status(u.id, True)
 
@@ -1360,7 +1412,7 @@ def register_step2_page():
             last_ip       = ip_addr,
         )
         db.session.add(u)
-        db.session.commit()
+        db_safe_commit()
         PendingCode.delete(phone)
         session.permanent = True
         login_user(u, remember=True)
@@ -1483,7 +1535,7 @@ def push_subscribe():
         existing.p256dh = p256dh
         existing.auth   = auth
 
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -1497,7 +1549,7 @@ def push_unsubscribe():
         PushSubscription.query.filter_by(user_id=uid, endpoint=endpoint).delete()
     else:
         PushSubscription.query.filter_by(user_id=uid).delete()
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -1510,7 +1562,7 @@ def logout():
         if u:
             u.is_online = False
             u.last_seen = datetime.utcnow()
-            db.session.commit()
+            db_safe_commit()
             u.invalidate_cache()
         broadcast_status(uid, False)
     except Exception as e:
@@ -1563,7 +1615,7 @@ def api_me():
         u.is_blocked = False
         u.ban_until  = None
         u.ban_reason = ''
-        db.session.commit()
+        db_safe_commit()
     return jsonify({
         'id':            u.id,
         'name':          u.name,
@@ -1894,7 +1946,7 @@ def get_messages(chat_id):
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': uid}
     )
-    db.session.commit()
+    db_safe_commit()
 
     if not chat.room_key.startswith('group_'):
         p_id = get_partner_id(chat, uid)
@@ -1969,7 +2021,7 @@ def create_group():
                 db.session.add(GroupMember(group_id=group.id, user_id=mid, is_admin=False))
                 added_ids.add(mid)
 
-    db.session.commit()
+    db_safe_commit()
 
     for aid in added_ids:
         _chat_cache.delete(aid)
@@ -1988,7 +2040,7 @@ def create_group():
         type='text', content=f'👥 Группа "{name}" создана. Участников: {len(added_ids)}',
     )
     db.session.add(sys_msg)
-    db.session.commit()
+    db_safe_commit()
 
     return jsonify({'success': True, 'group_id': group.id, 'chat_id': chat.id, 'avatar': avatar_url})
 
@@ -2052,7 +2104,7 @@ def add_group_member():
 
     u_name = u.name
     db.session.add(GroupMember(group_id=group_id, user_id=user_id, is_admin=False))
-    db.session.commit()
+    db_safe_commit()
 
     _chat_cache.delete(user_id)
     group = db.session.get(Group, group_id)
@@ -2078,7 +2130,7 @@ def leave_group(group_id):
     if not member:
         return jsonify({'success': False, 'error': 'Not a member'}), 400
     db.session.delete(member)
-    db.session.commit()
+    db_safe_commit()
     _chat_cache.delete(uid)
     socketio.emit('group_member_left', {
         'group_id':   group_id,
@@ -2116,7 +2168,7 @@ def kick_group_member():
         return jsonify({'success': False, 'error': 'Участник не найден'}), 404
 
     db.session.delete(target)
-    db.session.commit()
+    db_safe_commit()
     _chat_cache.delete(user_id)
 
     emit_to_user(user_id, 'kicked_from_group', {'group_id': group_id})
@@ -2145,7 +2197,7 @@ def set_group_admin():
         return jsonify({'success': False, 'error': 'Участник не найден'}), 404
 
     target.is_admin = is_admin
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 # ══════════════════════════════════════════════════════════
@@ -2260,7 +2312,7 @@ def update_profile():
     if bio is not None:
         u.bio = bio[:500]
 
-    db.session.commit()
+    db_safe_commit()
     u.invalidate_cache()
     return jsonify({'success': True})
 
@@ -2322,7 +2374,7 @@ def upload_avatar():
             return jsonify({'success': False, 'error': 'Ошибка сохранения файла'}), 500
 
     u.avatar = url
-    db.session.commit()
+    db_safe_commit()
     u.invalidate_cache()
 
     socketio.emit('avatar_updated', {'user_id': uid, 'avatar': url})
@@ -2343,7 +2395,7 @@ def upload_avatar_emoji():
         return jsonify({'success': False, 'error': 'User not found'}), 404
 
     u.avatar = f'emoji:{emoji}'
-    db.session.commit()
+    db_safe_commit()
     u.invalidate_cache()
 
     socketio.emit('avatar_updated', {'user_id': uid, 'avatar': f'emoji:{emoji}'})
@@ -2404,7 +2456,7 @@ def _do_async_upload(file_bytes, mime, folder, temp_id, chat_id, uid, uname, msg
             msg = Message(chat_id=chat_id, sender_id=uid, sender_name=uname,
                           type=msg_type, content='', file_url=url)
             db.session.add(msg)
-            db.session.commit()
+            db_safe_commit()
             _chat_cache.delete(uid)
 
             payload = msg.to_dict()
@@ -2534,7 +2586,7 @@ def delete_message_route(msg_id):
 
     msg.is_deleted = True
     msg.content    = None
-    db.session.commit()
+    db_safe_commit()
 
     chat = db.session.get(Chat, msg.chat_id)
     if chat:
@@ -2602,7 +2654,7 @@ def upload_track():
             )
             db.session.add(track)
 
-        db.session.commit()
+        db_safe_commit()
 
         # Если нет Cloudinary URL — отдаём ссылку на стриминг с сервера
         if not audio_url:
@@ -2724,7 +2776,7 @@ def add_track_from_user(track_id):
         # audio_data не копируем — воспроизводим по URL
     )
     db.session.add(new_track)
-    db.session.commit()
+    db_safe_commit()
     return jsonify({
         'ok':       True,
         'track_id': new_track.id,
@@ -2764,7 +2816,7 @@ def block_user(user_id):
     existing = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
     if not existing:
         db.session.add(BlockedUser(blocker_id=uid, blocked_id=user_id))
-        db.session.commit()
+        db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -2940,7 +2992,7 @@ def save_contact(contact_id):
     existing = SavedContact.query.filter_by(user_id=uid, contact_id=contact_id).first()
     if not existing:
         db.session.add(SavedContact(user_id=uid, contact_id=contact_id))
-        db.session.commit()
+        db_safe_commit()
     return jsonify({'ok': True, 'saved': True})
 
 
@@ -2951,7 +3003,7 @@ def unsave_contact(contact_id):
     row = SavedContact.query.filter_by(user_id=uid, contact_id=contact_id).first()
     if row:
         db.session.delete(row)
-        db.session.commit()
+        db_safe_commit()
     return jsonify({'ok': True, 'saved': False})
 
 
@@ -2988,7 +3040,7 @@ def update_privacy():
         u.moments_visibility = data['moments_visibility']
     if 'tracks_visibility' in data and data['tracks_visibility'] in allowed:
         u.tracks_visibility = data['tracks_visibility']
-    db.session.commit()
+    db_safe_commit()
     _moments_cache.delete('all')
     return jsonify({'ok': True})
 
@@ -3015,7 +3067,7 @@ def hide_moments_from(target_id):
     existing = MomentHiddenFrom.query.filter_by(user_id=uid, hidden_from_id=target_id).first()
     if not existing:
         db.session.add(MomentHiddenFrom(user_id=uid, hidden_from_id=target_id))
-        db.session.commit()
+        db_safe_commit()
     _moments_cache.delete('all')
     return jsonify({'ok': True, 'hidden': True})
 
@@ -3027,7 +3079,7 @@ def unhide_moments_from(target_id):
     row = MomentHiddenFrom.query.filter_by(user_id=uid, hidden_from_id=target_id).first()
     if row:
         db.session.delete(row)
-        db.session.commit()
+        db_safe_commit()
     _moments_cache.delete('all')
     return jsonify({'ok': True, 'hidden': False})
 
@@ -3054,7 +3106,7 @@ def sync_tracks():
             audio_url=str(t.get('audio_url', ''))[:500],
             cover_url=str(t.get('cover_url', ''))[:500],
         ))
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'ok': True})
 
 
@@ -3065,7 +3117,7 @@ def block_user_route(user_id):
     existing = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
     if not existing:
         db.session.add(BlockedUser(blocker_id=uid, blocked_id=user_id))
-        db.session.commit()
+        db_safe_commit()
     _moments_cache.delete('all')
     return jsonify({'ok': True, 'blocked': True})
 
@@ -3077,7 +3129,7 @@ def unblock_user_route(user_id):
     row = BlockedUser.query.filter_by(blocker_id=uid, blocked_id=user_id).first()
     if row:
         db.session.delete(row)
-        db.session.commit()
+        db_safe_commit()
     return jsonify({'ok': True, 'blocked': False})
 
 
@@ -3123,7 +3175,7 @@ def delete_chat_route(cid):
     # Удаляем сообщения и сам чат
     Message.query.filter_by(chat_id=cid).delete(synchronize_session=False)
     db.session.delete(chat)
-    db.session.commit()
+    db_safe_commit()
 
     # Чистим кэши всех участников
     for pid in participant_ids:
@@ -3147,7 +3199,7 @@ def view_moment(mid):
     mv = MomentView(moment_id=mid, viewer_id=uid)
     db.session.add(mv)
     try:
-        db.session.commit()
+        db_safe_commit()
     except Exception:
         db.session.rollback()
     return jsonify({'success': True})
@@ -3192,7 +3244,7 @@ def delete_moment(mid):
     # Сначала удаляем все просмотры — иначе FK нарушение
     MomentView.query.filter_by(moment_id=mid).delete()
     db.session.delete(m)
-    db.session.commit()
+    db_safe_commit()
     _moments_cache.delete('all')
     return jsonify({'success': True})
 
@@ -3260,7 +3312,7 @@ def create_moment():
         expires_at=datetime.utcnow() + timedelta(hours=24)
     )
     db.session.add(moment)
-    db.session.commit()
+    db_safe_commit()
     _moments_cache.delete('all')
 
     moment_payload = {
@@ -3357,7 +3409,7 @@ def handle_connect():
         text('UPDATE "user" SET is_online=TRUE, last_seen=NOW() WHERE id=:uid'),
         {'uid': uid}
     )
-    db.session.commit()
+    db_safe_commit()
     _user_dict_cache.delete(uid)
     broadcast_status(uid, True)
 
@@ -3390,7 +3442,7 @@ def handle_heartbeat(data):
                 text('UPDATE "user" SET last_seen=NOW() WHERE id=:uid'),
                 {'uid': uid}
             )
-            db.session.commit()
+            db_safe_commit()
     except Exception:
         pass
 
@@ -3408,7 +3460,7 @@ def on_join(data):
         text('UPDATE "user" SET is_online=TRUE, last_seen=NOW() WHERE id=:uid'),
         {'uid': uid}
     )
-    db.session.commit()
+    db_safe_commit()
     _user_dict_cache.delete(uid)
     broadcast_status(uid, True)
 
@@ -3425,7 +3477,7 @@ def on_disconnect():
         text('UPDATE "user" SET is_online=FALSE, last_seen=NOW() WHERE id=:uid'),
         {'uid': uid}
     )
-    db.session.commit()
+    db_safe_commit()
     _user_dict_cache.delete(uid)
     _online_cache.delete(uid)
     broadcast_status(uid, False)
@@ -3447,7 +3499,7 @@ def on_enter_chat(data):
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': uid}
     )
-    db.session.commit()
+    db_safe_commit()
     _chat_cache.delete(uid)
 
 
@@ -3498,7 +3550,7 @@ def handle_msg(data):
                 _sender.is_blocked = False
                 _sender.ban_until  = None
                 _sender.ban_reason = ''
-                db.session.commit()
+                db_safe_commit()
             else:
                 emit('banned', {
                     'ban_until': _sender.ban_until.isoformat() if _sender.ban_until else None,
@@ -3565,7 +3617,7 @@ def handle_msg(data):
         extra_data=_extra_json,
     )
     db.session.add(msg)
-    db.session.commit()
+    db_safe_commit()
     if client_msg_id:
         _recent_client_msgs[(uid, client_msg_id)] = {'msg_id': msg.id, 'ts': time.monotonic()}
         # tiny cleanup to keep dict bounded
@@ -3659,7 +3711,7 @@ def handle_mark_read(data):
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
         {'cid': chat_id, 'uid': uid}
     )
-    db.session.commit()
+    db_safe_commit()
     _chat_cache.delete(uid)
 
     if result.rowcount > 0:
@@ -3697,7 +3749,7 @@ def handle_reaction(data):
         db.session.delete(existing_same)
     else:
         db.session.add(MessageReaction(msg_id=msg_id, user_id=uid, emoji=emoji))
-    db.session.commit()
+    db_safe_commit()
 
     reaction_payload = {'msg_id': msg_id, 'emoji': emoji, 'user_id': uid}
     chat = db.session.get(Chat, chat_id)
@@ -3731,7 +3783,7 @@ def handle_delete_message(data):
 
     msg.is_deleted = True
     msg.content    = None
-    db.session.commit()
+    db_safe_commit()
     _chat_cache.invalidate_prefix(str(chat_id))
 
     del_payload = {'msg_id': msg_id, 'chat_id': chat_id}
@@ -3915,7 +3967,7 @@ def handle_missed_call(data):
             content    = 'missed',
         )
         db.session.add(msg)
-        db.session.commit()
+        db_safe_commit()
         # Уведомляем получателя
         payload = msg.to_dict()
         payload['chat_id'] = chat_id
@@ -3974,7 +4026,7 @@ def handle_end_call(data):
                 type=msg_type, content='missed',
             )
             db.session.add(missed)
-            db.session.commit()
+            db_safe_commit()
             payload = missed.to_dict()
             payload['chat_id'] = chat_id
             emit('new_message', payload, room=f'user_{to}')
@@ -4004,7 +4056,7 @@ def background_cleanup():
                             except Exception: pass
                     db.session.delete(m)
                 if expired:
-                    db.session.commit()
+                    db_safe_commit()
                     _moments_cache.delete('all')
 
                 # ── Сбрасываем статус оффлайн ──
@@ -4017,7 +4069,7 @@ def background_cleanup():
                     _online_cache.delete(u.id)
                     _user_dict_cache.delete(u.id)
                 if stale:
-                    db.session.commit()
+                    db_safe_commit()
 
                 # ── Каждые 30 минут: архив старых сообщений ──
                 if _cleanup_cycle % 6 == 0:
@@ -4030,7 +4082,7 @@ def background_cleanup():
                             text('DELETE FROM message WHERE id IN (SELECT id FROM message WHERE timestamp < :c ORDER BY timestamp LIMIT 5000)'),
                             {'c': cutoff}
                         )
-                        db.session.commit()
+                        db_safe_commit()
                         app.logger.info(f'Archived 5000 old messages (total old: {old_cnt})')
 
                 # ── Каждый час: чистим память ip_rate_limits ──
@@ -4170,7 +4222,7 @@ def run_migrations():
                 password_hash = generate_password_hash('__bot_no_login__'),
             )
             db.session.add(bot)
-            db.session.commit()
+            db_safe_commit()
             with db.engine.begin() as conn:
                 conn.execute(text('UPDATE "user" SET is_bot=TRUE WHERE id=:id'), {'id': bot.id})
             print(f'✅ WayChat bot created id={bot.id}')
@@ -4230,7 +4282,7 @@ def _admin_log(action, target_id=None, details=''):
             target_id=target_id,
             details=str(details)[:500]
         ))
-        db.session.commit()
+        db_safe_commit()
     except Exception:
         pass
 
@@ -4453,7 +4505,7 @@ def admin_ban():
         _admin_log('ban_temp', uid, f'{duration}д: {reason}')
 
     u.invalidate_cache()
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -4478,7 +4530,7 @@ def admin_verify():
         _admin_log('unverify', uid)
 
     u.invalidate_cache()
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -4521,7 +4573,7 @@ def admin_resolve_report():
     if not r:
         return jsonify({'error': 'Not found'}), 404
     r.resolved = True
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -4610,7 +4662,7 @@ def _bot_send(user_id, text):
             is_read=False,
         )
         db.session.add(msg)
-        db.session.commit()
+        db_safe_commit()
         payload = {
             'id':          msg.id,
             'chat_id':     chat.id,
@@ -4668,7 +4720,7 @@ def report_user():
     if existing:
         return jsonify({'error': 'Уже отправлена жалоба'}), 400
     db.session.add(UserReport(reporter_id=uid, target_id=target_id, reason=reason, comment=comment))
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'success': True})
 
 
@@ -4696,7 +4748,7 @@ def create_channel():
     db.session.add(ch)
     db.session.flush()
     db.session.add(ChannelSubscriber(channel_id=ch.id, user_id=current_user.id))
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'ok': True, 'channel_id': ch.id, 'username': ch.username})
 
 
@@ -4765,10 +4817,10 @@ def subscribe_channel(ch_id):
     if not ch: return jsonify({'ok':False}), 404
     ex = ChannelSubscriber.query.filter_by(channel_id=ch_id, user_id=uid).first()
     if ex:
-        db.session.delete(ex); db.session.commit()
+        db.session.delete(ex); db_safe_commit()
         return jsonify({'ok':True,'subscribed':False})
     db.session.add(ChannelSubscriber(channel_id=ch_id, user_id=uid))
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'ok':True,'subscribed':True})
 
 
@@ -4816,7 +4868,7 @@ def channel_posts(ch_id):
             'created_at':to_moscow_str(p.created_at),
             'reactions':[{'emoji':r.emoji,'count':r.cnt} for r in reacts],
             'my_reaction':my_r or ''})
-    db.session.commit()
+    db_safe_commit()
     return jsonify({
         'channel':{'id':ch.id,'username':ch.username,'name':ch.name,'avatar':ch.avatar or '',
             'description':ch.description or '','subscribers':sub_cnt,
@@ -4838,7 +4890,7 @@ def channel_post_create(ch_id):
     if not txt and not murl:
         return jsonify({'ok':False,'error':'Пустой пост'}), 400
     post = ChannelPost(channel_id=ch_id, text=txt, media_url=murl, media_type=mtype)
-    db.session.add(post); db.session.commit()
+    db.session.add(post); db_safe_commit()
     sub_cnt = ChannelSubscriber.query.filter_by(channel_id=ch_id).count()
     socketio.emit('channel_new_post', {
         'channel_id':ch_id,'channel_name':ch.name,'channel_username':ch.username,
@@ -4854,7 +4906,7 @@ def channel_post_delete(ch_id, post_id):
     if not ch or ch.owner_id != current_user.id: return jsonify({'ok':False}), 403
     p = db.session.get(ChannelPost, post_id)
     if p and p.channel_id == ch_id:
-        db.session.delete(p); db.session.commit()
+        db.session.delete(p); db_safe_commit()
     return jsonify({'ok':True})
 
 
@@ -4870,7 +4922,7 @@ def channel_react(ch_id, post_id):
         else: ex.emoji = emoji
     else:
         db.session.add(ChannelPostReaction(post_id=post_id, user_id=uid, emoji=emoji))
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'ok':True})
 
 
@@ -4895,7 +4947,7 @@ def channel_edit(ch_id):
         ch.username = new_uname
     if 'is_private' in data:
         ch.is_private = bool(data['is_private'])
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'ok': True, 'channel': {
         'id': ch.id, 'name': ch.name, 'username': ch.username,
         'description': ch.description or '', 'is_private': ch.is_private,
@@ -4910,7 +4962,7 @@ def channel_upload_avatar(ch_id):
     if 'file' not in request.files: return jsonify({'ok':False}), 400
     url = upload_to_cloudinary(request.files['file'], folder='waychat/channels')
     if not url: return jsonify({'ok':False,'error':'Upload failed'}), 500
-    ch.avatar = url; db.session.commit()
+    ch.avatar = url; db_safe_commit()
     return jsonify({'ok':True,'avatar':url})
 
 
@@ -4943,7 +4995,7 @@ def channel_request_verify(ch_id):
         status='pending',
     )
     db.session.add(req)
-    db.session.commit()
+    db_safe_commit()
     return jsonify({'ok': True, 'message': 'Заявка отправлена! Ожидайте проверки администрацией.'})
 
 
@@ -5013,7 +5065,7 @@ def admin_channel_verify_approve():
     req.resolved_at = datetime.utcnow()
     ch.is_verified  = True
     ch.verified_type = 'official'
-    db.session.commit()
+    db_safe_commit()
     _admin_log('verify_channel', req.channel_id, f'channel=@{ch.username}')
     return jsonify({'ok': True})
 
@@ -5032,7 +5084,7 @@ def admin_channel_verify_reject():
     req.status      = 'rejected'
     req.admin_note  = note
     req.resolved_at = datetime.utcnow()
-    db.session.commit()
+    db_safe_commit()
     _admin_log('reject_channel_verify', req.channel_id, f'channel=@{ch.username if ch else "?"}')
     return jsonify({'ok': True})
 
@@ -5047,7 +5099,7 @@ def admin_channel_unverify():
     if not ch: return jsonify({'error': 'Not found'}), 404
     ch.is_verified  = False
     ch.verified_type = ''
-    db.session.commit()
+    db_safe_commit()
     _admin_log('unverify_channel', ch_id, f'channel=@{ch.username}')
     return jsonify({'ok': True})
 
