@@ -238,7 +238,23 @@ const WCCache = (() => {
         body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
         *, button, a, [onclick], [data-msg-id] { -webkit-tap-highlight-color: transparent; }
         .vl-ph { flex-shrink: 0; width: 100%; pointer-events: none; }
-        #app, #main-content, .prof-sheet-inner { touch-action: pan-x pan-y; }
+        /* FIX BUG-3: pan-y вместо pan-x pan-y — на Android pan-x pan-y иногда блокирует вертикальный свайп */
+        #app, #main-content { touch-action: pan-y; }
+        .prof-sheet-inner { touch-action: pan-y; }
+        /* Сообщения: явный pan-y + overscroll-behavior чтобы список точно скроллился */
+        #messages {
+            touch-action: pan-y !important;
+            overscroll-behavior-y: contain !important;
+            -webkit-overflow-scrolling: touch !important;
+        }
+        /* input-bar pointer-events: none на самом контейнере, all на детях —
+           предотвращает перехват touch events на нижней части экрана */
+        .input-bar {
+            pointer-events: none !important;
+        }
+        .input-bar > * {
+            pointer-events: all !important;
+        }
         /* Offline banner */
         #wc-off {
             position: fixed;
@@ -431,7 +447,18 @@ const VirtualList=(()=>{
     msg._grpFirst=!_samePrev;msg._grpLast=true;msg._grpMid=false;
     // Update previous message's _grpLast=false if same sender
     if(_samePrev){_prev._grpLast=false;_prev._grpMid=_prev._grpFirst===false;} // FIX Task 2a: 120px threshold
-    if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
+    if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;
+        // FIX BUG-5: плавная анимация для новых сообщений — не для загруженных из истории
+        // animate-msg добавляется только если сообщение не оптимистичное (уже показано)
+        if (!msg._optimistic) {
+            r.classList.add('animate-msg');
+            if (typeof currentUser !== 'undefined' && msg.sender_id === currentUser.id) {
+                r.classList.add('out');
+            } else {
+                r.classList.add('in');
+            }
+        }
+        f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
         if(ab){
             // FIX Task 2a: user near bottom — auto scroll
             requestAnimationFrame(function(){el.scrollTop=el.scrollHeight;});
@@ -1351,13 +1378,17 @@ function initSocket() {
         rememberUpgrade:       true,
         reconnection:          true,
         reconnectionAttempts:  Infinity,
-        reconnectionDelay:     500,       // быстрее начинаем переподключение
-        reconnectionDelayMax:  3000,      // максимум 3с между попытками (было 10с)
-        randomizationFactor:   0.2,
-        timeout:               8000,      // быстрее детектируем обрыв (было 15с)
+        reconnectionDelay:     500,
+        // FIX BUG-4: увеличен с 3s→8s — при слабом сигнале быстрый DelayMax
+        // вызывал storm reconnect-попыток, что грузило сервер и CPU
+        reconnectionDelayMax:  8000,
+        randomizationFactor:   0.3,
+        // FIX BUG-4: увеличен timeout с 8s→30s — Render Free при cold start
+        // отвечает за 15-25с, из-за чего connect_error → бесконечный reconnect loop
+        timeout:               30000,
         forceNew:              false,
         withCredentials:       true,
-        ackTimeout:            4000,
+        ackTimeout:            8000,
     });
 
     socket.on('disconnect', (reason) => {
@@ -1365,6 +1396,12 @@ function initSocket() {
         updateConnStatus(false);
         // При потере соединения — покажем статус
         console.warn('[socket] disconnected:', reason);
+        // FIX BUG-4: если disconnect во время звонка — пробуем ICE restart
+        if (peerConnection && ['connected','completed'].includes(peerConnection.iceConnectionState)) {
+            setTimeout(() => {
+                if (!wsConnected && peerConnection) doIceRestart();
+            }, 3000);
+        }
     });
     socket.on('connect_error', (err) => {
         wsConnected = false;
@@ -1383,12 +1420,12 @@ function initSocket() {
         setTimeout(() => loadMoments(), 800);
         if (currentChatId) {
             socket.emit('enter_chat', { chat_id: currentChatId });
-            // Грузим пропущенные сообщения с момента последнего
+            // FIX BUG-4: всегда грузим пропущенные сообщения после reconnect,
+            // даже если lastId есть — иначе сообщения пришедшие пока сокет был мёртв не появятся
             var lastId = _getLastMsgId(currentChatId);
             if (lastId) {
                 loadMessagesSince(currentChatId, lastId);
             } else {
-                // Нет lastId — грузим последние сообщения полностью
                 setTimeout(() => loadMessages(true), 200);
             }
         }
@@ -1482,6 +1519,19 @@ function initSocket() {
     socket.on('call_ended', () => { _stopRingtone(); endCall(false); });
     // FIX: also handle call_ended_v2 in case server sends different event
     socket.on('call_ended_v2', () => { _stopRingtone(); endCall(false); });
+    // FIX BUG-1: обработчик серверного авто-сброса (call_cleanup_task посылает это событие)
+    socket.on('call_no_answer', () => {
+        _stopRingtone();
+        const lbl = document.getElementById('call-status-label');
+        if (lbl) { lbl.textContent = 'Нет ответа'; lbl.style.color = 'rgba(255,255,255,0.5)'; }
+        showToast('Абонент не ответил', 'warning');
+        setTimeout(() => endCall(false), 1500);
+    });
+    // FIX BUG-1: пропущенный звонок — закрываем экран если он ещё открыт
+    socket.on('call_missed', () => {
+        _stopRingtone();
+        endCall(false);
+    });
     // FIX Task 4d: recipient declined call from push notification
     socket.on('call_declined', (data) => {
         _stopRingtone();
@@ -12472,8 +12522,26 @@ function endCall(notify = true) {
     // Очищаем remote audio
     const callAudio = document.getElementById('call-remote-audio');
     if (callAudio) { callAudio.srcObject = null; callAudio.remove(); }
+
+    // FIX BUG-2: плавное закрытие экрана звонка с анимацией fade+scale
+    // Гарантированное скрытие через 2 пути: анимация + жёсткий fallback таймер
     const screen = document.getElementById('call-screen');
-    if (screen) screen.classList.add('hidden');
+    if (screen) {
+        screen.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
+        screen.style.opacity = '0';
+        screen.style.transform = 'scale(0.97)';
+        // Основной путь — после анимации
+        const _hideScreen = () => {
+            screen.classList.add('hidden');
+            screen.style.opacity = '';
+            screen.style.transform = '';
+            screen.style.transition = '';
+        };
+        setTimeout(_hideScreen, 380);
+        // Fallback — если анимация зависла (race condition на iOS)
+        setTimeout(_hideScreen, 800);
+    }
+
     ['remote-video','local-video'].forEach(id => { const el = document.getElementById(id); if (el) { el.srcObject = null; el.style.display = 'none'; } });
     const vc = document.getElementById('call-video-container');
     if (vc) vc.style.display = 'none';
@@ -13298,12 +13366,14 @@ async function startCall(type) {
             const lbl = document.getElementById('call-status-label');
             if (lbl && peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState))
                 lbl.textContent = 'Не отвечает...';
-        }, 15000);
+        }, 25000);
+        // FIX BUG-1: увеличено с 30s→60s — Render Free может просыпаться до 35с,
+        // из-за чего звонок обрывался раньше чем собеседник успевал ответить.
         setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
             }
-        }, 30000);
+        }, 60000);
     } catch(e) {
         console.error('startCall:', e); endCall(false);
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
@@ -13556,6 +13626,12 @@ if (window._pendingSWOpenChat) {
         bar.style.setProperty('-webkit-backdrop-filter', 'none',        'important');
         bar.style.setProperty('border-top',              'none',        'important');
         bar.style.setProperty('padding',                 '0',           'important');
+        // FIX BUG-3: pointer-events:none на баре, all на детях —
+        // без этого бар перехватывал touch на нижней части экрана и блокировал свайп
+        bar.style.setProperty('pointer-events',          'none',        'important');
+        bar.querySelectorAll('*').forEach(function(child) {
+            child.style.setProperty('pointer-events', 'all', 'important');
+        });
 
         var msgs = document.getElementById('messages');
         if (msgs) {
