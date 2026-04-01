@@ -2384,8 +2384,8 @@ body {
 .wc-img-sk { position:absolute;inset:0;border-radius:inherit;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.5s ease-in-out infinite;pointer-events:none; }
 
 /* ПЕЧАТЬ */
-.typing-wrap { padding:0 16px 8px;display:none;align-items:flex-end;gap:6px; }
-.typing-wrap.show { display:flex; }
+/* typing-wrap positioning handled by fixed CSS block below */
+.typing-wrap-placeholder {}
 .typing-bubble { background:var(--msg-in);border-radius:18px 18px 18px 5px;padding:10px 14px;border:0.5px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:4px; }
 .dot { width:6px;height:6px;background:rgba(255,255,255,0.5);border-radius:50%;animation:dotPulse 1.4s infinite; }
 .dot:nth-child(2) { animation-delay:0.2s; }
@@ -2496,22 +2496,25 @@ body {
     position: fixed !important;
     left: 0 !important;
     right: 0 !important;
-    bottom: -60px !important;   /* скрыто под экраном по умолчанию */
+    bottom: -80px !important;   /* скрыто под экраном по умолчанию */
     z-index: 9998 !important;   /* под input-bar (9999) но над остальным */
     background: transparent !important;
     border-top: none !important;
     padding: 0 16px 8px !important;
-    display: flex !important;   /* всегда flex, видимость — через bottom */
+    display: flex !important;   /* ВСЕГДА flex — скрытие через bottom, не display */
     align-items: flex-end !important;
     gap: 6px !important;
     pointer-events: none !important;
-    transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) !important;
+    opacity: 0 !important;
+    transition: bottom 0.3s cubic-bezier(0.34, 1.2, 0.64, 1),
+                opacity 0.2s ease !important;
+    will-change: bottom, opacity !important;
 }
 .typing-wrap.show {
-    display: flex !important;
     pointer-events: auto !important;
+    opacity: 1 !important;
 }
-/* bottom устанавливается динамически через JS (= высота input-bar + safe-area) */
+/* bottom и opacity управляются через JS showTypingIndicator() */
 
 .skeleton-shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.04) 0%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 100%);background-size:400px 100%;animation:shimmer 1.6s infinite linear}
 
@@ -6150,12 +6153,22 @@ function _getInputBarBottom() {
 function showTypingIndicator(name) {
     const wrap = document.getElementById('typing-wrap');
     if (!wrap) return;
-    // FIX: позиционируем typing-wrap строго над input-bar
-    const aboveBar = _getInputBarBottom() + 4;
-    wrap.style.bottom = aboveBar + 'px';
-    wrap.classList.add('show');
     const label = document.getElementById('typing-name-label');
     if (label) label.textContent = name || '';
+    // FIX: позиционируем typing-wrap строго над input-bar перед показом
+    const aboveBar = _getInputBarBottom() + 4;
+    // Сначала без анимации ставим правильную позицию, потом показываем
+    wrap.style.transition = 'none';
+    wrap.style.bottom = '-80px';
+    wrap.style.opacity = '0';
+    // Принудительный reflow чтобы браузер применил начальное состояние
+    void wrap.offsetHeight;
+    wrap.style.transition = '';
+    requestAnimationFrame(() => {
+        wrap.style.bottom = aboveBar + 'px';
+        wrap.style.opacity = '1';
+        wrap.classList.add('show');
+    });
     clearTimeout(typingHideTimer);
     typingHideTimer = setTimeout(hideTypingIndicator, 5000);
 }
@@ -6163,10 +6176,13 @@ function showTypingIndicator(name) {
 function hideTypingIndicator() {
     const wrap = document.getElementById('typing-wrap');
     if (!wrap) return;
-    wrap.classList.remove('show');
-    // Убираем вниз с анимацией
-    wrap.style.bottom = '-60px';
+    wrap.style.bottom = '-80px';
+    wrap.style.opacity = '0';
     clearTimeout(typingHideTimer);
+    // Убираем класс после анимации
+    setTimeout(() => {
+        if (wrap.style.opacity === '0') wrap.classList.remove('show');
+    }, 320);
 }
 
 function updateSendButton() {
