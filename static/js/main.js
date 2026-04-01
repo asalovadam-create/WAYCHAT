@@ -2491,8 +2491,27 @@ body {
     min-height: 120px;
 }
 
-/* typing-wrap: transparent, no grey bar */
-.typing-wrap { background: transparent !important; border-top: none !important; }
+/* typing-wrap: fixed above input-bar, плавное появление снизу */
+.typing-wrap {
+    position: fixed !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: -60px !important;   /* скрыто под экраном по умолчанию */
+    z-index: 9998 !important;   /* под input-bar (9999) но над остальным */
+    background: transparent !important;
+    border-top: none !important;
+    padding: 0 16px 8px !important;
+    display: flex !important;   /* всегда flex, видимость — через bottom */
+    align-items: flex-end !important;
+    gap: 6px !important;
+    pointer-events: none !important;
+    transition: bottom 0.28s cubic-bezier(0.34, 1.2, 0.64, 1) !important;
+}
+.typing-wrap.show {
+    display: flex !important;
+    pointer-events: auto !important;
+}
+/* bottom устанавливается динамически через JS (= высота input-bar + safe-area) */
 
 .skeleton-shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.04) 0%,rgba(255,255,255,0.09) 50%,rgba(255,255,255,0.04) 100%);background-size:400px 100%;animation:shimmer 1.6s infinite linear}
 
@@ -6116,19 +6135,37 @@ function tryBrowserNotification(msg) {
 // ══════════════════════════════════════════════════════════
 let typingHideTimer = null;
 
+function _getInputBarBottom() {
+    // Возвращает высоту input-bar + safe-area для позиционирования typing-wrap
+    const bar = document.querySelector('.input-bar');
+    if (!bar) return 68;
+    const barH = bar.offsetHeight || 68;
+    // Safe-area: читаем из CSS переменной
+    try {
+        const sa = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--wc-safe-bottom')) || 0;
+        return barH + sa;
+    } catch(e) { return barH; }
+}
+
 function showTypingIndicator(name) {
     const wrap = document.getElementById('typing-wrap');
     if (!wrap) return;
+    // FIX: позиционируем typing-wrap строго над input-bar
+    const aboveBar = _getInputBarBottom() + 4;
+    wrap.style.bottom = aboveBar + 'px';
     wrap.classList.add('show');
     const label = document.getElementById('typing-name-label');
     if (label) label.textContent = name || '';
-    scrollDown(true);
     clearTimeout(typingHideTimer);
     typingHideTimer = setTimeout(hideTypingIndicator, 5000);
 }
 
 function hideTypingIndicator() {
-    document.getElementById('typing-wrap')?.classList.remove('show');
+    const wrap = document.getElementById('typing-wrap');
+    if (!wrap) return;
+    wrap.classList.remove('show');
+    // Убираем вниз с анимацией
+    wrap.style.bottom = '-60px';
     clearTimeout(typingHideTimer);
 }
 
@@ -13637,6 +13674,13 @@ if (window._pendingSWOpenChat) {
         if (msgs) {
             var barH = bar.offsetHeight || 68;
             msgs.style.setProperty('padding-bottom', (barH + sa + 8) + 'px', 'important');
+        }
+
+        // FIX: обновляем позицию typing-wrap при каждом пересчёте input-bar
+        var tw = document.getElementById('typing-wrap');
+        if (tw && tw.classList.contains('show')) {
+            var barHt = bar.offsetHeight || 68;
+            tw.style.bottom = (barHt + sa + 4) + 'px';
         }
 
         _applying = false;
