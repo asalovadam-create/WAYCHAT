@@ -417,129 +417,154 @@ const WCCache = (() => {
 
 })();
 
-// ══ VirtualList ═══════════════════════════════════════════════
+// ══ StableList — полный рендер без виртуализации (нет прыжков) ══
 const VirtualList=(()=>{
-    const OV=25,EH=72,BA=50;
-    let el=null,ms=[],s=0,e=0,tp=null,bp=null,ts=null,bs=null,hc=new Map(),rf=null;
-    const gh=i=>hc.get(i)||EH;
-    const gs=(a,b)=>{let r=0;for(let i=a;i<b;i++)r+=gh(i);return r;};
-    // Measure ALL visible rows, not just [data-vi] — catches rows without dataset
-    function msr(){if(!el)return;el.querySelectorAll('[data-vi]').forEach(n=>{const h=n.offsetHeight;if(h>8)hc.set(+n.dataset.vi,h);});}
-    function phs(){if(tp)tp.style.height=gs(0,s)+'px';if(bp)bp.style.height=gs(e,ms.length)+'px';}
-    function ld(i){for(let j=i-1;j>=0;j--){const d=getMessageDate(ms[j]);if(d)return d;}return null;}
-    function win(ns,ne,ks){
-        if(!el||!ms.length)return;ns=Math.max(0,ns);ne=Math.min(ms.length,ne);if(ns===s&&ne===e)return;
-        // Anchor scroll position to prevent jump
-        let an=null,anTop=0;
-        if(ks){an=el.querySelector('[data-vi]');if(an)anTop=an.getBoundingClientRect().top;}
-        const f=document.createDocumentFragment();let ld2=ld(ns);
-        for(let i=ns;i<ne;i++){const m=ms[i],d=getMessageDate(m);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);ld2=d;}
-          const prevM=i>0?ms[i-1]:null,nextM=i<ms.length-1?ms[i+1]:null;
-          const samePrev=prevM&&prevM.sender_id===m.sender_id&&getMessageDate(prevM)===getMessageDate(m);
-          const sameNext=nextM&&nextM.sender_id===m.sender_id&&getMessageDate(nextM)===getMessageDate(m);
-          m._grpFirst=!samePrev;m._grpLast=!sameNext;m._grpMid=samePrev&&sameNext;
-          const r=buildMessageRow(m,false);if(!r)continue;r.dataset.vi=i;f.appendChild(r);}
-        el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());ts.after(f);s=ns;e=ne;
-        // Measure AFTER DOM insert
+    let el=null, ms=[];
+
+    function _ld(i){for(let j=i-1;j>=0;j--){const d=getMessageDate(ms[j]);if(d)return d;}return null;}
+
+    function _renderAll(){
+        if(!el)return;
+        el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());
+        if(!ms.length){
+            el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';
+            return;
+        }
+        const f=document.createDocumentFragment();
+        let lastDate=null;
+        for(let i=0;i<ms.length;i++){
+            const m=ms[i];
+            const prevM=i>0?ms[i-1]:null, nextM=i<ms.length-1?ms[i+1]:null;
+            const samePrev=prevM&&prevM.sender_id===m.sender_id&&getMessageDate(prevM)===getMessageDate(m);
+            const sameNext=nextM&&nextM.sender_id===m.sender_id&&getMessageDate(nextM)===getMessageDate(m);
+            m._grpFirst=!samePrev; m._grpLast=!sameNext; m._grpMid=samePrev&&sameNext;
+            const d=getMessageDate(m);
+            if(d&&d!==lastDate){
+                const dv=document.createElement('div');
+                dv.className='date-divider'; dv.dataset.vd=d;
+                dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;
+                f.appendChild(dv); lastDate=d;
+            }
+            const r=buildMessageRow(m,false);
+            if(!r)continue;
+            r.dataset.vi=i;
+            f.appendChild(r);
+        }
+        el.appendChild(f);
+    }
+
+    function _onScroll(){
+        if(!el)return;
+        if(el.scrollTop<140&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages&&typeof loadMessages==='function'){
+            loadMessages(false);
+        }
+        _scrollAtBottom=(el.scrollHeight-el.scrollTop-el.clientHeight)<120;
+        if(_scrollAtBottom)_scrollUnread=0;
+        _updateScrollBtn(el);
+    }
+
+    function mount(el2){
+        if(el)destroy();
+        el=el2; ms=[];
+        el.style.overflowY='auto';
+        el.style.webkitOverflowScrolling='touch';
+        el.style.overscrollBehavior='contain';
+        el.addEventListener('scroll',_onScroll,{passive:true});
+    }
+
+    function setMessages(arr){
+        if(!el)return;
+        ms=arr.slice();
+        if(!el._mounted){el._mounted=true;mount(el);}
+        _renderAll();
+        // Scroll to bottom after render
         requestAnimationFrame(()=>{
-            msr();phs();
-            if(ks&&an){const na=el.querySelector('[data-vi="'+s+'"]');if(na){const delta=na.getBoundingClientRect().top-anTop;if(Math.abs(delta)>2)el.scrollTop+=delta;}}
+            if(!el)return;
+            el.scrollTop=el.scrollHeight;
+            _scrollAtBottom=true; _scrollUnread=0;
+            _updateScrollBtn(el); _ensureScrollBtn(); _attachScrollListener(el);
         });
     }
-    function calc(){
-        if(!el||!ms.length)return;
-        const st=el.scrollTop,ch=el.clientHeight;
-        let cum=0,vs=0,ve=ms.length;
-        for(let i=0;i<ms.length;i++){
-            const h=gh(i);
-            if(cum+h>st&&vs===0)vs=i;
-            if(cum>st+ch){ve=i;break;}
-            cum+=h;
-        }
-        win(Math.max(0,vs-OV),Math.min(ms.length,ve+OV),true);
-    }
-    function onsc(){
-        if(el.scrollTop<140&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages&&typeof loadMessages==='function')loadMessages(false);
-        if(rf)cancelAnimationFrame(rf);
-        rf=requestAnimationFrame(calc);
-    }
-    function mount(el2){if(el)destroy();el=el2;ms=[];hc.clear();s=0;e=0;el.style.overflowY='auto';el.style.WebkitOverflowScrolling='touch';el.style.overscrollBehavior='contain';ts=document.createElement('div');ts.style.cssText='height:1px;flex-shrink:0';tp=document.createElement('div');tp.className='vl-ph';tp.style.height='0';bp=document.createElement('div');bp.className='vl-ph';bp.style.height='0';bs=document.createElement('div');bs.style.cssText='height:1px;flex-shrink:0';el.appendChild(ts);el.appendChild(tp);el.appendChild(bp);el.appendChild(bs);el.addEventListener('scroll',onsc,{passive:true});}
-    function setMessages(arr){if(!el)return;ms=arr.slice();hc.clear();s=0;e=0;el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());phs();if(!arr.length){el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';return;}if(!el.contains(ts)){el.innerHTML='';mount(el);}win(Math.max(0,arr.length-BA),arr.length,false);
-        function _scrollAfterRender(attempt) {
-            if (attempt > 5) return;
-            requestAnimationFrame(function() {
-                if (!el) return;
-                if (el.scrollHeight > el.clientHeight + 10) {
-                    el.scrollTop = el.scrollHeight;
-                    _scrollAtBottom = true; _scrollUnread = 0;
-                    _updateScrollBtn(el); _ensureScrollBtn(); _attachScrollListener(el);
-                } else {
-                    _scrollAfterRender(attempt + 1);
-                }
-            });
-        }
-        _scrollAfterRender(0);}
-    function append(msg){if(!el)return;
-        if(!msg._optimistic && msg.id){
+
+    function append(msg){
+        if(!el)return;
+        // Remove matching optimistic rows
+        if(!msg._optimistic&&msg.id){
             el.querySelectorAll('[data-optimistic="1"]').forEach(function(optEl){
-                if(optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:''))optEl.remove();
+                if(optEl.dataset.content===(msg.content||'')&&
+                   String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:''))
+                    optEl.remove();
             });
-            const prevLen=ms.length;
-            ms=ms.filter(function(m){return!(String(m.id).startsWith('tmp_')&&(m.content||'')===(msg.content||''));});
-            // FIX: don't clear hc on small dedup — just shift indices
-            if(ms.length<prevLen){
-                const diff=prevLen-ms.length;
-                const nh=new Map();hc.forEach((v,k)=>{if(typeof k==='number'&&k<ms.length)nh.set(k,v);});hc=nh;
-                s=Math.max(0,s-diff);e=Math.max(0,e-diff);
-            }
+            ms=ms.filter(function(m){
+                return!(String(m.id).startsWith('tmp_')&&(m.content||'')===(msg.content||''));
+            });
             if(ms.some(function(m){return String(m.id)===String(msg.id);}))return;
         }
-        ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120;
-        const _prev=idx>0?ms[idx-1]:null;
-        const _samePrev=_prev&&_prev.sender_id===msg.sender_id&&getMessageDate(_prev)===getMessageDate(msg);
-        msg._grpFirst=!_samePrev;msg._grpLast=true;msg._grpMid=false;
-        if(_samePrev){_prev._grpLast=false;_prev._grpMid=_prev._grpFirst===false;}
-        if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;
-        if (!msg._optimistic) {
-            r.classList.add('animate-msg');
-            if (typeof currentUser !== 'undefined' && msg.sender_id === currentUser.id) {
-                r.classList.add('out');
-            } else {
-                r.classList.add('in');
-            }
+        const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120;
+        const idx=ms.length;
+        const prev=idx>0?ms[idx-1]:null;
+        const samePrev=prev&&prev.sender_id===msg.sender_id&&getMessageDate(prev)===getMessageDate(msg);
+        msg._grpFirst=!samePrev; msg._grpLast=true; msg._grpMid=false;
+        if(samePrev){prev._grpLast=false; prev._grpMid=prev._grpFirst===false;}
+        ms.push(msg);
+        // Build and append row
+        const f=document.createDocumentFragment();
+        const d=getMessageDate(msg), prevD=_ld(idx);
+        if(d&&d!==prevD){
+            const dv=document.createElement('div');
+            dv.className='date-divider'; dv.dataset.vd=d;
+            dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;
+            f.appendChild(dv);
         }
-        f.appendChild(r);bs.before(f);e=ms.length;
-        requestAnimationFrame(()=>{msr();phs();});
+        const r=buildMessageRow(msg,true);
+        if(!r)return;
+        r.dataset.vi=idx;
+        if(!msg._optimistic){
+            r.classList.add('animate-msg');
+            r.classList.add(typeof currentUser!=='undefined'&&msg.sender_id===currentUser.id?'out':'in');
+        }
+        f.appendChild(r);
+        el.appendChild(f);
         if(ab){
-            requestAnimationFrame(function(){el.scrollTop=el.scrollHeight;});
-            _scrollAtBottom=true;_scrollUnread=0;
+            requestAnimationFrame(()=>{if(el)el.scrollTop=el.scrollHeight;});
+            _scrollAtBottom=true; _scrollUnread=0;
         } else {
             _scrollAtBottom=false;
-            const isMine = typeof currentUser!=='undefined' && msg.sender_id===currentUser.id;
-            if(!isMine){ _scrollUnread++; }
+            if(!(typeof currentUser!=='undefined'&&msg.sender_id===currentUser.id))_scrollUnread++;
         }
         _updateScrollBtn(el);
-    }}
+    }
+
     function prepend(arr){
         if(!el||!arr.length)return;
-        // BUG-E FIX: deduplicate by message ID before prepend
-        const existIds = new Set(ms.map(m => m.id));
-        arr = arr.filter(m => !existIds.has(m.id));
-        if(!arr.length) return;
+        const existIds=new Set(ms.map(m=>m.id));
+        arr=arr.filter(m=>!existIds.has(m.id));
+        if(!arr.length)return;
+        const prevScrollH=el.scrollHeight;
+        const prevScrollT=el.scrollTop;
         ms=[...arr,...ms];
-        // Shift height cache safely
-        const nh=new Map();hc.forEach((v,k)=>{if(typeof k==='number')nh.set(k+arr.length,v);});hc=nh;
-        s+=arr.length;e+=arr.length;
-        const ph=el.scrollHeight;
-        win(Math.max(0,s-arr.length),e,false);
-        // Maintain scroll position after prepend (no jump)
-        requestAnimationFrame(()=>{ if(el) el.scrollTop+=el.scrollHeight-ph; });}
-    function toBottom(a){if(!el)return;
-        // FIX: set flag BEFORE scroll so _updateScrollBtn sees it immediately
-        _scrollAtBottom=true;_scrollUnread=0;
-        if(a)el.scrollTo({top:el.scrollHeight,behavior:'smooth'});else el.scrollTop=el.scrollHeight;
-        _updateScrollBtn(el);}
-    function destroy(){if(!el)return;el.removeEventListener('scroll',onsc);if(rf)cancelAnimationFrame(rf);ms=[];hc.clear();el=ts=bs=tp=bp=null;}
+        _renderAll();
+        // Restore scroll position — no jump
+        requestAnimationFrame(()=>{
+            if(!el)return;
+            el.scrollTop=prevScrollT+(el.scrollHeight-prevScrollH);
+        });
+    }
+
+    function toBottom(a){
+        if(!el)return;
+        _scrollAtBottom=true; _scrollUnread=0;
+        if(a)el.scrollTo({top:el.scrollHeight,behavior:'smooth'});
+        else el.scrollTop=el.scrollHeight;
+        _updateScrollBtn(el);
+    }
+
+    function destroy(){
+        if(!el)return;
+        el.removeEventListener('scroll',_onScroll);
+        ms=[]; el=null;
+    }
+
     return{mount,setMessages,appendMessage:append,prependMessages:prepend,scrollToBottom:toBottom,destroy};
 })();
 
@@ -4116,52 +4141,55 @@ function renderChatList(chats) {
             // Аватар
             const avaWrap = document.createElement('div');
 
-            const _ai = document.createElement('div');
             if (chat.has_moment && !isGroup) {
-                // Враппер 56×56: кольцо 56px, аватар inset:4px = 48×48 внутри
-                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:56px;height:56px';
-                _ai.style.cssText = 'position:absolute;top:4px;left:4px;width:48px;height:48px;border-radius:50%;overflow:hidden;background:#2c2c2e';
-                // wc-ava внутри должна быть 48px
-                const _avaHtml = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
-                _ai.innerHTML = _avaHtml;
-                // Принудительно растянуть внутренний wc-ava на 48px
-                requestAnimationFrame(()=>{
-                    const inner = _ai.querySelector('.wc-ava');
-                    if(inner){inner.style.width='48px';inner.style.height='48px';inner.style.minWidth='48px';}
-                });
-            } else {
-                // Враппер ровно 48×48, position:relative для dot
-                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:48px;height:48px';
-                _ai.style.cssText = 'position:absolute;inset:0;border-radius:50%;overflow:hidden';
-                const _avaHtml = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
-                _ai.innerHTML = _avaHtml;
-                // Stretch inner wc-ava to fill
-                requestAnimationFrame(()=>{
-                    const inner = _ai.querySelector('.wc-ava');
-                    if(inner){inner.style.width='48px';inner.style.height='48px';inner.style.minWidth='48px';}
-                });
-            }
-            avaWrap.appendChild(_ai);
-
-            // SVG-кольцо моментов — полный круг поверх аватарки
-            if (!isGroup && chat.has_moment) {
+                // 56×56: кольцо снаружи, аватар 46×46 по центру
+                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:56px;height:56px;display:flex;align-items:center;justify-content:center';
+                const _ai = document.createElement('div');
+                _ai.style.cssText = 'width:46px;height:46px;min-width:46px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#2c2c2e';
+                const _ava = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                _ai.innerHTML = _ava;
+                // Force inner wc-ava to fill the container
+                const _tmp = document.createElement('div');
+                _tmp.innerHTML = _ava;
+                const _avaEl = _tmp.firstElementChild;
+                if(_avaEl){_avaEl.style.width='46px';_avaEl.style.height='46px';_avaEl.style.minWidth='46px';_ai.innerHTML='';_ai.appendChild(_avaEl);}
+                avaWrap.appendChild(_ai);
+                // SVG ring around avatar
                 const mc=Math.min(chat.moment_count||1,8);
                 const _ns='http://www.w3.org/2000/svg';
                 const sv=document.createElementNS(_ns,'svg');
                 sv.setAttribute('width','56');sv.setAttribute('height','56');sv.setAttribute('viewBox','0 0 56 56');
                 sv.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:2';
-                const _cx=28,_cy=28,_r=26,_gap=mc>1?5:0,_seg=(360-_gap*mc)/mc;
-                for(let i=0;i<mc;i++){
-                    const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
-                    const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
-                    const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
-                    const p=document.createElementNS(_ns,'path');
-                    p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-                    p.setAttribute('stroke','var(--accent)');p.setAttribute('stroke-width','3');
-                    p.setAttribute('fill','none');p.setAttribute('stroke-linecap','round');
-                    sv.appendChild(p);
+                if(mc===1){
+                    // Single moment: full circle
+                    const ci=document.createElementNS(_ns,'circle');
+                    ci.setAttribute('cx','28');ci.setAttribute('cy','28');ci.setAttribute('r','26');
+                    ci.setAttribute('stroke','var(--accent)');ci.setAttribute('stroke-width','2.5');
+                    ci.setAttribute('fill','none');sv.appendChild(ci);
+                } else {
+                    const _cx=28,_cy=28,_r=26,_gap=4,_seg=(360-_gap*mc)/mc;
+                    for(let i=0;i<mc;i++){
+                        const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
+                        const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
+                        const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
+                        const p=document.createElementNS(_ns,'path');
+                        p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
+                        p.setAttribute('stroke','var(--accent)');p.setAttribute('stroke-width','2.5');
+                        p.setAttribute('fill','none');p.setAttribute('stroke-linecap','round');
+                        sv.appendChild(p);
+                    }
                 }
                 avaWrap.appendChild(sv);
+            } else {
+                // 48×48: просто аватар, точка поверх
+                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:48px;height:48px';
+                const _tmp = document.createElement('div');
+                _tmp.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                const _avaEl = _tmp.firstElementChild;
+                if(_avaEl){
+                    _avaEl.style.width='48px';_avaEl.style.height='48px';_avaEl.style.minWidth='48px';
+                    avaWrap.appendChild(_avaEl);
+                }
             }
 
             if (!isGroup) {
