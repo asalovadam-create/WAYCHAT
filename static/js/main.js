@@ -298,7 +298,7 @@ const WCCache = (() => {
    WAYCHAT AVATAR SYSTEM v2 — Unified, Production
    ═══════════════════════════════════════════════════ */
 :root {
-  --avatar-chat:    56px;   /* список чатов */
+  --avatar-chat:    48px;   /* список чатов */
   --avatar-header:  36px;   /* header чата  */
   --avatar-profile: 96px;   /* профиль      */
   --avatar-msg:     34px;   /* в сообщениях (group) */
@@ -2146,7 +2146,7 @@ body {
 .chat-item-divider{display:none}
 /* TG-style divider: тонкая линия снизу, начинается после аватара */
 .chat-item + .chat-item { border-top: 0.33px solid rgba(255,255,255,0.07); }
-.online-dot{position:absolute;bottom:2px;right:2px;width:12px;height:12px;background:var(--accent);border:2px solid var(--bg);border-radius:50%;box-shadow:0 0 0 1.5px var(--bg),0 0 6px var(--accent)}
+.online-dot{position:absolute;bottom:1px;right:1px;width:13px;height:13px;background:#22c55e;border:2.5px solid var(--bg,#1d1d1e);border-radius:50%;box-shadow:0 0 0 1px rgba(34,197,94,0.3);z-index:10;display:block}
 
 /* СВАЙП ЖЕСТЫ */
 .chat-swipe-container{position:relative;overflow:hidden;touch-action:pan-y}
@@ -4099,7 +4099,7 @@ function renderChatList(chats) {
 
             // Аватар
             const avaWrap = document.createElement('div');
-            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:56px;height:56px;display:flex;align-items:center;justify-content:center';
+            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:48px;height:48px;display:flex;align-items:center;justify-content:center';
 
             const _ai = document.createElement('div');
             if (chat.has_moment && !isGroup) {
@@ -4107,8 +4107,8 @@ function renderChatList(chats) {
                 _ai.style.cssText = 'position:absolute;inset:5px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center';
                 _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
             } else {
-                _ai.style.cssText = 'border-radius:50%;overflow:hidden;flex-shrink:0';
-                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                _ai.style.cssText = 'position:absolute;inset:0;border-radius:50%;overflow:hidden;flex-shrink:0';
+                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
             }
             avaWrap.appendChild(_ai);
 
@@ -5129,11 +5129,15 @@ function buildMessageRow(msg, animate = true) {
         const _vidId = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
         const _wrpId = 'wrp_' + _vidId;
         const _vidSrc = msg.file_url || '';
-        const _poster = msg.preview_url || '';
-        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster}')" style="cursor:pointer">
+        const _poster = msg.preview_url || msg.thumbnail_url || '';
+        // Placeholder shown while poster is being extracted
+        const _thumbPlaceholder = _poster ? '' : `<div id="ph_${_vidId}" style="position:absolute;inset:0;z-index:3;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);display:flex;align-items:center;justify-content:center;border-radius:14px;overflow:hidden"><div style="text-align:center;opacity:0.45"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" style="display:block;margin:0 auto 8px"><path d="M23 7l-7 5 7 5V7z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="white" stroke-width="1.5"/></svg></div></div>`;
+        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}')" style="cursor:pointer;min-height:160px">
+            ${_thumbPlaceholder}
             <video id="${_vidId}" src="${_vidSrc}" ${_poster ? `poster="${_poster}"` : ''} playsinline preload="metadata" muted
-                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:#111;pointer-events:none"
-                   onloadeddata="_grabVideoPoster('${_vidId}')"
+                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:transparent;pointer-events:none;position:relative;z-index:1"
+                   onloadedmetadata="_grabVideoPosterFast('${_vidId}')"
+                   onloadeddata="_grabVideoPosterFast('${_vidId}')"
                    onerror="this.closest('.video-bubble-wrap').innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
             ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}')"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}"></div>`}
             <div class="video-play-overlay">
@@ -6263,6 +6267,8 @@ function openVideoModal(src, poster) {
     vid.preload     = 'auto';
     vid.controls    = false;   // НИКАКИХ Safari controls
     if (poster) vid.poster = poster;
+    // Faster playback start: lower buffer threshold
+    try { if (vid.buffered !== undefined) vid.setAttribute('x-webkit-airplay', 'allow'); } catch(e) {}
     vid.style.cssText = 'width:100%;max-width:860px;max-height:72vh;object-fit:contain;border-radius:12px;background:#000;outline:none;display:block';
     modal.appendChild(vid);
 
@@ -6394,27 +6400,59 @@ function openVideoModal(src, poster) {
 }
 
 // Grab first frame as poster for video bubbles (blur preview)
-function _grabVideoPoster(vidId) {
+function _grabVideoPoster(vidId) { _grabVideoPosterFast(vidId); }
+function _grabVideoPosterFast(vidId) {
     const v = document.getElementById(vidId);
     if (!v || v._posterGrabbed) return;
-    v._posterGrabbed = true;
-    try {
-        const cv = document.createElement('canvas');
-        cv.width  = v.videoWidth  || 320;
-        cv.height = v.videoHeight || 180;
-        const ctx = cv.getContext('2d');
-        ctx.drawImage(v, 0, 0, cv.width, cv.height);
-        const dataUrl = cv.toDataURL('image/jpeg', 0.75);
-        // Apply as poster
-        v.setAttribute('poster', dataUrl);
-        // Apply as blurred background
-        const blrId = 'blr_' + vidId;
-        const blr = document.getElementById(blrId);
-        if (blr) blr.style.backgroundImage = `url('${dataUrl}')`;
-        // Store in wrap
-        const wrap = v.closest('.video-bubble-wrap');
-        if (wrap) wrap.dataset.poster = dataUrl;
-    } catch(e) {}
+    // Seek to 0.1s to get a real frame (not black)
+    if (v.readyState >= 1 && !v.currentTime) {
+        try { v.currentTime = 0.1; } catch(e) {}
+    }
+    const _doGrab = () => {
+        if (v._posterGrabbed) return;
+        v._posterGrabbed = true;
+        try {
+            const cv = document.createElement('canvas');
+            cv.width  = v.videoWidth  || 320;
+            cv.height = v.videoHeight || 180;
+            const ctx = cv.getContext('2d');
+            ctx.drawImage(v, 0, 0, cv.width, cv.height);
+            const dataUrl = cv.toDataURL('image/jpeg', 0.8);
+            // Only apply if we got a real frame (not black)
+            const imgData = ctx.getImageData(0, 0, Math.min(cv.width,16), Math.min(cv.height,16));
+            const isBlack = Array.from(imgData.data).every((v,i) => i%4===3 || v<8);
+            if (!isBlack) {
+                v.setAttribute('poster', dataUrl);
+                const blrId = 'blr_' + vidId;
+                const blr = document.getElementById(blrId);
+                if (blr) blr.style.backgroundImage = `url('${dataUrl}')`;
+                const wrap = v.closest('.video-bubble-wrap');
+                if (wrap) {
+                    wrap.dataset.poster = dataUrl;
+                    // Update onclick to pass poster
+                    const src = v.src || v.getAttribute('src') || '';
+                    wrap.onclick = () => openVideoModal(src, dataUrl);
+                }
+                // Remove placeholder
+                const ph = document.getElementById('ph_' + vidId);
+                if (ph) ph.remove();
+            } else {
+                // Try again after a short delay
+                v._posterGrabbed = false;
+                setTimeout(() => _grabVideoPosterFast(vidId), 300);
+            }
+        } catch(e) {
+            // Remove placeholder even on error
+            const ph = document.getElementById('ph_' + vidId);
+            if (ph) ph.remove();
+        }
+    };
+    if (v.readyState >= 2) {
+        _doGrab();
+    } else {
+        v.addEventListener('loadeddata', _doGrab, { once: true });
+        v.addEventListener('seeked', _doGrab, { once: true });
+    }
 }
 
 // ══════════════════════════════════════════════════════════
