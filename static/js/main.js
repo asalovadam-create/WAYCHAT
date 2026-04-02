@@ -419,32 +419,52 @@ const WCCache = (() => {
 
 // ══ VirtualList ═══════════════════════════════════════════════
 const VirtualList=(()=>{
-    const OV=18,EH=76,BA=50;
+    const OV=25,EH=72,BA=50;
     let el=null,ms=[],s=0,e=0,tp=null,bp=null,ts=null,bs=null,hc=new Map(),rf=null;
     const gh=i=>hc.get(i)||EH;
     const gs=(a,b)=>{let r=0;for(let i=a;i<b;i++)r+=gh(i);return r;};
+    // Measure ALL visible rows, not just [data-vi] — catches rows without dataset
     function msr(){if(!el)return;el.querySelectorAll('[data-vi]').forEach(n=>{const h=n.offsetHeight;if(h>8)hc.set(+n.dataset.vi,h);});}
     function phs(){if(tp)tp.style.height=gs(0,s)+'px';if(bp)bp.style.height=gs(e,ms.length)+'px';}
     function ld(i){for(let j=i-1;j>=0;j--){const d=getMessageDate(ms[j]);if(d)return d;}return null;}
     function win(ns,ne,ks){
         if(!el||!ms.length)return;ns=Math.max(0,ns);ne=Math.min(ms.length,ne);if(ns===s&&ne===e)return;
-        let an=null,of=0;if(ks){an=el.querySelector('[data-vi]');if(an)of=an.getBoundingClientRect().top;}
+        // Anchor scroll position to prevent jump
+        let an=null,anTop=0;
+        if(ks){an=el.querySelector('[data-vi]');if(an)anTop=an.getBoundingClientRect().top;}
         const f=document.createDocumentFragment();let ld2=ld(ns);
         for(let i=ns;i<ne;i++){const m=ms[i],d=getMessageDate(m);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);ld2=d;}
-          // Grouped bubble metadata
           const prevM=i>0?ms[i-1]:null,nextM=i<ms.length-1?ms[i+1]:null;
           const samePrev=prevM&&prevM.sender_id===m.sender_id&&getMessageDate(prevM)===getMessageDate(m);
           const sameNext=nextM&&nextM.sender_id===m.sender_id&&getMessageDate(nextM)===getMessageDate(m);
           m._grpFirst=!samePrev;m._grpLast=!sameNext;m._grpMid=samePrev&&sameNext;
-          const r=buildMessageRow(m,false);r.dataset.vi=i;f.appendChild(r);}
-        el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());ts.after(f);s=ns;e=ne;msr();phs();
-        if(ks&&an){const na=el.querySelector('[data-vi="'+s+'"]');if(na)el.scrollTop+=na.getBoundingClientRect().top-of;}
+          const r=buildMessageRow(m,false);if(!r)continue;r.dataset.vi=i;f.appendChild(r);}
+        el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());ts.after(f);s=ns;e=ne;
+        // Measure AFTER DOM insert
+        requestAnimationFrame(()=>{
+            msr();phs();
+            if(ks&&an){const na=el.querySelector('[data-vi="'+s+'"]');if(na){const delta=na.getBoundingClientRect().top-anTop;if(Math.abs(delta)>2)el.scrollTop+=delta;}}
+        });
     }
-    function calc(){if(!el||!ms.length)return;const st=el.scrollTop,ch=el.clientHeight;let cum=0,vs=0,ve=ms.length;for(let i=0;i<ms.length;i++){const h=gh(i);if(cum+h>st&&vs===0)vs=i;if(cum>st+ch){ve=i;break;}cum+=h;}win(Math.max(0,vs-OV),Math.min(ms.length,ve+OV),true);}
-    function onsc(){if(el.scrollTop<140&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages&&typeof loadMessages==='function')loadMessages(false);if(rf)cancelAnimationFrame(rf);rf=requestAnimationFrame(calc);}
+    function calc(){
+        if(!el||!ms.length)return;
+        const st=el.scrollTop,ch=el.clientHeight;
+        let cum=0,vs=0,ve=ms.length;
+        for(let i=0;i<ms.length;i++){
+            const h=gh(i);
+            if(cum+h>st&&vs===0)vs=i;
+            if(cum>st+ch){ve=i;break;}
+            cum+=h;
+        }
+        win(Math.max(0,vs-OV),Math.min(ms.length,ve+OV),true);
+    }
+    function onsc(){
+        if(el.scrollTop<140&&typeof hasMoreMessages!=='undefined'&&hasMoreMessages&&!loadingMessages&&typeof loadMessages==='function')loadMessages(false);
+        if(rf)cancelAnimationFrame(rf);
+        rf=requestAnimationFrame(calc);
+    }
     function mount(el2){if(el)destroy();el=el2;ms=[];hc.clear();s=0;e=0;el.style.overflowY='auto';el.style.WebkitOverflowScrolling='touch';el.style.overscrollBehavior='contain';ts=document.createElement('div');ts.style.cssText='height:1px;flex-shrink:0';tp=document.createElement('div');tp.className='vl-ph';tp.style.height='0';bp=document.createElement('div');bp.className='vl-ph';bp.style.height='0';bs=document.createElement('div');bs.style.cssText='height:1px;flex-shrink:0';el.appendChild(ts);el.appendChild(tp);el.appendChild(bp);el.appendChild(bs);el.addEventListener('scroll',onsc,{passive:true});}
     function setMessages(arr){if(!el)return;ms=arr.slice();hc.clear();s=0;e=0;el.querySelectorAll('[data-vi],[data-vd]').forEach(n=>n.remove());phs();if(!arr.length){el.innerHTML='<div style="padding:60px 0;text-align:center;opacity:.2"><div style="font-size:40px;margin-bottom:10px">👋</div><p>Начните переписку!</p></div>';return;}if(!el.contains(ts)){el.innerHTML='';mount(el);}win(Math.max(0,arr.length-BA),arr.length,false);
-        // FIXED: triple rAF + fallback timer — гарантирует что DOM отрисован
         function _scrollAfterRender(attempt) {
             if (attempt > 5) return;
             requestAnimationFrame(function() {
@@ -460,29 +480,26 @@ const VirtualList=(()=>{
         }
         _scrollAfterRender(0);}
     function append(msg){if(!el)return;
-        // FIX DUPLICATE: if real msg arrives, remove optimistic row with same content from same sender
         if(!msg._optimistic && msg.id){
-            // Remove matching optimistic DOM rows
             el.querySelectorAll('[data-optimistic="1"]').forEach(function(optEl){
                 if(optEl.dataset.content===(msg.content||'') && String(msg.sender_id)===String(typeof currentUser!=='undefined'?currentUser.id:''))optEl.remove();
             });
-            // Remove matching temp entries from ms array (tmp_ prefixed)
             const prevLen=ms.length;
             ms=ms.filter(function(m){return!(String(m.id).startsWith('tmp_')&&(m.content||'')===(msg.content||''));});
-            if(ms.length<prevLen){hc.clear();s=0;e=0;}
-            // Dedup by real id
+            // FIX: don't clear hc on small dedup — just shift indices
+            if(ms.length<prevLen){
+                const diff=prevLen-ms.length;
+                const nh=new Map();hc.forEach((v,k)=>{if(typeof k==='number'&&k<ms.length)nh.set(k,v);});hc=nh;
+                s=Math.max(0,s-diff);e=Math.max(0,e-diff);
+            }
             if(ms.some(function(m){return String(m.id)===String(msg.id);}))return;
         }
         ms.push(msg);const idx=ms.length-1;const ab=el.scrollHeight-el.scrollTop-el.clientHeight<120;
-    // Set grouping flags on append
-    const _prev=idx>0?ms[idx-1]:null;
-    const _samePrev=_prev&&_prev.sender_id===msg.sender_id&&getMessageDate(_prev)===getMessageDate(msg);
-    msg._grpFirst=!_samePrev;msg._grpLast=true;msg._grpMid=false;
-    // Update previous message's _grpLast=false if same sender
-    if(_samePrev){_prev._grpLast=false;_prev._grpMid=_prev._grpFirst===false;} // FIX Task 2a: 120px threshold
-    if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;
-        // FIX BUG-5: плавная анимация для новых сообщений — не для загруженных из истории
-        // animate-msg добавляется только если сообщение не оптимистичное (уже показано)
+        const _prev=idx>0?ms[idx-1]:null;
+        const _samePrev=_prev&&_prev.sender_id===msg.sender_id&&getMessageDate(_prev)===getMessageDate(msg);
+        msg._grpFirst=!_samePrev;msg._grpLast=true;msg._grpMid=false;
+        if(_samePrev){_prev._grpLast=false;_prev._grpMid=_prev._grpFirst===false;}
+        if(e>=idx){const f=document.createDocumentFragment();const d=getMessageDate(msg),ld2=ld(idx);if(d&&d!==ld2){const dv=document.createElement('div');dv.className='date-divider';dv.dataset.vd=d;dv.innerHTML=`<div class="date-divider-inner">${d}</div>`;f.appendChild(dv);}const r=buildMessageRow(msg,true);if(!r)return;r.dataset.vi=idx;
         if (!msg._optimistic) {
             r.classList.add('animate-msg');
             if (typeof currentUser !== 'undefined' && msg.sender_id === currentUser.id) {
@@ -491,13 +508,12 @@ const VirtualList=(()=>{
                 r.classList.add('in');
             }
         }
-        f.appendChild(r);bs.before(f);e=ms.length;msr();phs();
+        f.appendChild(r);bs.before(f);e=ms.length;
+        requestAnimationFrame(()=>{msr();phs();});
         if(ab){
-            // FIX Task 2a: user near bottom — auto scroll
             requestAnimationFrame(function(){el.scrollTop=el.scrollHeight;});
             _scrollAtBottom=true;_scrollUnread=0;
         } else {
-            // FIX Task 2a: user scrolled up — show badge, don't scroll
             _scrollAtBottom=false;
             const isMine = typeof currentUser!=='undefined' && msg.sender_id===currentUser.id;
             if(!isMine){ _scrollUnread++; }
@@ -4102,35 +4118,46 @@ function renderChatList(chats) {
 
             const _ai = document.createElement('div');
             if (chat.has_moment && !isGroup) {
-                // Враппер 58×58 для SVG-кольца, аватар со смещением inset:6px
-                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:58px;height:58px';
-                _ai.style.cssText = 'position:absolute;inset:6px;border-radius:50%;overflow:hidden';
-                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
-                // Принудительно растянуть wc-ava внутри на 100%
-                _ai.style.cssText += ';display:flex;align-items:center;justify-content:center';
+                // Враппер 56×56: кольцо 56px, аватар inset:4px = 48×48 внутри
+                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:56px;height:56px';
+                _ai.style.cssText = 'position:absolute;top:4px;left:4px;width:48px;height:48px;border-radius:50%;overflow:hidden;background:#2c2c2e';
+                // wc-ava внутри должна быть 48px
+                const _avaHtml = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                _ai.innerHTML = _avaHtml;
+                // Принудительно растянуть внутренний wc-ava на 48px
+                requestAnimationFrame(()=>{
+                    const inner = _ai.querySelector('.wc-ava');
+                    if(inner){inner.style.width='48px';inner.style.height='48px';inner.style.minWidth='48px';}
+                });
             } else {
-                // Враппер облегает wc-ava (48×48), position:relative для dot
+                // Враппер ровно 48×48, position:relative для dot
                 avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:48px;height:48px';
-                _ai.style.cssText = 'width:100%;height:100%';
-                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                _ai.style.cssText = 'position:absolute;inset:0;border-radius:50%;overflow:hidden';
+                const _avaHtml = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                _ai.innerHTML = _avaHtml;
+                // Stretch inner wc-ava to fill
+                requestAnimationFrame(()=>{
+                    const inner = _ai.querySelector('.wc-ava');
+                    if(inner){inner.style.width='48px';inner.style.height='48px';inner.style.minWidth='48px';}
+                });
             }
             avaWrap.appendChild(_ai);
 
-            // SVG-кольцо моментов
+            // SVG-кольцо моментов — полный круг поверх аватарки
             if (!isGroup && chat.has_moment) {
                 const mc=Math.min(chat.moment_count||1,8);
                 const _ns='http://www.w3.org/2000/svg';
                 const sv=document.createElementNS(_ns,'svg');
-                sv.setAttribute('width','58');sv.setAttribute('height','58');sv.setAttribute('viewBox','0 0 58 58');
-                sv.style.cssText='position:absolute;inset:0;pointer-events:none';
-                const _cx=29,_cy=29,_r=27,_gap=mc>1?5:0,_seg=(360-_gap*mc)/mc;
+                sv.setAttribute('width','56');sv.setAttribute('height','56');sv.setAttribute('viewBox','0 0 56 56');
+                sv.style.cssText='position:absolute;inset:0;pointer-events:none;z-index:2';
+                const _cx=28,_cy=28,_r=26,_gap=mc>1?5:0,_seg=(360-_gap*mc)/mc;
                 for(let i=0;i<mc;i++){
                     const sd=-90+i*(_seg+_gap),ed=sd+_seg,tr=d=>d*Math.PI/180;
                     const x1=_cx+_r*Math.cos(tr(sd)),y1=_cy+_r*Math.sin(tr(sd));
                     const x2=_cx+_r*Math.cos(tr(ed)),y2=_cy+_r*Math.sin(tr(ed));
                     const p=document.createElementNS(_ns,'path');
                     p.setAttribute('d',`M${x1.toFixed(1)} ${y1.toFixed(1)} A${_r} ${_r} 0 ${_seg>180?1:0} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`);
-                    p.setAttribute('stroke','var(--accent)');p.setAttribute('stroke-width','3.5');
+                    p.setAttribute('stroke','var(--accent)');p.setAttribute('stroke-width','3');
                     p.setAttribute('fill','none');p.setAttribute('stroke-linecap','round');
                     sv.appendChild(p);
                 }
@@ -8000,7 +8027,7 @@ function showPartnerProfile() {
         // Аватар + имя по центру внизу шапки
         + '<div style="position:absolute;bottom:0;left:0;right:0;display:flex;flex-direction:column;align-items:center;padding-bottom:20px;z-index:2">'
         + '<div style="width:120px;height:120px;border-radius:50%;overflow:hidden;border:3.5px solid rgba(255,255,255,0.22);box-shadow:0 8px 40px rgba(0,0,0,0.6);margin-bottom:14px">'
-        + (avatarSrc ? '<img src="' + (avatarSrc.replace(/"/g,'&quot;')) + '" style="width:100%;height:100%;object-fit:cover">' : getInitialAvatar(name,'w-full h-full',currentPartnerId))
+        + (avatarSrc ? '<img src="' + (avatarSrc.replace(/"/g,'&quot;')) + '" style="width:100%;height:100%;object-fit:cover;display:block">' : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:48px;font-weight:800;color:#fff;background:linear-gradient(135deg,#6366f1,#4f46e5)">' + (name||'?').trim()[0].toUpperCase() + '</div>')
         + '</div>'
         + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
         + '<span id="pp-name-display" style="font-size:24px;font-weight:800;color:#fff;letter-spacing:-0.4px;text-shadow:0 2px 16px rgba(0,0,0,0.5)">' + (name.replace(/</g,'&lt;').replace(/>/g,'&gt;')) + '</span>'
