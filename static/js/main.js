@@ -136,6 +136,18 @@ const WCCache = (() => {
         #app .input-bar { padding-bottom: 0 !important; }
         /* Убиваем серый фон который может просвечивать под #app */
         * { -webkit-tap-highlight-color: transparent !important; }
+        /* ── ШРИФТ: приятный SF Pro / Inter ── */
+        *, *::before, *::after {
+            font-family: -apple-system, "SF Pro Display", "SF Pro Text", "Inter", "Helvetica Neue", Arial, sans-serif !important;
+            -webkit-font-smoothing: antialiased !important;
+            text-rendering: optimizeLegibility !important;
+        }
+        /* ── Скруглённые пузыри сообщений ── */
+        .msg-bubble { border-radius: 20px !important; }
+        /* ── Непрочитанные цифры — БЕЛЫЕ ── */
+        .wc-unread-badge { color: #fff !important; border-radius: 12px !important; }
+        /* ── chat-back-badge скрыт на главном экране ── */
+        #chat-back-badge:empty { display: none !important; }
         /* chat-view: flex-колонка на весь экран */
         /* FIX P1: inset:0 + position:fixed уже задаёт 100% — 100dvh избыточен
            и конфликтует с safe-area на iPhone с home indicator */
@@ -160,6 +172,8 @@ const WCCache = (() => {
             overflow-x: hidden !important;
             -webkit-overflow-scrolling: touch !important;
             overscroll-behavior-y: contain !important;
+            touch-action: pan-y !important;
+            will-change: scroll-position !important;
             margin: 0 !important;
             padding-top: 4px !important;
         }
@@ -210,6 +224,8 @@ const WCCache = (() => {
         .fab-plus  { pointer-events: all !important; z-index: 951 !important; touch-action: manipulation !important; }
         .fab-menu  { z-index: 952 !important; }
         .fab-bd    { z-index: 948 !important; }
+        /* Scroll-to-bottom button — выше input-bar */
+        #wc-scroll-btn { bottom: 84px !important; }
         /* main-content: padding-bottom = 0, safe-area только в input-bar */
         #main-content {
             padding-bottom: 0 !important;
@@ -246,7 +262,10 @@ const WCCache = (() => {
             touch-action: pan-y !important;
             overscroll-behavior-y: contain !important;
             -webkit-overflow-scrolling: touch !important;
+            will-change: scroll-position !important;
         }
+        /* Дочерние элементы messages тоже не блокируют скролл */
+        #messages > * { touch-action: pan-y; }
         /* input-bar pointer-events: none на самом контейнере, all на детях —
            предотвращает перехват touch events на нижней части экрана */
         .input-bar {
@@ -326,15 +345,29 @@ const WCCache = (() => {
 .wc-ava-header  .wc-ava-initials { font-size: 15px; }
 .wc-ava-profile .wc-ava-initials { font-size: 40px; }
 .wc-ava-msg     .wc-ava-initials { font-size: 14px; }
-/* Online dot */
+/* Online dot — красивее, с мягким свечением */
 .wc-ava-wrap { position: relative; flex-shrink: 0; display: inline-flex; }
 .wc-ava-online {
   position: absolute; bottom: 1px; right: 1px;
-  width: 13px; height: 13px;
-  background: var(--accent);
-  border: 2.5px solid var(--bg);
+  width: 11px; height: 11px;
+  background: #22c55e;
+  border: 2px solid var(--bg, #1d1d1e);
   border-radius: 50%;
-  box-shadow: 0 0 0 1px var(--bg);
+  box-shadow: 0 0 0 1.5px rgba(34,197,94,0.35);
+  animation: wcOnlinePulse 3s ease-in-out infinite;
+}
+@keyframes wcOnlinePulse {
+  0%, 100% { box-shadow: 0 0 0 1.5px rgba(34,197,94,0.35); }
+  50%       { box-shadow: 0 0 0 3px   rgba(34,197,94,0.15); }
+}
+/* Loading spinner для видео момента */
+@keyframes wcSpin { to { transform: rotate(360deg); } }
+.wc-moment-spinner {
+  width: 44px; height: 44px;
+  border: 3px solid rgba(255,255,255,0.2);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: wcSpin 0.8s linear infinite;
 }
 `;
     document.head.appendChild(_avaSt);
@@ -4070,8 +4103,9 @@ function renderChatList(chats) {
 
             const _ai = document.createElement('div');
             if (chat.has_moment && !isGroup) {
-                _ai.style.cssText = 'position:absolute;inset:4px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center';
-                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-10 h-10');
+                // Аватар занимает inset:5px чтобы кольцо SVG не перекрывало его
+                _ai.style.cssText = 'position:absolute;inset:5px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center';
+                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
             } else {
                 _ai.style.cssText = 'border-radius:50%;overflow:hidden;flex-shrink:0';
                 _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
@@ -4119,7 +4153,23 @@ function renderChatList(chats) {
             div.appendChild(avaWrap);
             div.appendChild(info);
 
-            // Клик
+            // Клик на аватар с моментом → открывает момент; клик на остальное → чат
+            if (chat.has_moment && !isGroup) {
+                avaWrap.style.cursor = 'pointer';
+                avaWrap.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    vibrate(8);
+                    openUserMomentsViewer(partnerId);
+                });
+                avaWrap.addEventListener('touchend', (e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    vibrate(8);
+                    openUserMomentsViewer(partnerId);
+                }, { passive: false });
+            }
+
+            // Клик на весь элемент → открыть чат
             div.onclick = ((_g,_pid,_pn,_pa) => () => { vibrate(8); _g ? openGroupChat(_pid,_pn,_pa) : openChat(_pid,_pn,_pa); })(isGroup,partnerId,partnerName,partnerAvatar);
 
             // Long-press
@@ -4139,14 +4189,21 @@ function renderChatList(chats) {
         // Обновляем текстовый контент (info)
         const info = div.querySelector('.chat-info');
         if (info) {
+            // Иконки статуса прочтения
+            const _TICK1 = `<svg width="14" height="10" viewBox="0 0 16 12" fill="none"><path d="M2 6l4 4L14 2" stroke="rgba(255,255,255,0.45)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            const _TICK2 = `<svg width="18" height="10" viewBox="0 0 20 12" fill="none"><path d="M2 6l4 4L14 2" stroke="#93c5fd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 6l4 4L19 2" stroke="#93c5fd" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+            // Показываем статус прочтения только для наших последних сообщений
+            const _readStatusHtml = chat.last_msg_mine
+                ? `<span style="display:inline-flex;align-items:center;margin-left:2px;vertical-align:middle">${chat.last_read ? _TICK2 : _TICK1}</span>`
+                : '';
             info.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
                     <span style="font-weight:${isUnread?'700':'600'};font-size:17px;letter-spacing:-0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:205px">${escHtml(displayName)}</span>
-                    <span style="font-size:12px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px">${time}</span>
+                    <span style="font-size:12px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px;display:flex;align-items:center;gap:2px">${_readStatusHtml}${time}</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
                     <p style="font-size:15px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
-                    ${isUnread?`<span style="background:var(--accent);color:#000;font-size:11px;font-weight:800;min-width:22px;height:22px;border-radius:11px;display:flex;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0">${chat.unread_count}</span>`:''}
+                    ${isUnread?`<span class="wc-unread-badge" style="background:var(--accent);color:#fff;font-size:11px;font-weight:800;min-width:22px;height:22px;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0">${chat.unread_count}</span>`:''}
                 </div>`;
         }
 
@@ -6070,12 +6127,27 @@ function toggleAudio(uid) {
         // Restore speed
         const spd = parseFloat(wrap.dataset.speed || '1');
         audio.playbackRate = spd;
-        
-        // FIX: Переводим на receiver speaker (нижний динамик iPhone)
-        if (audio.setSinkId) {
-            audio.setSinkId('').catch(e => console.warn('setSinkId error:', e));
+
+        // iOS earpiece routing через Web Audio API.
+        // HTMLAudioElement по умолчанию → loudspeaker на iOS.
+        // AudioContext + MediaElementSourceNode → earpiece (нижний динамик).
+        // setSinkId не поддерживается в iOS Safari.
+        try {
+            if (!window._wcVoiceAudioCtx || window._wcVoiceAudioCtx.state === 'closed') {
+                window._wcVoiceAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            const actx = window._wcVoiceAudioCtx;
+            if (actx.state === 'suspended') actx.resume().catch(() => {});
+            // Создаём MediaElementSource только один раз для каждого элемента
+            if (!audio._wcRouted) {
+                audio._wcRouted = true;
+                const src = actx.createMediaElementSource(audio);
+                src.connect(actx.destination);
+            }
+        } catch(e) {
+            // Fallback: обычное воспроизведение если Web Audio недоступен
         }
-        
+
         audio.play().catch(() => {});
         wrap.dataset.playing = '1';
         const pi = wrap.querySelector('.tg-voice-icon-play');
@@ -6161,12 +6233,12 @@ function openFullImage(src) {
     overlay.onclick = (e) => { if (e.target === overlay || e.target.tagName === 'BUTTON') overlay.remove(); };
     overlay.innerHTML = `<img src="${src}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;user-select:none">
         <button style="position:absolute;top:max(20px,env(safe-area-inset-top));right:20px;background:rgba(255,255,255,0.1);border:none;color:white;font-size:24px;width:44px;height:44px;border-radius:50%;cursor:pointer">✕</button>
-        <a href="${src}" download style="position:absolute;bottom:max(20px,0px);left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.1);border:none;color:white;font-size:13px;padding:10px 20px;border-radius:20px;text-decoration:none">⬇ Сохранить</a>`;
+        <a href="${src}" download style="position:absolute;bottom:max(20px,0px);left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.1);border:none;color:white;font-size:13px;padding:10px 20px;border-radius:20px;text-decoration:none;display:flex;align-items:center;gap:6px"><svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="7 10 12 15 17 10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="white" stroke-width="2" stroke-linecap="round"/></svg> Сохранить</a>`;
     document.body.appendChild(overlay);
 }
 
 // ══════════════════════════════════════════════════════════
-//  ВИДЕО МОДАЛЬНОЕ ОКНО (TG Web стиль)
+//  КАСТОМНЫЙ ВИДЕО ПЛЕЕР (без Safari controls)
 // ══════════════════════════════════════════════════════════
 function openVideoModal(src, poster) {
     if (!src) return;
@@ -6175,33 +6247,148 @@ function openVideoModal(src, poster) {
     const modal = document.createElement('div');
     modal.id = '_wc_vid_modal';
     modal.style.cssText = [
-        'position:fixed', 'inset:0', 'z-index:99999',
-        'background:rgba(0,0,0,0.96)',
-        'backdrop-filter:blur(20px)', '-webkit-backdrop-filter:blur(20px)',
-        'display:flex', 'align-items:center', 'justify-content:center',
-        'flex-direction:column',
+        'position:fixed','inset:0','z-index:99999',
+        'background:rgba(0,0,0,0.97)',
+        'backdrop-filter:blur(20px)','-webkit-backdrop-filter:blur(20px)',
+        'display:flex','flex-direction:column',
+        'align-items:center','justify-content:center',
         'animation:fadeIn 0.22s ease',
     ].join(';');
 
-    modal.innerHTML = `
-        <div style="position:relative;width:100%;max-width:860px;max-height:90vh;display:flex;align-items:center;justify-content:center">
-            <video id="_wc_vid_player" src="${src}" ${poster ? `poster="${poster}"` : ''}
-                controls playsinline
-                style="width:100%;max-height:85vh;object-fit:contain;border-radius:12px;outline:none;background:#000"
-                autoplay></video>
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;margin-top:16px">
-            <button onclick="document.getElementById('_wc_vid_modal').remove()" style="background:rgba(255,255,255,0.12);border:0.5px solid rgba(255,255,255,0.15);color:white;font-size:14px;padding:10px 24px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;backdrop-filter:blur(8px)">✕ Закрыть</button>
-            <a href="${src}" download style="background:rgba(255,255,255,0.12);border:0.5px solid rgba(255,255,255,0.15);color:white;font-size:14px;padding:10px 24px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;text-decoration:none;backdrop-filter:blur(8px)">⬇ Сохранить</a>
-        </div>`;
+    // ── Видео ──────────────────────────────────────────────
+    const vid = document.createElement('video');
+    vid.src         = src;
+    vid.playsInline = true;
+    vid.autoplay    = true;
+    vid.preload     = 'auto';
+    vid.controls    = false;   // НИКАКИХ Safari controls
+    if (poster) vid.poster = poster;
+    vid.style.cssText = 'width:100%;max-width:860px;max-height:72vh;object-fit:contain;border-radius:12px;background:#000;outline:none;display:block';
+    modal.appendChild(vid);
 
-    // Close on backdrop click
-    modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
+    // ── Лоадер ────────────────────────────────────────────
+    const loader = document.createElement('div');
+    loader.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:5;pointer-events:none';
+    loader.innerHTML = '<div class="wc-moment-spinner"></div>';
+    modal.appendChild(loader);
+    vid.addEventListener('canplay',  () => { loader.style.display = 'none'; },  { once: true });
+    vid.addEventListener('waiting',  () => { loader.style.display = 'flex'; });
+    vid.addEventListener('playing',  () => { loader.style.display = 'none'; });
+
+    // ── Контролы ──────────────────────────────────────────
+    const ctrlWrap = document.createElement('div');
+    ctrlWrap.style.cssText = 'width:100%;max-width:860px;padding:14px 20px 0;display:flex;flex-direction:column;gap:10px';
+
+    // Seek bar
+    const seekBar = document.createElement('div');
+    seekBar.style.cssText = 'width:100%;height:5px;border-radius:3px;background:rgba(255,255,255,0.2);position:relative;cursor:pointer;touch-action:none';
+    const seekFill  = document.createElement('div');
+    seekFill.style.cssText = 'height:100%;width:0%;background:var(--accent,#10b981);border-radius:3px;pointer-events:none;transition:width 0.1s linear';
+    const seekThumb = document.createElement('div');
+    seekThumb.style.cssText = 'position:absolute;top:50%;left:0%;width:14px;height:14px;background:#fff;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 2px 8px rgba(0,0,0,0.5);pointer-events:none';
+    seekBar.appendChild(seekFill);
+    seekBar.appendChild(seekThumb);
+
+    // Кнопки
+    const btnRow = document.createElement('div');
+    btnRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px';
+
+    function _fmtVidTime(s) {
+        if (!s || isNaN(s)) return '0:00';
+        s = Math.floor(s);
+        return `${Math.floor(s/60)}:${(s%60).toString().padStart(2,'0')}`;
+    }
+
+    // Закрыть
+    const btnClose = document.createElement('button');
+    btnClose.style.cssText = 'background:rgba(255,255,255,0.1);border:0.5px solid rgba(255,255,255,0.15);color:#fff;font-size:14px;padding:10px 20px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px)';
+    btnClose.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg> Закрыть`;
+    btnClose.onclick = () => { vid.pause(); vid.src=''; modal.remove(); };
+
+    // Play/Pause
+    const _iPlay  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>`;
+    const _iPause = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></svg>`;
+    const btnPlay = document.createElement('button');
+    btnPlay.style.cssText = 'width:54px;height:54px;border-radius:50%;background:var(--accent,#10b981);border:none;color:#000;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:transform 0.12s';
+    btnPlay.innerHTML = _iPause;
+    btnPlay.onclick = () => { vid.paused ? vid.play() : vid.pause(); };
+    vid.addEventListener('play',  () => { btnPlay.innerHTML = _iPause; });
+    vid.addEventListener('pause', () => { btnPlay.innerHTML = _iPlay; });
+    vid.addEventListener('ended', () => { btnPlay.innerHTML = _iPlay; });
+
+    // Время
+    const timeLabel = document.createElement('span');
+    timeLabel.style.cssText = 'font-size:12px;color:rgba(255,255,255,0.5);font-variant-numeric:tabular-nums;min-width:90px;text-align:center';
+    timeLabel.textContent = '0:00 / 0:00';
+
+    // Скорость
+    const speeds  = [1, 1.5, 2, 0.5];
+    let speedIdx  = 0;
+    const btnSpeed = document.createElement('button');
+    btnSpeed.style.cssText = 'font-size:13px;font-weight:700;color:#fff;background:rgba(255,255,255,0.1);border:none;border-radius:12px;padding:8px 14px;cursor:pointer';
+    btnSpeed.textContent = '1×';
+    btnSpeed.onclick = () => {
+        speedIdx = (speedIdx + 1) % speeds.length;
+        vid.playbackRate = speeds[speedIdx];
+        btnSpeed.textContent = speeds[speedIdx] === 1 ? '1×' : speeds[speedIdx] + '×';
+    };
+
+    // Сохранить — SVG иконка
+    const btnSave = document.createElement('a');
+    btnSave.href     = src;
+    btnSave.download = '';
+    btnSave.style.cssText = 'background:rgba(255,255,255,0.1);border:0.5px solid rgba(255,255,255,0.15);color:#fff;font-size:14px;padding:10px 20px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;text-decoration:none;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px)';
+    btnSave.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><polyline points="7 10 12 15 17 10" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><line x1="12" y1="15" x2="12" y2="3" stroke="white" stroke-width="2" stroke-linecap="round"/></svg> Сохранить`;
+
+    // timeupdate
+    vid.addEventListener('timeupdate', () => {
+        if (!vid.duration) return;
+        const pct = vid.currentTime / vid.duration;
+        seekFill.style.width  = (pct * 100) + '%';
+        seekThumb.style.left  = (pct * 100) + '%';
+        timeLabel.textContent = `${_fmtVidTime(vid.currentTime)} / ${_fmtVidTime(vid.duration)}`;
     });
-    // Close on Escape
-    const _onKey = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', _onKey); } };
-    document.addEventListener('keydown', _onKey);
+
+    // Seek click/touch
+    function _doSeek(clientX) {
+        if (!vid.duration) return;
+        const rect = seekBar.getBoundingClientRect();
+        const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+        vid.currentTime = pct * vid.duration;
+        seekFill.style.width = (pct * 100) + '%';
+        seekThumb.style.left = (pct * 100) + '%';
+    }
+    seekBar.addEventListener('click', e => _doSeek(e.clientX));
+    let _seekDrag = false;
+    seekBar.addEventListener('touchstart', e => { _seekDrag = true; _doSeek(e.touches[0].clientX); }, { passive: true });
+    seekBar.addEventListener('touchmove',  e => { if (_seekDrag) { e.preventDefault(); _doSeek(e.touches[0].clientX); } }, { passive: false });
+    seekBar.addEventListener('touchend',   () => { _seekDrag = false; });
+
+    btnRow.appendChild(btnClose);
+    btnRow.appendChild(btnPlay);
+    btnRow.appendChild(timeLabel);
+    btnRow.appendChild(btnSpeed);
+    btnRow.appendChild(btnSave);
+    ctrlWrap.appendChild(seekBar);
+    ctrlWrap.appendChild(btnRow);
+    modal.appendChild(ctrlWrap);
+
+    // Закрыть на backdrop
+    modal.addEventListener('click', e => { if (e.target === modal) { vid.pause(); vid.src=''; modal.remove(); } });
+
+    // Свайп вверх/вниз → закрыть
+    let _sty = 0;
+    modal.addEventListener('touchstart', e => { _sty = e.touches[0].clientY; }, { passive: true });
+    modal.addEventListener('touchend', e => {
+        const dy = e.changedTouches[0].clientY - _sty;
+        if (Math.abs(dy) > 80 && e.target !== seekBar && e.target !== vid) {
+            vid.pause(); vid.src=''; modal.remove();
+        }
+    }, { passive: true });
+
+    // ESC
+    const _onEsc = e => { if (e.key === 'Escape') { vid.pause(); vid.src=''; modal.remove(); document.removeEventListener('keydown', _onEsc); } };
+    document.addEventListener('keydown', _onEsc);
 
     document.body.appendChild(modal);
 }
@@ -6552,13 +6739,21 @@ function onNewMessage(msg) {
 }
 
 function tryBrowserNotification(msg) {
-    if (Notification.permission === 'granted' && document.hidden) {
+    // Только когда приложение скрыто — не показываем если пользователь в приложении
+    if (!document.hidden) return;
+    // Дедупликация — не показываем дважды одно сообщение (SW мог уже показать)
+    if (window._lastNotifMsgId === msg.id) return;
+    window._lastNotifMsgId = msg.id;
+    // Очищаем через 5 сек
+    setTimeout(() => { if (window._lastNotifMsgId === msg.id) window._lastNotifMsgId = null; }, 5000);
+
+    if (Notification.permission === 'granted') {
         try {
             const senderName = getContactDisplayName(msg.sender_id, msg.sender_name || 'WayChat');
             new Notification(senderName, {
                 body: msg.content || '🎙️ Голосовое сообщение',
                 icon: '/static/img/chats.png',
-                tag:  `chat-${msg.chat_id}`
+                tag:  `wc-${msg.chat_id}`,  // tag предотвращает дубли от SW
             });
         } catch(e) {}
     }
@@ -6891,11 +7086,15 @@ function _stopVideoCircle() {
 function setupVoiceRecording() {
     const micBtn = document.getElementById('voice-btn-main');
     if (!micBtn) return;
+    // Защита от двойной инициализации
+    if (micBtn._wcVoiceSetup) return;
+    micBtn._wcVoiceSetup = true;
 
     // Клонируем чтобы убрать старые listeners
     const fresh = micBtn.cloneNode(true);
     micBtn.parentNode.replaceChild(fresh, micBtn);
     const btn = document.getElementById('voice-btn-main');
+    btn._wcVoiceSetup = true;
 
     let _waveTimer  = null;
     let _audioCtx   = null;
@@ -6947,7 +7146,16 @@ function setupVoiceRecording() {
             return Promise.reject(new Error('no mediaDevices'));
         }
 
-        const constraints = { audio: { echoCancellation: true, noiseSuppression: true }, video: false };
+        const constraints = {
+            audio: {
+                echoCancellation: { ideal: true },
+                noiseSuppression: { ideal: true },
+                autoGainControl:  { ideal: true },
+                channelCount:     { ideal: 1 },
+                sampleRate:       { ideal: 16000 },
+            },
+            video: false
+        };
 
         if (hasModern) {
             return navigator.mediaDevices.getUserMedia(constraints)
@@ -9525,16 +9733,37 @@ function _openMomentsOverlay(moments, startIdx) {
                 requestAnimationFrame(() => { fill.style.width = '100%'; });
             }
         } else if (isVid) {
+            // ── Лоадер пока видео не готово ───────────────────────
+            const loader = document.createElement('div');
+            loader.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:30;pointer-events:none';
+            loader.innerHTML = '<div class="wc-moment-spinner"></div>';
+            mediaWrap.appendChild(loader);
+
             const vid = document.createElement('video');
             vid.src       = m.media_url;
-            vid.autoplay  = true;
+            vid.autoplay  = false;      // НЕ autoplay — ждём canplay
             vid.playsInline = true;
             vid.muted     = false;
             vid.loop      = false;
-            vid.controls  = false; // БЕЗ контролов — только свайп
-            vid.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none';
+            vid.controls  = false;
+            vid.preload   = 'auto';
+            vid.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;transition:opacity 0.3s ease';
             _videoEl = vid;
             mediaWrap.appendChild(vid);
+
+            // Показываем и воспроизводим только когда достаточно данных
+            vid.addEventListener('canplay', () => {
+                loader.style.display = 'none';
+                vid.style.opacity = '1';
+                vid.play().catch(() => {
+                    // autoplay заблокирован — показываем кнопку play
+                    const playBtn = document.createElement('div');
+                    playBtn.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:15;cursor:pointer';
+                    playBtn.innerHTML = '<div style="width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.2);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="white"/></svg></div>';
+                    playBtn.onclick = () => { vid.play(); playBtn.remove(); };
+                    mediaWrap.appendChild(playBtn);
+                });
+            }, { once: true });
 
             // Прогресс для видео
             vid.addEventListener('timeupdate', () => {
@@ -9544,15 +9773,6 @@ function _openMomentsOverlay(moments, startIdx) {
             });
             // Автопереход после окончания видео
             vid.addEventListener('ended', () => goTo(idx + 1));
-            // iOS: нужно явно вызвать play() после пользовательского жеста
-            vid.play().catch(() => {
-                // При ошибке autoplay — показываем кнопку play
-                const playBtn = document.createElement('div');
-                playBtn.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:15;cursor:pointer';
-                playBtn.innerHTML = '<div style="width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.2);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="white"/></svg></div>';
-                playBtn.onclick = () => { vid.play(); playBtn.remove(); };
-                mediaWrap.appendChild(playBtn);
-            });
         } else {
             // Текстовый момент
             const txt = document.createElement('div');
@@ -14182,3 +14402,36 @@ if (window._pendingSWOpenChat) {
     _barObserver.observe(document.documentElement, { childList: true, subtree: true });
 })();
 // ══ END INPUT BAR FORCE FIX ══
+
+// ══════════════════════════════════════════════════════════
+//  REAL-TIME REFRESH — обновляем при возврате в приложение
+// ══════════════════════════════════════════════════════════
+document.addEventListener('visibilitychange', function() {
+    if (document.hidden) return;
+    // Приложение снова в фокусе — подгружаем свежие данные
+    if (typeof loadChats === 'function') {
+        setTimeout(loadChats, 400);
+    }
+    const chatWin = document.getElementById('chat-window');
+    if (chatWin && chatWin.classList.contains('active') && typeof loadMessages === 'function') {
+        setTimeout(function() { loadMessages(false); }, 400);
+    }
+});
+
+// ══════════════════════════════════════════════════════════
+//  SPINNER CSS для видео-лоадера в моментах и видеоплеере
+// ══════════════════════════════════════════════════════════
+(function() {
+    var _spinSt = document.createElement('style');
+    _spinSt.textContent = `
+        @keyframes wcSpin { to { transform: rotate(360deg); } }
+        .wc-moment-spinner {
+            width: 44px; height: 44px;
+            border: 3px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: wcSpin 0.8s linear infinite;
+        }
+    `;
+    document.head.appendChild(_spinSt);
+})();
