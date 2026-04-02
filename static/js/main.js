@@ -4099,16 +4099,20 @@ function renderChatList(chats) {
 
             // Аватар
             const avaWrap = document.createElement('div');
-            avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:48px;height:48px;display:flex;align-items:center;justify-content:center';
 
             const _ai = document.createElement('div');
             if (chat.has_moment && !isGroup) {
-                // Аватар занимает inset:5px чтобы кольцо SVG не перекрывало его
-                _ai.style.cssText = 'position:absolute;inset:5px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center';
-                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
+                // Враппер 58×58 для SVG-кольца, аватар со смещением inset:6px
+                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:58px;height:58px';
+                _ai.style.cssText = 'position:absolute;inset:6px;border-radius:50%;overflow:hidden';
+                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
+                // Принудительно растянуть wc-ava внутри на 100%
+                _ai.style.cssText += ';display:flex;align-items:center;justify-content:center';
             } else {
-                _ai.style.cssText = 'position:absolute;inset:0;border-radius:50%;overflow:hidden;flex-shrink:0';
-                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-full h-full');
+                // Враппер облегает wc-ava (48×48), position:relative для dot
+                avaWrap.style.cssText = 'position:relative;flex-shrink:0;width:48px;height:48px';
+                _ai.style.cssText = 'width:100%;height:100%';
+                _ai.innerHTML = getAvatarHtml({id:partnerId,name:partnerName,avatar:partnerAvatar},'w-12 h-12');
             }
             avaWrap.appendChild(_ai);
 
