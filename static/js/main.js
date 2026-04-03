@@ -1271,14 +1271,45 @@ function _handleMediaReady(data) {
 function insertEmoji() {
     const inp = document.getElementById('msg-input');
     if (!inp) return;
-    const emojis = ['😊','😂','❤️','👍','🔥','🎉','😎','🥰','🫡','💯','😍','🤣'];
-    const pick = emojis[Math.floor(Math.random() * emojis.length)];
-    const start = inp.selectionStart || inp.value.length;
-    inp.value = inp.value.slice(0, start) + pick + inp.value.slice(inp.selectionEnd || start);
-    inp.setSelectionRange(start + pick.length, start + pick.length);
-    inp.focus();
-    updateSendButton();
-    autoResize(inp);
+
+    // Переключаем на emoji-клавиатуру — меняем inputmode
+    const isEmoji = inp.dataset.emojiMode === '1';
+    if (isEmoji) {
+        // Возврат к обычной клавиатуре
+        inp.dataset.emojiMode = '0';
+        inp.setAttribute('inputmode', 'text');
+        inp.blur();
+        requestAnimationFrame(() => inp.focus());
+        const btn = document.querySelector('.tg-emoji-toggle');
+        if (btn) btn.style.color = '';
+    } else {
+        // Открываем emoji клавиатуру
+        inp.dataset.emojiMode = '1';
+        // На iOS: убираем inputmode чтобы появилась нативная emoji
+        inp.removeAttribute('inputmode');
+        // Trigger emoji keyboard via enterkeyhint trick
+        inp.setAttribute('inputmode', 'none');
+        inp.blur();
+        // Небольшая задержка для iOS
+        setTimeout(() => {
+            inp.removeAttribute('inputmode');
+            inp.setAttribute('type', 'text');
+            inp.focus();
+            // iOS Safari — симулируем tap чтобы открыть emoji
+            const touch = new Touch({
+                identifier: Date.now(),
+                target: inp,
+                clientX: inp.getBoundingClientRect().left + 10,
+                clientY: inp.getBoundingClientRect().top + 10,
+            });
+            try {
+                inp.dispatchEvent(new TouchEvent('touchstart', { touches: [touch], targetTouches: [touch], changedTouches: [touch], bubbles: true }));
+                inp.dispatchEvent(new TouchEvent('touchend', { touches: [], targetTouches: [], changedTouches: [touch], bubbles: true }));
+            } catch(e) {}
+        }, 80);
+        const btn = document.querySelector('.tg-emoji-toggle');
+        if (btn) btn.style.color = 'var(--accent,#10b981)';
+    }
 }
 
 // Scroll-down button — удалена дублирующая кнопка, используется только wc-scroll-btn
@@ -3443,7 +3474,7 @@ body {
             <div class="tg-text-wrap" id="input-area">
 
                 <!-- Смайлик — крайний левый внутри капсулы -->
-                <button class="tg-inner-btn" onclick="insertEmoji()" aria-label="Эмодзи">
+                <button class="tg-inner-btn tg-emoji-toggle" onclick="insertEmoji()" aria-label="Эмодзи">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
                         <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.7"/>
                         <path d="M8.5 14.5s1.5 2 3.5 2 3.5-2 3.5-2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
@@ -4630,24 +4661,21 @@ async function openChat(id, name, avatar) {
     msgs.innerHTML = '';
     const cacheKey = `p_${id}`;
 
-    // ЯДЕРНАЯ ОЧИСТКА: если партнёр в списке удалённых — убиваем ВСЕ кэши
     if (_deletedPartnerIds.has(id)) {
         delete messagesByChatCache[cacheKey];
-        // Ждём пока IndexedDB реально удалит запись
         try { await MsgDB.delete(cacheKey); } catch(e) {}
         try { await WCCache.del('profiles', String(id)); } catch(e) {}
-        // Не показываем НИЧЕГО — только пустой экран
         msgs.innerHTML = '';
     } else {
         const cached = messagesByChatCache[cacheKey];
         if (cached?.messages?.length) {
+            // In-memory кэш — показываем мгновенно
             renderMessagesFromCache(cached.messages);
             scrollDown(false);
             if (elStatus) elStatus.textContent = 'обновление...';
         } else {
-            // Show skeleton, then try IDB synchronously-ish
+            // Пробуем IndexedDB — показываем сразу без ожидания chat_id
             _showChatSkeleton(msgs);
-            // IDB load — show immediately when done
             MsgDB.load(cacheKey).then(idb => {
                 if (_chatOpenId !== _myOpenId) return;
                 if (_deletedPartnerIds.has(id)) { msgs.innerHTML = ''; return; }
@@ -9006,7 +9034,7 @@ function _compressImage(file, quality = 0.82, maxDim = 1920) {
             ctx.drawImage(img, 0, 0, width, height);
             canvas.toBlob(blob => {
                 if (blob && blob.size < file.size) resolve(blob);
-                else resolve(file); // оригинал меньше — не сжимаем
+                else resolve(file);
             }, 'image/jpeg', quality);
         };
         img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
@@ -9026,7 +9054,7 @@ async function pickMedia(context) {
         try { document.body.removeChild(input); } catch(e) {}
         if (!file) return;
 
-        // ── Глобальная проверка размера 100MB ──
+        // Глобальная проверка 100MB
         const MAX_BYTES = 100 * 1024 * 1024;
         if (file.size > MAX_BYTES) {
             showToast('Видео слишком большое (максимум 100 МБ). Обрежь его в галерее.', 'error', 6000);
@@ -9036,131 +9064,224 @@ async function pickMedia(context) {
         if (context === 'moment') { _showMomentEditor(file); return; }
         if (!currentChatId) return;
 
-        const isVid  = file.type.startsWith('video');
-        const previewUrl = URL.createObjectURL(file);
-        const tmpId  = 'media-upload-' + Date.now();
-
-        // XHR с поддержкой отмены
-        let _xhrRef = null;
-        let _cancelled = false;
-
-        // Оптимистичный пузырь с прогрессом и кнопкой отмены
-        const tmpRow = document.createElement('div');
-        tmpRow.className = 'msg-row out';
-        tmpRow.id = tmpId;
-        tmpRow.innerHTML = `
-            <div class="bubble" style="padding:4px;background:var(--accent);border-radius:18px 18px 4px 18px;position:relative;overflow:hidden;max-width:240px;min-width:120px;min-height:120px">
-                ${isVid
-                    ? `<video src="${previewUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover" muted playsinline></video>`
-                    : `<img src="${previewUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover">`
-                }
-                <div id="${tmpId}-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.48);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px;gap:10px">
-                    <div style="position:relative;width:52px;height:52px">
-                        <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg);position:absolute;inset:0">
-                            <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
-                            <circle id="${tmpId}-ring" cx="26" cy="26" r="20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"
-                                stroke-dasharray="${(2*Math.PI*20).toFixed(1)}" stroke-dashoffset="${(2*Math.PI*20).toFixed(1)}"
-                                style="transition:stroke-dashoffset 0.3s ease"/>
-                        </svg>
-                        <span id="${tmpId}-pct" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff">0%</span>
-                    </div>
-                    <button id="${tmpId}-cancel" style="background:rgba(255,255,255,0.18);border:none;border-radius:20px;padding:5px 14px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;backdrop-filter:blur(6px);font-family:inherit">
-                        ✕ Отмена
-                    </button>
-                </div>
-            </div>`;
-
-        const msgsEl = document.getElementById('messages');
-        if (msgsEl) {
-            msgsEl.appendChild(tmpRow);
-            msgsEl.scrollTop = msgsEl.scrollHeight;
-        }
-
-        // Кнопка отмены
-        const cancelBtn = document.getElementById(`${tmpId}-cancel`);
-        if (cancelBtn) {
-            cancelBtn.onclick = () => {
-                _cancelled = true;
-                if (_xhrRef) { try { _xhrRef.abort(); } catch(e) {} }
-                URL.revokeObjectURL(previewUrl);
-                tmpRow.remove();
-                showToast('Загрузка отменена', 'info', 2000);
-            };
-        }
-
-        // Сжатие изображения перед отправкой (для фото)
-        let _fileToSend = file;
-        if (!isVid && file.type.startsWith('image/') && file.size > 2 * 1024 * 1024) {
-            try {
-                _fileToSend = await _compressImage(file, 0.82, 1920);
-            } catch(e) { _fileToSend = file; }
-        }
-
-        // For video: extract thumbnail in background
-        let _vidThumbBlob = null;
-        if (isVid) {
-            _extractVideoThumbnail(file).then(b => { _vidThumbBlob = b; }).catch(() => {});
-        }
-
-        try {
-            const url_res = await new Promise((resolve, reject) => {
-                if (_cancelled) { reject(new Error('cancelled')); return; }
-                const fd  = new FormData();
-                fd.append('file', _fileToSend);
-                const xhr = new XMLHttpRequest();
-                _xhrRef = xhr;
-                const C   = 2 * Math.PI * 20;
-                xhr.upload.onprogress = (e) => {
-                    if (!e.lengthComputable) return;
-                    const pct  = e.loaded / e.total * 100;
-                    const ring = document.getElementById(`${tmpId}-ring`);
-                    const pctEl = document.getElementById(`${tmpId}-pct`);
-                    if (ring) ring.style.strokeDashoffset = (C * (1 - pct / 100)).toFixed(1);
-                    if (pctEl) pctEl.textContent = Math.round(pct) + '%';
-                };
-                xhr.onload = () => {
-                    if (xhr.status === 413) { reject(new Error('Файл слишком большой (макс 100 МБ)')); return; }
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        try { resolve(JSON.parse(xhr.responseText)); }
-                        catch(e) { reject(new Error('parse error')); }
-                    } else { reject(new Error('Ошибка сервера: ' + xhr.status)); }
-                };
-                xhr.onerror = () => reject(new Error('Нет соединения'));
-                xhr.onabort = () => reject(new Error('cancelled'));
-                xhr.open('POST', '/upload_media');
-                xhr.withCredentials = true;
-                xhr.send(fd);
-            });
-
-            if (_cancelled) return;
-            // Upload thumbnail separately if we have it
-            let _previewUrl = '';
-            if (isVid && _vidThumbBlob) {
-                try {
-                    const tfd = new FormData();
-                    tfd.append('file', _vidThumbBlob, 'thumb.jpg');
-                    const tr = await fetch('/upload_media_thumb', { method:'POST', credentials:'include', body: tfd });
-                    if (tr.ok) { const td = await tr.json(); _previewUrl = td.url || ''; }
-                } catch(e) {}
-            }
-
-            // Убираем превью и отправляем реальное сообщение
-            tmpRow.remove();
-            URL.revokeObjectURL(previewUrl);
-            socket.emit('send_message', {
-                chat_id:     currentChatId,
-                type_msg:    url_res.type || (isVid ? 'video' : 'image'),
-                file_url:    url_res.url,
-                preview_url: _previewUrl,
-                sender_id:   currentUser.id
-            });
-        } catch(e) {
-            tmpRow.remove();
-            URL.revokeObjectURL(previewUrl);
-            showToast(e.message || 'Ошибка загрузки', 'error', 4000);
-        }
+        // Показываем окно предпросмотра
+        _showMediaPreviewModal(file);
     };
     input.click();
+}
+
+// ── Окно предпросмотра медиа ─────────────────────────────────────────
+function _showMediaPreviewModal(file) {
+    const isVid = file.type.startsWith('video/');
+    const previewUrl = URL.createObjectURL(file);
+    let _sendMode = 'compressed'; // 'hd' | 'compressed' | 'once'
+
+    // Overlay
+    const ov = document.createElement('div');
+    ov.id = '_wc_media_preview';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.96);display:flex;flex-direction:column;font-family:-apple-system,BlinkMacSystemFont,SF Pro Display,sans-serif;animation:fadeIn 0.18s ease';
+    document.body.appendChild(ov);
+
+    const close = () => { URL.revokeObjectURL(previewUrl); ov.remove(); };
+
+    // Header
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:max(env(safe-area-inset-top,12px),12px) 16px 12px;flex-shrink:0';
+    hdr.innerHTML = `
+        <button id="_pvCancelBtn" style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
+        </button>
+        <span style="font-size:16px;font-weight:700;color:#fff">${isVid ? '📹 Видео' : '📷 Фото'}</span>
+        <button id="_pvMenuBtn" style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.1);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+        </button>`;
+    ov.appendChild(hdr);
+
+    hdr.querySelector('#_pvCancelBtn').onclick = close;
+
+    // Media preview
+    const mediaWrap = document.createElement('div');
+    mediaWrap.style.cssText = 'flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:0 8px';
+    if (isVid) {
+        mediaWrap.innerHTML = `<video src="${previewUrl}" style="max-width:100%;max-height:100%;border-radius:16px;object-fit:contain" controls playsinline muted></video>`;
+    } else {
+        mediaWrap.innerHTML = `<img src="${previewUrl}" style="max-width:100%;max-height:100%;border-radius:16px;object-fit:contain" draggable="false">`;
+    }
+    ov.appendChild(mediaWrap);
+
+    // Mode badge
+    const modeBadge = document.createElement('div');
+    modeBadge.style.cssText = 'text-align:center;padding:8px;flex-shrink:0';
+    const _updateBadge = () => {
+        const labels = { hd: '🎯 HD-качество', compressed: '⚡ Сжато', once: '🔥 Одноразовое' };
+        modeBadge.innerHTML = `<span style="background:rgba(255,255,255,0.12);border-radius:20px;padding:4px 14px;font-size:12px;font-weight:600;color:rgba(255,255,255,0.8)">${labels[_sendMode]}</span>`;
+    };
+    _updateBadge();
+    ov.appendChild(modeBadge);
+
+    // Caption + send
+    const bottom = document.createElement('div');
+    bottom.style.cssText = 'padding:8px 16px max(env(safe-area-inset-bottom,16px),16px);display:flex;align-items:center;gap:10px;flex-shrink:0';
+    bottom.innerHTML = `
+        <div style="flex:1;background:rgba(255,255,255,0.08);border-radius:24px;padding:10px 16px;display:flex;align-items:center">
+            <input id="_pvCaption" placeholder="Добавить подпись..." style="flex:1;background:none;border:none;outline:none;color:#fff;font-size:15px;font-family:inherit">
+        </div>
+        <button id="_pvSendBtn" style="width:50px;height:50px;border-radius:50%;background:var(--accent,#10b981);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 20px rgba(16,185,129,0.4)">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>`;
+    ov.appendChild(bottom);
+
+    // 3-dot menu
+    const _showMenu = () => {
+        const existing = document.getElementById('_pvMenuSheet');
+        if (existing) { existing.remove(); return; }
+        const sheet = document.createElement('div');
+        sheet.id = '_pvMenuSheet';
+        sheet.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);right:16px;background:rgba(30,30,35,0.98);border-radius:18px;padding:6px;min-width:220px;z-index:10001;border:0.5px solid rgba(255,255,255,0.12);backdrop-filter:blur(20px);box-shadow:0 8px 40px rgba(0,0,0,0.6)';
+        const opts = [
+            { id:'hd',   icon:'🎯', label:'HD-качество',        sub:'Оригинальное разрешение' },
+            { id:'compressed', icon:'⚡', label:'Сжатое',        sub:'Быстрее, меньше места' },
+            { id:'once', icon:'🔥', label:'Одноразовое',         sub:'Исчезает после просмотра' },
+        ];
+        opts.forEach(o => {
+            const row = document.createElement('div');
+            const isActive = _sendMode === o.id;
+            row.style.cssText = `display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;cursor:pointer;background:${isActive?'rgba(16,185,129,0.15)':'transparent'}`;
+            row.innerHTML = `<span style="font-size:20px">${o.icon}</span><div style="flex:1"><div style="font-size:14px;font-weight:${isActive?'700':'600'};color:${isActive?'var(--accent,#10b981)':'#fff'}">${o.label}</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px">${o.sub}</div></div>${isActive?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>':''}`;
+            row.onclick = () => { _sendMode = o.id; _updateBadge(); sheet.remove(); };
+            sheet.appendChild(row);
+        });
+        ov.style.position = 'relative';
+        ov.appendChild(sheet);
+        // Close on outside tap
+        setTimeout(() => { document.addEventListener('click', function _c(e){ if(!sheet.contains(e.target)&&e.target.id!=='_pvMenuBtn'){sheet.remove();document.removeEventListener('click',_c);}},{once:false}); }, 100);
+    };
+    hdr.querySelector('#_pvMenuBtn').onclick = _showMenu;
+
+    // Send
+    bottom.querySelector('#_pvSendBtn').onclick = async () => {
+        const caption = document.getElementById('_pvCaption')?.value?.trim() || '';
+        close();
+        await _uploadMediaWithMode(file, _sendMode, caption);
+    };
+}
+
+// ── Загрузка медиа с режимом ─────────────────────────────────────────
+async function _uploadMediaWithMode(file, mode, caption) {
+    const isVid = file.type.startsWith('video/');
+    const tmpId = 'media-upload-' + Date.now();
+    let _xhrRef = null, _cancelled = false;
+
+    // Предпросмотр в чате
+    const blobUrl = URL.createObjectURL(file);
+    const tmpRow = document.createElement('div');
+    tmpRow.className = 'msg-row out';
+    tmpRow.id = tmpId;
+    const C = 2 * Math.PI * 20;
+    tmpRow.innerHTML = `
+        <div class="bubble" style="padding:4px;background:${mode==='once'?'rgba(239,68,68,0.8)':'var(--accent)'};border-radius:18px 18px 4px 18px;position:relative;overflow:hidden;max-width:240px;min-width:120px;min-height:120px">
+            ${isVid ? `<video src="${blobUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover" muted playsinline></video>`
+                     : `<img src="${blobUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover">`}
+            ${mode==='once'?'<div style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.55);border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;color:#fff">🔥 1×</div>':''}
+            <div id="${tmpId}-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.48);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px;gap:10px">
+                <div style="position:relative;width:52px;height:52px">
+                    <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg);position:absolute;inset:0">
+                        <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+                        <circle id="${tmpId}-ring" cx="26" cy="26" r="20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"
+                            stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${C.toFixed(1)}" style="transition:stroke-dashoffset 0.3s ease"/>
+                    </svg>
+                    <span id="${tmpId}-pct" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff">0%</span>
+                </div>
+                <button id="${tmpId}-cancel" style="background:rgba(255,255,255,0.18);border:none;border-radius:20px;padding:5px 14px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit">✕ Отмена</button>
+            </div>
+        </div>`;
+
+    const msgsEl = document.getElementById('messages');
+    if (msgsEl) { msgsEl.appendChild(tmpRow); msgsEl.scrollTop = msgsEl.scrollHeight; }
+
+    document.getElementById(`${tmpId}-cancel`)?.addEventListener('click', () => {
+        _cancelled = true;
+        if (_xhrRef) try { _xhrRef.abort(); } catch(e) {}
+        URL.revokeObjectURL(blobUrl);
+        tmpRow.remove();
+        showToast('Загрузка отменена', 'info', 2000);
+    });
+
+    // Сжатие
+    let _fileToSend = file;
+    if (mode === 'compressed') {
+        if (!isVid && file.size > 500 * 1024) {
+            try { _fileToSend = await _compressImage(file, 0.75, 1280); } catch(e) {}
+        }
+    }
+    // HD — без сжатия, mode=once — без сжатия но флаг
+
+    // Thumbnail для видео
+    let _vidThumb = null;
+    if (isVid) { _extractVideoThumbnail(file).then(b => { _vidThumb = b; }).catch(()=>{}); }
+
+    try {
+        const url_res = await new Promise((resolve, reject) => {
+            if (_cancelled) { reject(new Error('cancelled')); return; }
+            const fd = new FormData();
+            fd.append('file', _fileToSend);
+            if (mode === 'once') fd.append('once', '1');
+            if (caption) fd.append('caption', caption);
+            const xhr = new XMLHttpRequest();
+            _xhrRef = xhr;
+            xhr.upload.onprogress = (e) => {
+                if (!e.lengthComputable) return;
+                const pct = e.loaded / e.total * 100;
+                const ring = document.getElementById(`${tmpId}-ring`);
+                const pctEl = document.getElementById(`${tmpId}-pct`);
+                if (ring) ring.style.strokeDashoffset = (C * (1 - pct/100)).toFixed(1);
+                if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+            };
+            xhr.onload = () => {
+                if (xhr.status === 413) { reject(new Error('Файл слишком большой')); return; }
+                if (xhr.status >= 200 && xhr.status < 300) { try { resolve(JSON.parse(xhr.responseText)); } catch(e) { reject(new Error('parse error')); } }
+                else reject(new Error('Ошибка сервера: ' + xhr.status));
+            };
+            xhr.onerror = () => reject(new Error('Нет соединения'));
+            xhr.onabort = () => reject(new Error('cancelled'));
+            xhr.open('POST', '/upload_media'); xhr.withCredentials = true; xhr.send(fd);
+        });
+
+        if (_cancelled) return;
+
+        // Убираем оверлей загрузки
+        document.getElementById(`${tmpId}-overlay`)?.remove();
+        URL.revokeObjectURL(blobUrl);
+
+        // Thumbnail upload
+        let _previewUrl = '';
+        if (isVid && _vidThumb) {
+            try {
+                const tfd = new FormData();
+                tfd.append('file', _vidThumb, 'thumb.jpg');
+                const tr = await fetch('/upload_media_thumb', { method:'POST', credentials:'include', body: tfd });
+                if (tr.ok) { const tj = await tr.json(); _previewUrl = tj.url || ''; }
+            } catch(e) {}
+        }
+
+        // Отправляем сообщение
+        const msgType = isVid ? 'video' : 'image';
+        socket.emit('send_message', {
+            chat_id: currentChatId,
+            type: msgType,
+            file_url: url_res.url || url_res.file_url || '',
+            preview_url: _previewUrl,
+            content: caption || (isVid ? 'Видео' : 'Фото'),
+            once: mode === 'once' ? true : undefined,
+            hd: mode === 'hd' ? true : undefined,
+        });
+        tmpRow.remove();
+    } catch(e) {
+        if (_cancelled || e.message === 'cancelled') return;
+        URL.revokeObjectURL(blobUrl);
+        tmpRow.style.opacity = '0.5';
+        showToast(e.message || 'Ошибка загрузки', 'error', 4000);
+    }
 }
 
 // ── Редактор момента: превью + перетаскиваемая гео-метка ──
@@ -9457,30 +9578,50 @@ function _markUserViewed(uid) {
 // ── ГЛАВНАЯ ФУНКЦИЯ ЗАГРУЗКИ ─────────────────────────────
 // Всегда грузит с сервера → обновляет кэш → рендерит bar + таб
 async function loadMoments(forceRender = false) {
+    // Мгновенно рендерим из кэша — не ждём сети
+    if (momentsCache) {
+        _renderMomentsBar();
+        _renderMomentsTab();
+        // Обновляем в фоне только если кэш старше 30 сек
+        if (!forceRender && Date.now() - momentsLastLoad < 30000) return;
+    } else {
+        // Попробуем взять из localStorage
+        try {
+            const lsCached = localStorage.getItem('waychat_moments_cache');
+            if (lsCached) {
+                const parsed = JSON.parse(lsCached);
+                if (Array.isArray(parsed) && parsed.length) {
+                    momentsCache = parsed;
+                    _renderMomentsBar();
+                    _renderMomentsTab();
+                }
+            }
+        } catch(e) {}
+        // Показываем скелетон если нет кэша
+        if (!momentsCache) {
+            const scroll = document.getElementById('moments-bar-scroll');
+            if (scroll && !scroll.children.length) {
+                _renderMomentsBarSkeleton(scroll);
+            }
+        }
+    }
     try {
         const r = await fetch('/get_moments', {
             credentials: 'include',
             cache: 'no-store',
         });
-        if (!r.ok) {
-            console.warn('[moments] fetch failed:', r.status);
-            // Рендерим из кэша если есть
-            _renderMomentsBar();
-            _renderMomentsTab();
-            return;
-        }
+        if (!r.ok) { _renderMomentsBar(); _renderMomentsTab(); return; }
         const moments = await r.json();
-        if (!Array.isArray(moments)) { console.warn('[moments] not array'); return; }
-
+        if (!Array.isArray(moments)) return;
         momentsCache        = moments;
         momentsLastLoad     = Date.now();
         window.currentMoments = moments;
-
+        // Сохраняем в localStorage для следующего запуска
+        try { localStorage.setItem('waychat_moments_cache', JSON.stringify(moments)); } catch(e) {}
         _renderMomentsBar();
         _renderMomentsTab();
     } catch(e) {
         console.error('[moments] loadMoments error:', e);
-        // Рендерим из кэша даже при ошибке сети
         _renderMomentsBar();
         _renderMomentsTab();
     }
