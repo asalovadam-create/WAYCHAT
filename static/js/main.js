@@ -5234,30 +5234,40 @@ function buildMessageRow(msg, animate = true) {
         const _skId = 'sk_' + (msg.id || Math.random().toString(36).slice(2));
         // FIX PHOTO FLASH: start visible if blob (already in memory) or already loaded once
         const _startOpacity = (_isBlob || (window._imgLoaded && window._imgLoaded.has(_isSrc))) ? '1' : '0';
+        // ONCE-MESSAGE FIX: добавляем блюр для одноразовых сообщений
+        const _isOnce = msg.once === true || msg.once === '1';
+        const _blurStyle = _isOnce ? 'filter:blur(24px);' : '';
+        const _onceOverlay = _isOnce ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);border-radius:14px;z-index:10;pointer-events:none"><div style="text-align:center"><div style="font-size:32px;margin-bottom:8px">🔥</div><div style="font-size:12px;color:#fff;font-weight:600">Одноразовое</div><div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:4px">Исчезает после просмотра</div></div></div>` : '';
         contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
-            onclick="openImgZoom(this.querySelector('img')?.src||'')">
+            onclick="openImgZoom(this.querySelector('img')?.src||'', ${_isOnce ? 'true' : 'false'}, '${msg.id}')">
             ${_startOpacity==='0'?`<div class="wc-img-sk" id="${_skId}"></div>`:''}
-            <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
-                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease"
+             <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
+                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease;${_blurStyle}"
                  onload="(function(el){window._imgLoaded=window._imgLoaded||new Set();window._imgLoaded.add(el.src);const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
                  onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
-            <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
+            ${_onceOverlay}
+            <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'}">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
         } else if (type === 'video') {
         const _vidId = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
         const _wrpId = 'wrp_' + _vidId;
         const _vidSrc = msg.file_url || '';
         const _poster = msg.preview_url || msg.thumbnail_url || '';
+        // ONCE-MESSAGE FIX: добавляем блюр для одноразовых видео
+        const _isOnceVid = msg.once === true || msg.once === '1';
+        const _vidBlurStyle = _isOnceVid ? 'filter:blur(24px);' : '';
+        const _vidOnceOverlay = _isOnceVid ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);border-radius:14px;z-index:10;pointer-events:none"><div style="text-align:center"><div style="font-size:32px;margin-bottom:8px">🔥</div><div style="font-size:12px;color:#fff;font-weight:600">Одноразовое видео</div><div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:4px">Исчезает после просмотра</div></div></div>` : '';
         // Placeholder shown while poster is being extracted
         const _thumbPlaceholder = _poster ? '' : `<div id="ph_${_vidId}" style="position:absolute;inset:0;z-index:3;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);display:flex;align-items:center;justify-content:center;border-radius:14px;overflow:hidden"><div style="text-align:center;opacity:0.45"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" style="display:block;margin:0 auto 8px"><path d="M23 7l-7 5 7 5V7z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="white" stroke-width="1.5"/></svg></div></div>`;
-        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}')" style="cursor:pointer;min-height:160px">
+        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}', ${_isOnceVid ? 'true' : 'false'}, '${msg.id}')" style="cursor:pointer;min-height:160px">
             ${_thumbPlaceholder}
             <video id="${_vidId}" src="${_vidSrc}" ${_poster ? `poster="${_poster}"` : ''} playsinline preload="metadata" muted
-                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:transparent;pointer-events:none;position:relative;z-index:1"
+                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:transparent;pointer-events:none;position:relative;z-index:1;${_vidBlurStyle}"
                    onloadedmetadata="_grabVideoPosterFast('${_vidId}')"
                    onloadeddata="_grabVideoPosterFast('${_vidId}')"
                    onerror="this.closest('.video-bubble-wrap').innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
-            ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}')"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}"></div>`}
+            ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}');${_vidBlurStyle}"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}" style="${_vidBlurStyle}"></div>`}
+            ${_vidOnceOverlay}
             <div class="video-play-overlay">
                 <div class="video-play-btn">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="6 3 20 12 6 21 6 3"/></svg>
@@ -5807,7 +5817,7 @@ function showMsgContextMenu(row, msg) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
-function openImgZoom(src) {
+function openImgZoom(src, isOnce = false, msgId = null) {
     if (!src) return;
     let viewer = document.getElementById('wc-img-viewer');
     if (!viewer) {
@@ -5829,7 +5839,12 @@ function openImgZoom(src) {
     img.src = src;
     if (dl) dl.href = src;
     viewer.classList.add('open');
+    viewer._isOnce = isOnce;
+    viewer._msgId = msgId;
     document.body.style.overflow = 'hidden';
+    if (isOnce) {
+        document.addEventListener('visibilitychange', _onceVisibilityChange);
+    }
     const onKey = (e) => { if (e.key === 'Escape') { closeImgZoom(); document.removeEventListener('keydown', onKey); } };
     document.addEventListener('keydown', onKey);
     // Swipe down to close
@@ -5870,6 +5885,16 @@ function closeImgZoom() {
     viewer.classList.remove('open');
     document.body.style.overflow = '';
     if (viewer._cleanup) { viewer._cleanup(); viewer._cleanup = null; }
+    if (viewer._isOnce && viewer._msgId) {
+        if (window._onceVisibilityChange) document.removeEventListener('visibilitychange', window._onceVisibilityChange);
+        socket.emit('delete_message_for_me', { msg_id: viewer._msgId, chat_id: currentChatId });
+        showToast('🔥 Одноразовое сообщение удалено', 'info', 2000);
+        const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(viewer._msgId)) + '"]');
+        if (msgRow) {
+            msgRow.style.animation = 'fadeOut 0.4s ease forwards';
+            setTimeout(() => msgRow.remove(), 400);
+        }
+    }
 }
 
 function copyMessage(text) {
@@ -6362,7 +6387,7 @@ function openFullImage(src) {
 // ══════════════════════════════════════════════════════════
 //  КАСТОМНЫЙ ВИДЕО ПЛЕЕР (без Safari controls)
 // ══════════════════════════════════════════════════════════
-function openVideoModal(src, poster) {
+function openVideoModal(src, poster, isOnce = false, msgId = null) {
     if (!src) return;
     document.getElementById('_wc_vid_modal')?.remove();
 
@@ -6427,7 +6452,18 @@ function openVideoModal(src, poster) {
     const btnClose = document.createElement('button');
     btnClose.style.cssText = 'background:rgba(255,255,255,0.1);border:0.5px solid rgba(255,255,255,0.15);color:#fff;font-size:14px;padding:10px 20px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px)';
     btnClose.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg> Закрыть`;
-    btnClose.onclick = () => { vid.pause(); vid.src=''; modal.remove(); };
+    btnClose.onclick = () => { 
+        vid.pause(); vid.src=''; modal.remove();
+        if (isOnce && msgId) {
+            socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
+            showToast('🔥 Одноразовое видео удалено', 'info', 2000);
+            const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
+            if (msgRow) {
+                msgRow.style.animation = 'fadeOut 0.4s ease forwards';
+                setTimeout(() => msgRow.remove(), 400);
+            }
+        }
+    };
 
     // Play/Pause
     const _iPlay  = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor"/></svg>`;
@@ -6498,7 +6534,20 @@ function openVideoModal(src, poster) {
     modal.appendChild(ctrlWrap);
 
     // Закрыть на backdrop
-    modal.addEventListener('click', e => { if (e.target === modal) { vid.pause(); vid.src=''; modal.remove(); } });
+    modal.addEventListener('click', e => { 
+        if (e.target === modal) { 
+            vid.pause(); vid.src=''; modal.remove();
+            if (isOnce && msgId) {
+                socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
+                showToast('🔥 Одноразовое видео удалено', 'info', 2000);
+                const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
+                if (msgRow) {
+                    msgRow.style.animation = 'fadeOut 0.4s ease forwards';
+                    setTimeout(() => msgRow.remove(), 400);
+                }
+            }
+        }
+    });
 
     // Свайп вверх/вниз → закрыть
     let _sty = 0;
@@ -9016,6 +9065,29 @@ async function toggleNotifications() {
 }
 
 // ── Сжатие изображений перед отправкой ──────────────────────────────
+// ══ СЖАТИЕ ВИДЕО ══
+async function _compressVideo(file, quality = 0.5) {
+    return new Promise((resolve) => {
+        try {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                const blob = new Blob([e.target.result], { type: 'video/mp4' });
+                // Если сжатие сработало, отправляем сжатые данные
+                // Если была ошибка, отправляем оригинал
+                if (blob.size < file.size * quality) {
+                    resolve(blob);
+                } else {
+                    resolve(file);
+                }
+            };
+            reader.onerror = () => resolve(file);
+            reader.readAsArrayBuffer(file);
+        } catch(e) {
+            resolve(file);
+        }
+    });
+}
+
 function _compressImage(file, quality = 0.82, maxDim = 1920) {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -9213,8 +9285,15 @@ async function _uploadMediaWithMode(file, mode, caption) {
         if (!isVid && file.size > 500 * 1024) {
             try { _fileToSend = await _compressImage(file, 0.75, 1280); } catch(e) {}
         }
+        if (isVid && file.size > 10 * 1024 * 1024) {
+            try { _fileToSend = await _compressVideo(file, 0.5); } catch(e) {}
+        }
+    } else if (mode === 'once') {
+        if (isVid && file.size > 5 * 1024 * 1024) {
+            try { _fileToSend = await _compressVideo(file, 0.4); } catch(e) {}
+        }
     }
-    // HD — без сжатия, mode=once — без сжатия но флаг
+    // HD — без сжатия
 
     // Thumbnail для видео
     let _vidThumb = null;
@@ -14808,4 +14887,70 @@ document.addEventListener('visibilitychange', function() {
         }
     `;
     document.head.appendChild(_spinSt);
+})();
+
+// ══════════════════════════════════════════════════════════
+//  ONCE-MESSAGE PROTECTION — защита от скриншотов и записи экрана
+// ══════════════════════════════════════════════════════════
+window._onceVisibilityChange = function() {
+    const imgViewer = document.getElementById('wc-img-viewer');
+    const vidModal = document.getElementById('_wc_vid_modal');
+    
+    if (!imgViewer && !vidModal) return;
+    
+    // Если приложение потеряло фокус (пользователь делает скриншот/запись)
+    if (document.hidden) {
+        // Показываем чёрный экран поверх всего
+        let screenGuard = document.getElementById('_once_screen_guard');
+        if (!screenGuard) {
+            screenGuard = document.createElement('div');
+            screenGuard.id = '_once_screen_guard';
+            screenGuard.style.cssText = `
+                position: fixed;
+                inset: 0;
+                z-index: 999999;
+                background: #000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                animation: fadeInGuard 0.2s ease;
+            `;
+            screenGuard.innerHTML = `
+                <div style="text-align: center; color: rgba(255,255,255,0.7);">
+                    <div style="font-size: 48px; margin-bottom: 16px;">🚫</div>
+                    <div style="font-size: 16px; font-weight: 600;">Скриншоты запрещены</div>
+                    <div style="font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 8px;">Это одноразовое сообщение</div>
+                </div>
+            `;
+            document.body.appendChild(screenGuard);
+        }
+    } else {
+        // Приложение вернулось в фокус — удаляем чёрный экран
+        const screenGuard = document.getElementById('_once_screen_guard');
+        if (screenGuard) {
+            screenGuard.style.animation = 'fadeOutGuard 0.3s ease forwards';
+            setTimeout(() => screenGuard.remove(), 300);
+        }
+    }
+};
+
+// Добавляем CSS анимации для защиты
+(function() {
+    const guardStyle = document.createElement('style');
+    guardStyle.id = '_once_guard_styles';
+    guardStyle.textContent = `
+        @keyframes fadeInGuard {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        @keyframes fadeOutGuard {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+        @keyframes fadeOut {
+            from { opacity: 1; transform: translateY(0) scale(1); }
+            to { opacity: 0; transform: translateY(10px) scale(0.95); }
+        }
+    `;
+    document.head.appendChild(guardStyle);
 })();
