@@ -262,10 +262,11 @@ const WCCache = (() => {
             touch-action: pan-y !important;
             overscroll-behavior-y: contain !important;
             -webkit-overflow-scrolling: touch !important;
-            will-change: scroll-position !important;
         }
-        /* Дочерние элементы messages тоже не блокируют скролл */
+        /* Дочерние элементы messages НЕ должны перехватывать тач — только pan-y */
         #messages > * { touch-action: pan-y; }
+        #messages .msg-row { touch-action: pan-y; }
+        #messages .bubble { touch-action: pan-y; }
         /* input-bar pointer-events: none на самом контейнере, all на детях —
            предотвращает перехват touch events на нижней части экрана */
         .input-bar {
@@ -2236,7 +2237,7 @@ body {
 #main-content.chat-depth{transform:scale(0.96);filter:blur(2px);opacity:0.6;pointer-events:none}
 
 /* СООБЩЕНИЯ */
-.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;will-change:scroll-position;justify-content:flex-end;min-height:100%; }
+.msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;justify-content:flex-end;min-height:100%; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
 .msg-row { display:flex;width:100%;margin-bottom:1px; }
@@ -4221,11 +4222,11 @@ function renderChatList(chats) {
                     openUserMomentsViewer(partnerId);
                 });
                 avaWrap.addEventListener('touchend', (e) => {
+                    // Only fire if this was a tap, not a scroll
                     e.stopPropagation();
-                    e.preventDefault();
                     vibrate(8);
                     openUserMomentsViewer(partnerId);
-                }, { passive: false });
+                }, { passive: true });
             }
 
             // Клик на весь элемент → открыть чат
@@ -9503,7 +9504,7 @@ function _renderMomentsTab() {
         row.appendChild(infoDiv);
         row.appendChild(thumbsDiv);
         row.onclick = () => openUserMomentsViewer(uid);
-        row.addEventListener('touchend', (e) => { e.preventDefault(); openUserMomentsViewer(uid); }, { passive: false });
+        row.addEventListener('touchend', (e) => { openUserMomentsViewer(uid); }, { passive: true });
         container.appendChild(row);
     });
 }
@@ -10208,12 +10209,15 @@ function _buildMyMomentBlock(myMoment) {
     if (myMoment) {
         // Есть момент — показываем аватар + маленький "+" снизу справа
         avaWrap.onclick = () => openUserMomentsViewer(currentUser.id);
-        avaWrap.addEventListener('touchend', e => { e.preventDefault(); openUserMomentsViewer(currentUser.id); }, { passive: false });
+        avaWrap.addEventListener('touchend', e => { openUserMomentsViewer(currentUser.id); }, { passive: true });
 
         const ring = _buildMomentRing(62, true, false);
         const avaInner = document.createElement('div');
-        avaInner.style.cssText = 'position:absolute;inset:5px;border-radius:50%;overflow:hidden';
-        avaInner.innerHTML = getAvatarHtml(currentUser, 'w-full h-full');
+        avaInner.style.cssText = 'position:absolute;top:5px;left:5px;width:52px;height:52px;border-radius:50%;overflow:hidden;background:#2c2c2e';
+        const _myAvaTmp = document.createElement('div');
+        _myAvaTmp.innerHTML = getAvatarHtml(currentUser, 'w-12 h-12');
+        const _myAvaEl = _myAvaTmp.firstElementChild;
+        if (_myAvaEl) { _myAvaEl.style.width='52px';_myAvaEl.style.height='52px';_myAvaEl.style.minWidth='52px'; avaInner.appendChild(_myAvaEl); }
 
         avaWrap.appendChild(ring);
         avaWrap.appendChild(avaInner);
@@ -10223,12 +10227,12 @@ function _buildMyMomentBlock(myMoment) {
         miniPlus.style.cssText = 'position:absolute;bottom:-2px;right:-2px;width:22px;height:22px;border-radius:50%;background:#10b981;border:2px solid var(--bg,#1d1d1e);display:flex;align-items:center;justify-content:center;z-index:3;cursor:pointer';
         miniPlus.innerHTML = '<svg width="10" height="10" viewBox="0 0 24 24" fill="none"><line x1="12" y1="4" x2="12" y2="20" stroke="white" stroke-width="3" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="white" stroke-width="3" stroke-linecap="round"/></svg>';
         miniPlus.onclick = e => { e.stopPropagation(); openCreateMomentModal(); };
-        miniPlus.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); openCreateMomentModal(); }, { passive: false });
+        miniPlus.addEventListener('touchend', e => { e.stopPropagation(); openCreateMomentModal(); }, { passive: true });
         avaWrap.appendChild(miniPlus);
     } else {
         // Нет момента — большая кнопка "+"
         avaWrap.onclick = () => openCreateMomentModal();
-        avaWrap.addEventListener('touchend', e => { e.preventDefault(); openCreateMomentModal(); }, { passive: false });
+        avaWrap.addEventListener('touchend', e => { openCreateMomentModal(); }, { passive: true });
         avaWrap.style.cssText += ';border:2px dashed rgba(255,255,255,0.25);border-radius:50%;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center';
         avaWrap.innerHTML = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none">
             <line x1="12" y1="4" x2="12" y2="20" stroke="rgba(255,255,255,0.6)" stroke-width="2.5" stroke-linecap="round"/>
@@ -10281,10 +10285,15 @@ function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
     wrap.className = 'moment-ava-item';
     wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:5px;flex-shrink:0;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent';
     wrap.onclick = onClick;
-    wrap.addEventListener('touchend', e => { e.preventDefault(); e.stopPropagation(); onClick && onClick(); }, { passive: false });
+    wrap.addEventListener('touchend', e => { e.stopPropagation(); onClick && onClick(); }, { passive: true });
 
     const size = 62;
-    const avatarHtml = getAvatarHtml(user, 'w-full h-full');
+        // avatarHtml with correct size — inset:5px means 52px inner area
+        const _avatarTmp = document.createElement('div');
+        _avatarTmp.innerHTML = getAvatarHtml(user, 'w-12 h-12');
+        const _avatarEl = _avatarTmp.firstElementChild;
+        if (_avatarEl) { _avatarEl.style.width='52px';_avatarEl.style.height='52px';_avatarEl.style.minWidth='52px';_avatarEl.style.borderRadius='50%'; }
+        const avatarHtml = _avatarEl ? _avatarEl.outerHTML : '';
 
     // Используем новую _buildMomentRing
     const ringEl   = _buildMomentRing(size, isNew, !isNew);
@@ -10294,7 +10303,7 @@ function _buildMomentBarItem(user, isNew, isClose, isMe, onClick) {
 
     wrap.innerHTML = `
         <div style="position:relative;width:${size}px;height:${size}px;flex-shrink:0;pointer-events:none">
-            <div style="position:absolute;inset:5px;border-radius:50%;overflow:hidden">${avatarHtml}</div>
+            <div style="position:absolute;top:5px;left:5px;width:52px;height:52px;border-radius:50%;overflow:hidden">${avatarHtml}</div>
             ${ringHtml}
         </div>
         <span style="font-size:11px;color:var(--text-2);max-width:62px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;pointer-events:none">${label}</span>`;
@@ -13329,6 +13338,7 @@ async function doIceRestart() {
 function endCall(notify = true) {
     _stopRingtone(); // FIX Task 4c: stop ringtone on endCall
     clearInterval(callTimerInterval); clearInterval(callQualityTimer); clearTimeout(iceRestartTimer);
+    clearTimeout(window._callAutoEndTimer); // убираем авто-сброс
     // Show "Завершён" briefly before hiding
     const _endLbl = document.getElementById('call-status-label');
     if (_endLbl) { _endLbl.textContent = 'Завершён'; _endLbl.style.color = 'rgba(255,255,255,0.5)'; }
@@ -13666,7 +13676,11 @@ function onIncomingCall(data) {
 
     // Убираем hidden и display:none — принудительно показываем
     screen.classList.remove('hidden');
-    screen.style.cssText = 'display:flex !important; opacity:1 !important; pointer-events:all !important; z-index:999999 !important;';
+    screen.style.removeProperty('display');
+    screen.style.opacity = '1';
+    screen.style.pointerEvents = 'all';
+    screen.style.zIndex = '999999';
+    screen.style.display = 'flex';
 
     const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
     setEl('call-name',         el => el.textContent = data.from_name || 'Звонок');
@@ -13681,21 +13695,15 @@ function onIncomingCall(data) {
     acquireWakeLock();
     _playRingtone();
 
-    // FIXED: авто-сброс через 45 секунд если не ответили
+    // FIXED: авто-сброс убран — звонок не отклоняется автоматически
     clearTimeout(window._incomingCallTimeout);
-    window._incomingCallTimeout = setTimeout(() => {
-        if (incomingCallData) {
-            _stopRingtone();
-            // Отправляем сообщение "Пропущенный звонок" в чат
-            socket.emit('send_message', {
-                chat_id:   _getOrCreateChatIdWith(data.from),
-                type_msg:  'call_' + (currentCallType === 'video' ? 'video' : 'audio'),
-                content:   '📵 Пропущенный звонок',
-                sender_id: currentUser.id,
-            });
-            endCall(false);
-        }
-    }, 45000);
+    // Обновляем фон — чтобы не было чёрного экрана
+    const callBg = document.getElementById('call-bg-blur');
+    if (callBg) {
+        const _color = data.from_avatar ? `url('${data.from_avatar}')` : 'radial-gradient(circle at 50% 30%, #10b981 0%, #064e3b 60%, #000 100%)';
+        callBg.style.cssText = `position:absolute;inset:0;z-index:0;opacity:1;background:${data.from_avatar ? 'none' : _color};${data.from_avatar ? `background-image:url('${data.from_avatar}');background-size:cover;background-position:center;filter:blur(40px) brightness(0.4) saturate(1.5);transform:scale(1.1)` : ''}`;
+    }
+    screen.style.background = 'linear-gradient(160deg,#05150f 0%,#0a1a14 100%)';
 
     // Если пользователь уже нажал "Ответить" в push-уведомлении
     if (window._pendingCallAnswer) {
@@ -14071,10 +14079,18 @@ function setupCallScreen(type, isIncoming) {
     const screen = document.getElementById('call-screen');
     if (!screen) return;
     screen.classList.remove('hidden');
+    screen.style.display = 'flex';
+    screen.style.background = 'linear-gradient(160deg,#05150f 0%,#0a1a14 100%)';
     const partnerName = document.getElementById('chat-name')?.textContent || 'Звонок';
     const partnerAva  = chatPartnerAvatarSrc[currentPartnerId]
         || document.getElementById('chat-ava-header')?.querySelector('img')?.src
         || '';
+
+    // Blur bg from avatar
+    const callBg = document.getElementById('call-bg-blur');
+    if (callBg && partnerAva) {
+        callBg.style.cssText = `position:absolute;inset:0;z-index:0;opacity:1;background-image:url('${partnerAva}');background-size:cover;background-position:center;filter:blur(40px) brightness(0.35) saturate(1.5);transform:scale(1.1)`;
+    }
 
     const setEl = (id, fn) => { const el = document.getElementById(id); if (el) fn(el); };
     const statusText = isIncoming
@@ -14184,13 +14200,12 @@ async function startCall(type) {
             if (lbl && peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState))
                 lbl.textContent = 'Не отвечает...';
         }, 25000);
-        // FIX BUG-1: увеличено с 30s→60s — Render Free может просыпаться до 35с,
-        // из-за чего звонок обрывался раньше чем собеседник успевал ответить.
-        setTimeout(() => {
+        // Авто-сброс через 120с — только если ICE так и не установился (абонент недоступен)
+        window._callAutoEndTimer = setTimeout(() => {
             if (peerConnection && ['new','checking'].includes(peerConnection.iceConnectionState)) {
                 showToast('Абонент не отвечает', 'warning'); endCall(true);
             }
-        }, 60000);
+        }, 120000);
     } catch(e) {
         console.error('startCall:', e); endCall(false);
         if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
