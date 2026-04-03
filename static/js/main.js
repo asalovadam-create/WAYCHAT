@@ -1147,6 +1147,11 @@ const THEMES = {
 
 // ══ OPTIMISTIC MEDIA UI — мгновенный blob preview при отправке ═══════════
 function _sendMediaOptimistic(file, chatId) {
+    // Глобальная проверка 100MB
+    if (file.size > 100 * 1024 * 1024) {
+        showToast('Файл слишком большой (максимум 100 МБ)', 'error', 5000);
+        return null;
+    }
     const blobUrl = URL.createObjectURL(file);
     const tempId  = 'tmp_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
     const isVideo = file.type.startsWith('video/');
@@ -4035,25 +4040,25 @@ async function _doDeleteChat(chatId) {
 }
 
 function _skeletonChatRow(wide = false) {
-    const w1 = wide ? '160px' : '120px';
-    const w2 = wide ? '90px' : '70px';
-    return '<div style="display:flex;align-items:center;gap:14px;padding:11px 4px">'
-        + '<div class="skeleton-shimmer" style="width:58px;height:58px;border-radius:50%;flex-shrink:0"></div>'
-        + '<div style="flex:1">'
-        + '<div style="display:flex;justify-content:space-between;margin-bottom:9px">'
-        + '<div class="skeleton-shimmer" style="height:14px;width:'+w1+';border-radius:7px"></div>'
-        + '<div class="skeleton-shimmer" style="height:11px;width:38px;border-radius:6px"></div>'
+    const w1 = wide ? '150px' : '110px';
+    const w2 = wide ? '85px'  : '65px';
+    return '<div style="display:flex;align-items:center;gap:14px;padding:11px 16px">'
+        + '<div class="wc-skeleton" style="width:48px;height:48px;border-radius:50%;flex-shrink:0"></div>'
+        + '<div style="flex:1;min-width:0">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+        + '<div class="wc-skeleton" style="height:13px;width:'+w1+';border-radius:7px"></div>'
+        + '<div class="wc-skeleton" style="height:10px;width:34px;border-radius:6px"></div>'
         + '</div>'
-        + '<div class="skeleton-shimmer" style="height:11px;width:'+w2+';border-radius:6px"></div>'
+        + '<div class="wc-skeleton" style="height:11px;width:'+w2+';border-radius:6px"></div>'
         + '</div></div>';
 }
 
 function showChatSkeleton() {
     const container = document.getElementById('chat-list');
     if (!container || container.querySelector('[data-chat-key]')) return;
-    container.innerHTML = '<div data-skeleton style="display:flex;flex-direction:column;gap:2px">'
-        + _skeletonChatRow(true) + _skeletonChatRow() + _skeletonChatRow(true)
-        + _skeletonChatRow() + _skeletonChatRow(true) + '</div>';
+    container.innerHTML = '<div data-skeleton style="display:flex;flex-direction:column">'
+        + [true,false,true,false,true,false].map(w => _skeletonChatRow(w)).join('')
+        + '</div>';
 }
 
 // Флаг — идёт ли рендер (защита от concurrent вызовов)
@@ -4837,13 +4842,22 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 
 function _showChatSkeleton(container) {
     if (!container) return;
-    container.innerHTML = [0,1,2,3,4].map((_, i) => {
-        const isOut = i % 3 === 0;
-        const w     = [62,80,55,72,45][i];
-        return `<div class="msg-row ${isOut?'out':'in'}" style="pointer-events:none">
-            <div style="max-width:${w}%;height:38px;border-radius:18px;background:rgba(255,255,255,0.07);animation:wcSkPulse 1.4s ease-in-out infinite;animation-delay:${i*0.1}s"></div>
+    const rows = [
+        { out: false, w: 58, h: 44 },
+        { out: true,  w: 72, h: 38 },
+        { out: false, w: 82, h: 60 },
+        { out: true,  w: 50, h: 38 },
+        { out: false, w: 65, h: 44 },
+        { out: true,  w: 78, h: 52 },
+        { out: false, w: 45, h: 38 },
+    ];
+    container.innerHTML = `
+        <div style="display:flex;flex-direction:column;gap:6px;padding:12px 8px;pointer-events:none">
+        ${rows.map((r, i) => `
+            <div class="msg-row ${r.out ? 'out' : 'in'}" style="pointer-events:none">
+                <div style="max-width:${r.w}%;height:${r.h}px;border-radius:${r.out ? '20px 20px 4px 20px' : '20px 20px 20px 4px'};background:rgba(255,255,255,${r.out ? '0.1' : '0.07'});animation:wcSkPulse 1.5s ease-in-out ${i * 0.12}s infinite"></div>
+            </div>`).join('')}
         </div>`;
-    }).join('');
 }
 
 function _showChatError(container, retryFn) {
@@ -4857,7 +4871,7 @@ function _showChatError(container, retryFn) {
     </div>`;
 }
 
-const MESSAGES_PER_PAGE = 35;
+const MESSAGES_PER_PAGE = 20;
 
 // FIX: global request counter — each loadMessages call gets a unique ID
 // If a newer call starts, the older one's response is silently dropped
@@ -4871,12 +4885,22 @@ async function loadMessages(initial = false, retryCount = 0) {
     if (!initial && !hasMoreMessages) return;
 
     loadingMessages = true;
-    const _reqId       = ++_loadMsgsReqId;  // FIX: unique request ID
+    const _reqId       = ++_loadMsgsReqId;
     const _savedChatId = currentChatId;
     const container    = document.getElementById('messages');
     const cacheKey     = currentChatType === 'group'
         ? `g_${currentPartnerId}`
         : `p_${currentPartnerId}`;
+
+    // Показываем мини-лоадер сверху при пагинации
+    let _topLoader = null;
+    if (!initial && container) {
+        _topLoader = document.createElement('div');
+        _topLoader.id = '_wc_top_loader';
+        _topLoader.style.cssText = 'display:flex;justify-content:center;padding:8px 0;';
+        _topLoader.innerHTML = '<div style="width:22px;height:22px;border:2.5px solid rgba(255,255,255,0.15);border-top-color:var(--accent,#10b981);border-radius:50%;animation:wcSpin 0.7s linear infinite"></div>';
+        container.prepend(_topLoader);
+    }
 
     try {
         let beforeId = null;
@@ -4984,6 +5008,8 @@ async function loadMessages(initial = false, retryCount = 0) {
         }
     } finally {
         loadingMessages = false;
+        // Убираем лоадер пагинации
+        document.getElementById('_wc_top_loader')?.remove();
     }
 }
 
@@ -8961,6 +8987,33 @@ async function toggleNotifications() {
     } catch(e){ console.warn('toggle notif:',e); }
 }
 
+// ── Сжатие изображений перед отправкой ──────────────────────────────
+function _compressImage(file, quality = 0.82, maxDim = 1920) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            let { width, height } = img;
+            if (width > maxDim || height > maxDim) {
+                const ratio = Math.min(maxDim / width, maxDim / height);
+                width  = Math.round(width  * ratio);
+                height = Math.round(height * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width; canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            canvas.toBlob(blob => {
+                if (blob && blob.size < file.size) resolve(blob);
+                else resolve(file); // оригинал меньше — не сжимаем
+            }, 'image/jpeg', quality);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+        img.src = url;
+    });
+}
+
 async function pickMedia(context) {
     if (context === 'msg' && !currentChatId) return;
     const input = document.createElement('input');
@@ -8972,15 +9025,26 @@ async function pickMedia(context) {
         const file = input.files[0];
         try { document.body.removeChild(input); } catch(e) {}
         if (!file) return;
+
+        // ── Глобальная проверка размера 100MB ──
+        const MAX_BYTES = 100 * 1024 * 1024;
+        if (file.size > MAX_BYTES) {
+            showToast('Видео слишком большое (максимум 100 МБ). Обрежь его в галерее.', 'error', 6000);
+            return;
+        }
+
         if (context === 'moment') { _showMomentEditor(file); return; }
         if (!currentChatId) return;
 
-        // Показываем TG-стиль превью с прогрессом прямо в списке сообщений
         const isVid  = file.type.startsWith('video');
         const previewUrl = URL.createObjectURL(file);
         const tmpId  = 'media-upload-' + Date.now();
 
-        // Оптимистичный пузырь с прогрессом
+        // XHR с поддержкой отмены
+        let _xhrRef = null;
+        let _cancelled = false;
+
+        // Оптимистичный пузырь с прогрессом и кнопкой отмены
         const tmpRow = document.createElement('div');
         tmpRow.className = 'msg-row out';
         tmpRow.id = tmpId;
@@ -8990,14 +9054,19 @@ async function pickMedia(context) {
                     ? `<video src="${previewUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover" muted playsinline></video>`
                     : `<img src="${previewUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover">`
                 }
-                <div id="${tmpId}-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.42);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px">
-                    <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg)">
-                        <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
-                        <circle id="${tmpId}-ring" cx="26" cy="26" r="20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"
-                            stroke-dasharray="${(2*Math.PI*20).toFixed(1)}" stroke-dashoffset="${(2*Math.PI*20).toFixed(1)}"
-                            style="transition:stroke-dashoffset 0.3s ease"/>
-                    </svg>
-                    <span id="${tmpId}-pct" style="position:absolute;font-size:12px;font-weight:700;color:#fff">0%</span>
+                <div id="${tmpId}-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.48);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px;gap:10px">
+                    <div style="position:relative;width:52px;height:52px">
+                        <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg);position:absolute;inset:0">
+                            <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="3"/>
+                            <circle id="${tmpId}-ring" cx="26" cy="26" r="20" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"
+                                stroke-dasharray="${(2*Math.PI*20).toFixed(1)}" stroke-dashoffset="${(2*Math.PI*20).toFixed(1)}"
+                                style="transition:stroke-dashoffset 0.3s ease"/>
+                        </svg>
+                        <span id="${tmpId}-pct" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff">0%</span>
+                    </div>
+                    <button id="${tmpId}-cancel" style="background:rgba(255,255,255,0.18);border:none;border-radius:20px;padding:5px 14px;color:#fff;font-size:12px;font-weight:600;cursor:pointer;backdrop-filter:blur(6px);font-family:inherit">
+                        ✕ Отмена
+                    </button>
                 </div>
             </div>`;
 
@@ -9007,18 +9076,39 @@ async function pickMedia(context) {
             msgsEl.scrollTop = msgsEl.scrollHeight;
         }
 
-        // For video: start thumbnail extraction in background immediately
+        // Кнопка отмены
+        const cancelBtn = document.getElementById(`${tmpId}-cancel`);
+        if (cancelBtn) {
+            cancelBtn.onclick = () => {
+                _cancelled = true;
+                if (_xhrRef) { try { _xhrRef.abort(); } catch(e) {} }
+                URL.revokeObjectURL(previewUrl);
+                tmpRow.remove();
+                showToast('Загрузка отменена', 'info', 2000);
+            };
+        }
+
+        // Сжатие изображения перед отправкой (для фото)
+        let _fileToSend = file;
+        if (!isVid && file.type.startsWith('image/') && file.size > 2 * 1024 * 1024) {
+            try {
+                _fileToSend = await _compressImage(file, 0.82, 1920);
+            } catch(e) { _fileToSend = file; }
+        }
+
+        // For video: extract thumbnail in background
         let _vidThumbBlob = null;
         if (isVid) {
             _extractVideoThumbnail(file).then(b => { _vidThumbBlob = b; }).catch(() => {});
         }
 
-        // Загружаем с XMLHttpRequest для прогресса
         try {
             const url_res = await new Promise((resolve, reject) => {
+                if (_cancelled) { reject(new Error('cancelled')); return; }
                 const fd  = new FormData();
-                fd.append('file', file);
+                fd.append('file', _fileToSend);
                 const xhr = new XMLHttpRequest();
+                _xhrRef = xhr;
                 const C   = 2 * Math.PI * 20;
                 xhr.upload.onprogress = (e) => {
                     if (!e.lengthComputable) return;
@@ -9029,18 +9119,20 @@ async function pickMedia(context) {
                     if (pctEl) pctEl.textContent = Math.round(pct) + '%';
                 };
                 xhr.onload = () => {
-                    if (xhr.status === 413) { reject(new Error('Файл слишком большой (макс 50 МБ)')); return; }
+                    if (xhr.status === 413) { reject(new Error('Файл слишком большой (макс 100 МБ)')); return; }
                     if (xhr.status >= 200 && xhr.status < 300) {
                         try { resolve(JSON.parse(xhr.responseText)); }
                         catch(e) { reject(new Error('parse error')); }
                     } else { reject(new Error('Ошибка сервера: ' + xhr.status)); }
                 };
                 xhr.onerror = () => reject(new Error('Нет соединения'));
+                xhr.onabort = () => reject(new Error('cancelled'));
                 xhr.open('POST', '/upload_media');
                 xhr.withCredentials = true;
                 xhr.send(fd);
             });
 
+            if (_cancelled) return;
             // Upload thumbnail separately if we have it
             let _previewUrl = '';
             if (isVid && _vidThumbBlob) {
@@ -9094,11 +9186,14 @@ function _extractVideoThumbnail(file) {
             vid.onseeked = () => {
                 try {
                     const canvas = document.createElement('canvas');
-                    canvas.width  = Math.min(vid.videoWidth,  640);
-                    canvas.height = Math.min(vid.videoHeight, 640);
+                    // Для моментов — уменьшаем превью до 480px для скорости
+                    const maxDim = 480;
+                    const ratio = Math.min(maxDim / vid.videoWidth, maxDim / vid.videoHeight, 1);
+                    canvas.width  = Math.round(vid.videoWidth  * ratio);
+                    canvas.height = Math.round(vid.videoHeight * ratio);
                     const ctx = canvas.getContext('2d');
                     ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
-                    canvas.toBlob((blob) => { cleanup(); resolve(blob); }, 'image/jpeg', 0.82);
+                    canvas.toBlob((blob) => { cleanup(); resolve(blob); }, 'image/jpeg', 0.72);
                 } catch(e) { cleanup(); resolve(null); }
             };
             vid.onerror = () => { cleanup(); resolve(null); };
@@ -9108,9 +9203,9 @@ function _extractVideoThumbnail(file) {
 }
 
 function _showMomentEditor(file) {
-    const MAX_MB = 50;
+    const MAX_MB = 100;
     if (file.size > MAX_MB * 1024 * 1024) {
-        showToast(`Файл слишком большой (макс ${MAX_MB} МБ). Обрежь видео в галерее.`, 'error', 5000);
+        showToast(`Видео слишком большое (максимум ${MAX_MB} МБ). Обрежь его в галерее.`, 'error', 6000);
         return;
     }
     _meFile = file; _meGeo = null; _meThumbnailBlob = null;
@@ -9605,9 +9700,14 @@ async function _publishMomentEditor(ov, file, url) {
         if (bar) bar.style.width = pct + '%';
     };
 
-    // Build FormData
+    // Build FormData — сжимаем изображение если нужно
     const fd = new FormData();
-    fd.append('file', file);
+    let _uploadFile = file;
+    // Для фото в моментах — сжимаем до 85% качества, макс 1280px
+    if (!file.type.startsWith('video') && file.size > 500 * 1024) {
+        try { _uploadFile = await _compressImage(file, 0.78, 1280); } catch(e) {}
+    }
+    fd.append('file', _uploadFile);
     if (caption) fd.append('text', caption);
     if (geo) { fd.append('geo_name', geo.name); fd.append('geo_lat', geo.lat); fd.append('geo_lng', geo.lng); }
     let thumbBlob = _meThumbnailBlob;
