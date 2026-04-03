@@ -2190,6 +2190,12 @@ body {
 .chat-item + .chat-item { border-top: 0.33px solid rgba(255,255,255,0.07); }
 .online-dot{position:absolute;bottom:1px;right:1px;width:13px;height:13px;background:#22c55e;border:2.5px solid var(--bg,#1d1d1e);border-radius:50%;box-shadow:0 0 0 1px rgba(34,197,94,0.3);z-index:10;display:block}
 
+/* Performance: lazy decode for all images */
+#messages img, #main-content img { content-visibility:auto; }
+.msg-row img { loading:lazy; decode:async; }
+/* Video: don't load until needed */
+.video-bubble-wrap video { loading:lazy; }
+
 /* СВАЙП ЖЕСТЫ */
 .chat-swipe-container{position:relative;overflow:hidden;touch-action:pan-y}
 .chat-swipe-action{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;min-width:72px;pointer-events:none;opacity:0;transition:opacity .15s}
@@ -3704,48 +3710,48 @@ let _loadChatsRetryCount = 0;
 
 async function loadChats(force = false) {
     const now = Date.now();
-    // FIXED: таймаут защита — если _chatsLoading завис более 12 сек, сбрасываем
     if (_chatsLoading && (now - _lastChatsLoad) < 12000) return;
-    if (_chatsLoading) { _chatsLoading = false; } // сброс зависшего флага
-    if (!force && recentChats.length && (now - _lastChatsLoad) < 3000) {
+    if (_chatsLoading) { _chatsLoading = false; }
+    if (!force && recentChats.length && (now - _lastChatsLoad) < 5000) {
         renderChatList(recentChats);
         return;
     }
     _chatsLoading = true;
 
-    // FIXED: мгновенный рендер из localStorage пока грузится сервер
-    if (!recentChats.length) {
+    // ВСЕГДА рендерим из localStorage сначала — мгновенный показ без сервера
+    const _renderCached = () => {
         try {
             const cached = localStorage.getItem('waychat_chats_cache');
             if (cached) {
                 const parsed = JSON.parse(cached);
                 if (Array.isArray(parsed) && parsed.length) {
-                    recentChats = parsed;
+                    if (!recentChats.length) recentChats = parsed;
                     renderChatList(parsed.filter(ch => !_deletedChatIds.has(ch.chat_id)));
-                } else { showChatSkeleton(); }
-            } else { showChatSkeleton(); }
-        } catch(e) { showChatSkeleton(); }
-    }
+                    return true;
+                }
+            }
+        } catch(e) {}
+        return false;
+    };
+    if (!_renderCached()) showChatSkeleton();
 
     const controller = new AbortController();
-    // PATCHED: таймаут увеличен до 45 сек — Render Free засыпает и просыпается ~30-50с
     const tid = setTimeout(() => {
         controller.abort();
         _chatsLoading = false;
-        if (!recentChats.length) _showChatsError();
         _scheduleChatsRetry();
-    }, 45000);
+    }, 30000); // 30s достаточно
 
     try {
         const res = await fetch('/get_my_chats', {
             credentials: 'include',
-            headers: {'Accept-Encoding': 'gzip, deflate'},
-            signal: controller.signal
+            headers: { 'Accept-Encoding': 'gzip, br, deflate' },
+            signal: controller.signal,
+            cache: 'no-store',
         });
         clearTimeout(tid);
         if (!res || !res.ok) {
             _chatsLoading = false;
-            if (!recentChats.length) _showChatsError();
             _scheduleChatsRetry();
             return;
         }
@@ -3757,7 +3763,8 @@ async function loadChats(force = false) {
         renderChatList(chats);
         updatePageTitle();
         try { localStorage.setItem('waychat_chats_cache', JSON.stringify(chats)); } catch(e) {}
-        chats.slice(0, 5).forEach(c => {
+        // Prefetch avatars for top 8 chats
+        chats.slice(0, 8).forEach(c => {
             if (c.partner_avatar && !c.partner_avatar.includes('default') && !c.partner_avatar.startsWith('emoji:')) {
                 AvatarCache.getOrFetch(c.partner_avatar, c.partner_id)
                     .then(src => { chatPartnerAvatarSrc[c.partner_id] = src; })
@@ -3766,8 +3773,7 @@ async function loadChats(force = false) {
         });
     } catch(e) {
         clearTimeout(tid);
-        console.error('loadChats:', e);
-        if (!recentChats.length) _showChatsError();
+        if (e.name !== 'AbortError') console.error('loadChats:', e);
         _scheduleChatsRetry();
     }
     finally { _chatsLoading = false; }
@@ -4634,14 +4640,12 @@ async function openChat(id, name, avatar) {
             scrollDown(false);
             if (elStatus) elStatus.textContent = 'обновление...';
         } else {
+            // Show skeleton, then try IDB synchronously-ish
             _showChatSkeleton(msgs);
+            // IDB load — show immediately when done
             MsgDB.load(cacheKey).then(idb => {
                 if (_chatOpenId !== _myOpenId) return;
-                // Снова проверяем — вдруг удалили пока загружалось
-                if (_deletedPartnerIds.has(id)) {
-                    msgs.innerHTML = '';
-                    return;
-                }
+                if (_deletedPartnerIds.has(id)) { msgs.innerHTML = ''; return; }
                 if (idb?.length) {
                     messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
                     msgs.innerHTML = '';
@@ -9788,7 +9792,7 @@ function _openMomentsOverlay(moments, startIdx) {
         hdr.style.cssText = `position:absolute;top:calc(max(env(safe-area-inset-top,44px),44px) + 18px);left:0;right:0;padding:0 14px;display:flex;align-items:center;gap:10px;z-index:20`;
         hdr.innerHTML = `
             <div style="width:36px;height:36px;border-radius:50%;overflow:hidden;border:2px solid rgba(255,255,255,0.5);flex-shrink:0">
-                ${getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-full h-full')}
+                ${(()=>{const _t=document.createElement('div');_t.innerHTML=getAvatarHtml({id:m.user_id,name:m.user_name,avatar:m.user_avatar},'w-9 h-9');const _e=_t.firstElementChild;if(_e){_e.style.width='36px';_e.style.height='36px';_e.style.minWidth='36px';return _e.outerHTML;}return '';})()}
             </div>
             <div style="flex:1;min-width:0">
                 <div style="font-weight:700;font-size:14px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${isMe ? 'Вы' : escHtml(m.user_name||'')}</div>
@@ -14341,17 +14345,34 @@ window.WayChat = {
             } else {
                 // Socket hasn't arrived yet — store intent, handle in onIncomingCall
                 window._pendingCallAnswer = { fromId, callId };
-                // Show waiting UI
+                // Show waiting UI immediately
                 var screen = document.getElementById('call-screen');
                 if (screen) {
                     screen.classList.remove('hidden');
+                    screen.style.display = 'flex';
+                    screen.style.background = 'linear-gradient(160deg,#05150f 0%,#0a1a14 100%)';
+                    screen.style.opacity = '1';
+                    screen.style.pointerEvents = 'all';
+                    screen.style.zIndex = '999999';
                     var lbl = document.getElementById('call-status-label');
                     if (lbl) lbl.textContent = 'Ожидание звонка...';
-                    // FIX Task 4c: start ringtone while waiting
+                    var nm = document.getElementById('call-name');
+                    if (nm && nm.textContent === '') nm.textContent = 'Входящий звонок';
                     if (typeof _playRingtone === 'function') _playRingtone();
+                    // Wait up to 8s for socket to arrive, then show generic incoming UI
+                    window._pendingCallWaitTimer = setTimeout(function() {
+                        var s2 = document.getElementById('call-screen');
+                        if (s2 && !incomingCallData) {
+                            var lbl2 = document.getElementById('call-status-label');
+                            if (lbl2) lbl2.textContent = '📞 Входящий звонок';
+                            var ab = document.getElementById('accept-btn');
+                            if (ab) ab.style.display = 'flex';
+                        }
+                    }, 3000);
                 }
             }
         } else if (action === 'decline') {
+            clearTimeout(window._pendingCallWaitTimer);
             if (typeof socket !== 'undefined' && socket) {
                 socket.emit('call_declined', {
                     from_id: fromId,
@@ -14360,7 +14381,7 @@ window.WayChat = {
                 });
             }
             var screen = document.getElementById('call-screen');
-            if (screen) screen.classList.add('hidden');
+            if (screen) { screen.classList.add('hidden'); screen.style.display = 'none'; }
             if (typeof _stopRingtone === 'function') _stopRingtone();
         }
     },
