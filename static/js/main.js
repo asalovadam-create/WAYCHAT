@@ -5234,40 +5234,10 @@ function buildMessageRow(msg, animate = true) {
         const _skId = 'sk_' + (msg.id || Math.random().toString(36).slice(2));
         // FIX PHOTO FLASH: start visible if blob (already in memory) or already loaded once
         const _startOpacity = (_isBlob || (window._imgLoaded && window._imgLoaded.has(_isSrc))) ? '1' : '0';
-        const _isOnce = msg.once === true || msg.once === '1';
-        const _viewed = msg.once_viewed === true; // уже просмотрено отправителем
-
-        if (_isOnce && !isMe) {
-            // Одноразовое сообщение — ЗАБЛЮРЕНО, нужно нажать
-            contentHtml = `<div class="img-bubble" style="position:relative;max-width:220px;min-height:120px;background:rgba(255,255,255,0.06);border-radius:18px;overflow:hidden;cursor:pointer;border:1.5px solid rgba(255,255,255,0.12)"
-                onclick="openImgZoom('${_isSrc}', true, '${msg.id}')">
-                <img src="${_isSrc}" loading="lazy" decoding="async"
-                    style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;filter:blur(28px) brightness(0.4) saturate(0.8);transform:scale(1.1);pointer-events:none;-webkit-user-select:none;user-select:none">
-                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:5">
-                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,0.3)">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg>
-                    </div>
-                    <div style="font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,0.8)">Нажмите для просмотра</div>
-                    <div style="font-size:10px;color:rgba(255,255,255,0.6)">🔥 Одноразовое фото</div>
-                </div>
-                <div class="msg-media-time">${displayTime}</div>
-            </div>`;
-        } else if (_isOnce && isMe) {
-            // Для отправителя — показываем заблюренным с меткой «отправлено»
-            contentHtml = `<div class="img-bubble" style="position:relative;max-width:220px;min-height:100px;background:rgba(239,68,68,0.1);border-radius:18px;overflow:hidden;border:1.5px solid rgba(239,68,68,0.3)">
-                <img src="${_isSrc}" loading="lazy" decoding="async"
-                    style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;filter:blur(28px) brightness(0.4);transform:scale(1.1);pointer-events:none">
-                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;z-index:5">
-                    <div style="font-size:28px">🔥</div>
-                    <div style="font-size:12px;font-weight:700;color:#fff">Одноразовое фото</div>
-                    <div style="font-size:10px;color:rgba(255,255,255,0.5)">Можно посмотреть 1 раз</div>
-                </div>
-                <div class="msg-media-time">${displayTime}&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'}">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span></div>
-            </div>`;
         } else {
             // Обычное фото
             contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
-                onclick="openImgZoom('${_isSrc}', false, '${msg.id}')">
+                onclick="openImgZoom('${_isSrc}')">
                 ${_startOpacity==='0'?`<div class="wc-img-sk" id="${_skId}"></div>`:''}
                 <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
                     style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease"
@@ -5281,28 +5251,6 @@ function buildMessageRow(msg, animate = true) {
         const _wrpId = 'wrp_' + _vidId;
         const _vidSrc = msg.file_url || '';
         const _poster = msg.preview_url || msg.thumbnail_url || '';
-        const _isOnceVid = msg.once === true || msg.once === '1';
-        const _thumbPlaceholder = _poster ? '' : `<div id="ph_${_vidId}" style="position:absolute;inset:0;z-index:3;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);display:flex;align-items:center;justify-content:center;border-radius:14px;overflow:hidden"><div style="text-align:center;opacity:0.45"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" style="display:block;margin:0 auto 8px"><path d="M23 7l-7 5 7 5V7z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="white" stroke-width="1.5"/></svg></div></div>`;
-
-        if (_isOnceVid && !isMe) {
-            // Одноразовое видео для получателя — заблюренное
-            contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster||''}',true,'${msg.id}')" style="cursor:pointer;min-height:160px;max-width:220px;border:1.5px solid rgba(239,68,68,0.3)">
-                <video id="${_vidId}" src="${_vidSrc}" ${_poster?`poster="${_poster}"`:''}  playsinline preload="metadata" muted style="display:block;width:100%;max-height:280px;object-fit:cover;pointer-events:none;position:relative;z-index:1;filter:blur(20px) brightness(0.4);transform:scale(1.05)"></video>
-                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:10">
-                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,0.3)">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    </div>
-                    <div style="font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,0.8)">Нажмите для просмотра</div>
-                    <div style="font-size:10px;color:rgba(255,255,255,0.6)">🔥 Одноразовое видео</div>
-                </div>
-                <div class="msg-media-time">${displayTime}</div>
-            </div>`;
-        } else if (_isOnceVid && isMe) {
-            contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:default;min-height:120px;max-width:220px;border:1.5px solid rgba(239,68,68,0.3)">
-                <video src="${_vidSrc}" ${_poster?`poster="${_poster}"`:''}  playsinline preload="metadata" muted style="display:block;width:100%;max-height:280px;object-fit:cover;pointer-events:none;filter:blur(20px) brightness(0.4);transform:scale(1.05)"></video>
-                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;z-index:10"><div style="font-size:28px">🔥</div><div style="font-size:12px;font-weight:700;color:#fff">Одноразовое видео</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">Можно посмотреть 1 раз</div></div>
-                <div class="msg-media-time">${displayTime}&nbsp;<span class="status-icon" style="color:${msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,0.55)'}">${msg.is_read?ICONS.checkDouble:ICONS.check}</span></div>
-            </div>`;
         } else {
         contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}', false, '${msg.id}')" style="cursor:pointer;min-height:160px">
             ${_thumbPlaceholder}
@@ -5862,21 +5810,18 @@ function showMsgContextMenu(row, msg) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
-function openImgZoom(src, isOnce = false, msgId = null) {
+function openImgZoom(src) {
     if (!src) return;
 
     // ── Полноэкранный просмотрщик ──────────────────────────────
     const viewer = document.createElement('div');
     viewer.id = 'wc-img-viewer-' + Date.now();
     viewer.style.cssText = 'position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.22s ease;-webkit-user-select:none;user-select:none';
-    viewer.setAttribute('data-once', isOnce ? '1' : '0');
-    viewer.setAttribute('data-msg-id', msgId || '');
 
     const img = document.createElement('img');
     img.src = src;
     img.draggable = false;
     img.style.cssText = 'max-width:100vw;max-height:100vh;object-fit:contain;-webkit-user-select:none;user-select:none;pointer-events:none;-webkit-touch-callout:none';
-    img.setAttribute('data-once', isOnce ? '1' : '0');
 
     // Запрет контекстного меню (долгий тап на iOS)
     img.oncontextmenu = (e) => { e.preventDefault(); return false; };
@@ -5894,11 +5839,8 @@ function openImgZoom(src, isOnce = false, msgId = null) {
     dlBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
     viewer.appendChild(img);
-
-    if (!isOnce) {
-        viewer.appendChild(closeBtn);
-        viewer.appendChild(dlBtn);
-    }
+    viewer.appendChild(closeBtn);
+    viewer.appendChild(dlBtn);
 
     document.body.appendChild(viewer);
     document.body.style.overflow = 'hidden';
@@ -5910,11 +5852,7 @@ function openImgZoom(src, isOnce = false, msgId = null) {
         setTimeout(() => {
             viewer.remove();
             document.body.style.overflow = '';
-            _cleanupOnceGuard();
         }, 220);
-        if (isOnce && msgId) {
-            _destroyOnceMessage(msgId);
-        }
     };
 
     closeBtn.onclick = _doClose;
@@ -5929,131 +5867,8 @@ function openImgZoom(src, isOnce = false, msgId = null) {
     document.addEventListener('keydown', function _k(e) {
         if (e.key === 'Escape') { _doClose(); document.removeEventListener('keydown', _k); }
     });
-
-    // ── ЗАЩИТА ДЛЯ ОДНОРАЗОВЫХ ────────────────────────────────
-    if (isOnce) {
-        // Запрет скачивания — убираем кнопку
-        // Подключаем все защитные механизмы
-        _attachOnceProtection(viewer, _doClose, msgId);
-    }
 }
 
-// ── Удаление одноразового сообщения с обеих сторон ───────────────────
-function _destroyOnceMessage(msgId) {
-    if (!msgId) return;
-    // Удаляем из DOM с анимацией
-    const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
-    if (msgRow) {
-        msgRow.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
-        msgRow.style.opacity = '0';
-        msgRow.style.transform = 'scale(0.9)';
-        setTimeout(() => msgRow.remove(), 400);
-    }
-    // Сообщаем серверу — удалить для всех
-    try {
-        socket.emit('delete_message_for_everyone', { msg_id: msgId, chat_id: currentChatId });
-    } catch(e) {
-        try { socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId }); } catch(e2) {}
-    }
-    showToast('🔥 Одноразовое сообщение удалено', 'info', 2500);
-}
-
-// ── Полная защита одноразового контента ──────────────────────────────
-function _attachOnceProtection(viewer, onClose, msgId) {
-    // 1. CSS запрет выделения, копирования, скачивания
-    const guardSt = document.createElement('style');
-    guardSt.id = '_once_active_guard';
-    guardSt.textContent = `
-        #${viewer.id} { -webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important; }
-        #${viewer.id} img { pointer-events:none!important;-webkit-user-drag:none!important; }
-        body._once-open * { -webkit-user-select:none!important;user-select:none!important; }
-        /* iOS Screen Recording block */
-        @media (display-mode: standalone) { #${viewer.id} { filter: none; } }
-    `;
-    document.head.appendChild(guardSt);
-    document.body.classList.add('_once-open');
-
-    // 2. Чёрный экран при потере видимости (скриншот/запись)
-    let _guardActive = false;
-    const _showBlackScreen = () => {
-        if (_guardActive) return;
-        _guardActive = true;
-        let g = document.getElementById('_once_black_guard');
-        if (!g) {
-            g = document.createElement('div');
-            g.id = '_once_black_guard';
-            g.style.cssText = 'position:fixed;inset:0;z-index:9999999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;animation:_onceGuardIn 0.1s ease';
-            g.innerHTML = `
-                <div style="font-size:52px;margin-bottom:16px">🚫</div>
-                <div style="font-size:17px;font-weight:700;color:#fff;margin-bottom:8px">Запись запрещена</div>
-                <div style="font-size:13px;color:rgba(255,255,255,0.5);text-align:center;padding:0 32px">Это одноразовое сообщение.<br>Скриншоты и запись экрана недоступны.</div>`;
-            document.body.appendChild(g);
-        }
-    };
-    const _hideBlackScreen = () => {
-        _guardActive = false;
-        const g = document.getElementById('_once_black_guard');
-        if (g) { g.style.animation = '_onceGuardOut 0.2s ease forwards'; setTimeout(() => g.remove(), 200); }
-    };
-
-    // 3. visibilitychange — срабатывает при скриншоте на iOS и записи экрана на Android
-    const _visChange = () => {
-        if (document.hidden) {
-            _showBlackScreen();
-            // Закрываем одноразовое при попытке записи
-            setTimeout(() => {
-                if (document.hidden) onClose();
-            }, 500);
-        } else {
-            _hideBlackScreen();
-        }
-    };
-    document.addEventListener('visibilitychange', _visChange);
-
-    // 4. blur события — дополнительная защита
-    const _winBlur = () => { _showBlackScreen(); };
-    const _winFocus = () => { _hideBlackScreen(); };
-    window.addEventListener('blur', _winBlur);
-    window.addEventListener('focus', _winFocus);
-
-    // 5. Запрет правой кнопки и долгого тапа везде
-    const _noCtx = (e) => { e.preventDefault(); return false; };
-    document.addEventListener('contextmenu', _noCtx);
-
-    // 6. Обнаружение recording через MediaDevices (где доступно)
-    let _recordingCheck = null;
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-        _recordingCheck = setInterval(async () => {
-            try {
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                // Если активна запись — закрываем
-                if (document.hidden) { onClose(); }
-            } catch(e) {}
-        }, 2000);
-    }
-
-    // 7. Сохраняем cleanup в viewer
-    viewer._onceCleanup = () => {
-        document.removeEventListener('visibilitychange', _visChange);
-        window.removeEventListener('blur', _winBlur);
-        window.removeEventListener('focus', _winFocus);
-        document.removeEventListener('contextmenu', _noCtx);
-        if (_recordingCheck) clearInterval(_recordingCheck);
-        guardSt.remove();
-        document.body.classList.remove('_once-open');
-        _hideBlackScreen();
-    };
-}
-
-function _cleanupOnceGuard() {
-    document.getElementById('_once_black_guard')?.remove();
-    document.getElementById('_once_active_guard')?.remove();
-    document.body.classList.remove('_once-open');
-    // Cleanup всех viewers
-    document.querySelectorAll('[id^="wc-img-viewer-"]').forEach(v => {
-        if (v._onceCleanup) v._onceCleanup();
-    });
-}
 
 function copyMessage(text) {
     navigator.clipboard?.writeText(text).catch(() => {
@@ -6545,7 +6360,7 @@ function openFullImage(src) {
 // ══════════════════════════════════════════════════════════
 //  КАСТОМНЫЙ ВИДЕО ПЛЕЕР (без Safari controls)
 // ══════════════════════════════════════════════════════════
-function openVideoModal(src, poster, isOnce = false, msgId = null) {
+function openVideoModal(src, poster) {
     if (!src) return;
     document.getElementById('_wc_vid_modal')?.remove();
 
@@ -6612,15 +6427,6 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
     btnClose.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg> Закрыть`;
     btnClose.onclick = () => {
         vid.pause(); vid.src=''; modal.remove();
-        if (isOnce && msgId) {
-            socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
-            showToast('🔥 Одноразовое видео удалено', 'info', 2000);
-            const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
-            if (msgRow) {
-                msgRow.style.animation = 'fadeOut 0.4s ease forwards';
-                setTimeout(() => msgRow.remove(), 400);
-            }
-        }
     };
 
     // Play/Pause
@@ -6684,8 +6490,6 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
 
     const _closeModal = () => {
         vid.pause(); vid.src = ''; modal.remove();
-        _cleanupOnceGuard();
-        if (isOnce && msgId) _destroyOnceMessage(msgId);
     };
 
     btnClose.onclick = _closeModal;
@@ -6694,7 +6498,7 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
     btnRow.appendChild(btnPlay);
     btnRow.appendChild(timeLabel);
     btnRow.appendChild(btnSpeed);
-    if (!isOnce) btnRow.appendChild(btnSave); // скачивание только для обычных
+    btnRow.appendChild(btnSave);
     ctrlWrap.appendChild(seekBar);
     ctrlWrap.appendChild(btnRow);
     modal.appendChild(ctrlWrap);
@@ -6709,27 +6513,11 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
         const dy = e.changedTouches[0].clientY - _sty;
         if (Math.abs(dy) > 80 && e.target !== seekBar && e.target !== vid) _closeModal();
     }, { passive: true });
-
-    // После окончания одноразового видео — закрываем
-    if (isOnce) {
-        vid.addEventListener('ended', () => { setTimeout(_closeModal, 500); });
-    }
-
     // ESC
     const _onEsc = e => { if (e.key === 'Escape') { vid.pause(); vid.src=''; modal.remove(); document.removeEventListener('keydown', _onEsc); } };
     document.addEventListener('keydown', _onEsc);
 
     document.body.appendChild(modal);
-
-    // Подключаем защиту для одноразовых видео
-    if (isOnce) {
-        modal.oncontextmenu = (e) => { e.preventDefault(); return false; };
-        modal.style.setProperty('-webkit-user-select', 'none');
-        modal.style.setProperty('user-select', 'none');
-        vid.setAttribute('controlsList', 'nodownload');
-        vid.setAttribute('disablePictureInPicture', 'true');
-        _attachOnceProtection(modal, _closeModal, msgId);
-    }
 }
 
 // Grab first frame as poster for video bubbles (blur preview)
@@ -9312,7 +9100,7 @@ async function pickMedia(context) {
 function _showMediaPreviewModal(file) {
     const isVid = file.type.startsWith('video/');
     const previewUrl = URL.createObjectURL(file);
-    let _sendMode = 'compressed'; // 'hd' | 'compressed' | 'once'
+    let _sendMode = 'compressed'; // 'hd' | 'compressed'
 
     // Overlay
     const ov = document.createElement('div');
@@ -9351,7 +9139,7 @@ function _showMediaPreviewModal(file) {
     const modeBadge = document.createElement('div');
     modeBadge.style.cssText = 'text-align:center;padding:8px;flex-shrink:0';
     const _updateBadge = () => {
-        const labels = { hd: '🎯 HD-качество', compressed: '⚡ Сжато', once: '🔥 Одноразовое' };
+        const labels = { hd: '🎯 HD-качество', compressed: '⚡ Сжато' };
         modeBadge.innerHTML = `<span style="background:rgba(255,255,255,0.12);border-radius:20px;padding:4px 14px;font-size:12px;font-weight:600;color:rgba(255,255,255,0.8)">${labels[_sendMode]}</span>`;
     };
     _updateBadge();
@@ -9380,7 +9168,6 @@ function _showMediaPreviewModal(file) {
         const opts = [
             { id:'hd',         icon:'🎯', label:'HD-качество',   sub:'Оригинальное разрешение' },
             { id:'compressed', icon:'⚡', label:'Сжатое',         sub:'Быстрее, меньше места' },
-            { id:'once',       icon:'🔥', label:'Одноразовое',    sub:'Исчезает после просмотра' },
         ];
         opts.forEach(o => {
             const row = document.createElement('div');
@@ -9427,10 +9214,9 @@ async function _uploadMediaWithMode(file, mode, caption) {
     tmpRow.id = tmpId;
     const C = 2 * Math.PI * 20;
     tmpRow.innerHTML = `
-        <div class="bubble" style="padding:4px;background:${mode==='once'?'rgba(239,68,68,0.8)':'var(--accent)'};border-radius:18px 18px 4px 18px;position:relative;overflow:hidden;max-width:240px;min-width:120px;min-height:120px">
+        <div class="bubble" style="padding:4px;background:var(--accent);border-radius:18px 18px 4px 18px;position:relative;overflow:hidden;max-width:240px;min-width:120px;min-height:120px">
             ${isVid ? `<video src="${blobUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover" muted playsinline></video>`
                      : `<img src="${blobUrl}" style="width:100%;max-height:280px;border-radius:14px;display:block;object-fit:cover">`}
-            ${mode==='once'?'<div style="position:absolute;top:6px;left:6px;background:rgba(0,0,0,0.55);border-radius:10px;padding:2px 8px;font-size:11px;font-weight:700;color:#fff">🔥 1×</div>':''}
             <div id="${tmpId}-overlay" style="position:absolute;inset:0;background:rgba(0,0,0,0.48);display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:14px;gap:10px">
                 <div style="position:relative;width:52px;height:52px">
                     <svg width="52" height="52" viewBox="0 0 52 52" style="transform:rotate(-90deg);position:absolute;inset:0">
@@ -9464,10 +9250,6 @@ async function _uploadMediaWithMode(file, mode, caption) {
         if (isVid && file.size > 10 * 1024 * 1024) {
             try { _fileToSend = await _compressVideo(file, 0.5); } catch(e) {}
         }
-    } else if (mode === 'once') {
-        if (isVid && file.size > 5 * 1024 * 1024) {
-            try { _fileToSend = await _compressVideo(file, 0.4); } catch(e) {}
-        }
     }
     // HD — без сжатия
 
@@ -9480,7 +9262,6 @@ async function _uploadMediaWithMode(file, mode, caption) {
             if (_cancelled) { reject(new Error('cancelled')); return; }
             const fd = new FormData();
             fd.append('file', _fileToSend);
-            if (mode === 'once') fd.append('once', '1');
             if (caption) fd.append('caption', caption);
             const xhr = new XMLHttpRequest();
             _xhrRef = xhr;
@@ -9527,7 +9308,6 @@ async function _uploadMediaWithMode(file, mode, caption) {
             file_url: url_res.url || url_res.file_url || '',
             preview_url: _previewUrl,
             content: caption || (isVid ? 'Видео' : 'Фото'),
-            once: mode === 'once' ? true : undefined,
             hd: mode === 'hd' ? true : undefined,
         });
         tmpRow.remove();
@@ -15097,72 +14877,4 @@ document.addEventListener('visibilitychange', function() {
         }
     `;
     document.head.appendChild(_spinSt);
-})();
-
-// ══════════════════════════════════════════════════════════
-//  ONCE-MESSAGE PROTECTION — защита от скриншотов и записи экрана
-// ══════════════════════════════════════════════════════════
-window._onceVisibilityChange = function() {
-    const imgViewer = document.getElementById('wc-img-viewer');
-    const vidModal = document.getElementById('_wc_vid_modal');
-
-    if (!imgViewer && !vidModal) return;
-
-    // Если приложение потеряло фокус (пользователь делает скриншот/запись)
-    if (document.hidden) {
-        // Показываем чёрный экран поверх всего
-        let screenGuard = document.getElementById('_once_screen_guard');
-        if (!screenGuard) {
-            screenGuard = document.createElement('div');
-            screenGuard.id = '_once_screen_guard';
-            screenGuard.style.cssText = `
-                position: fixed;
-                inset: 0;
-                z-index: 999999;
-                background: #000;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                animation: fadeInGuard 0.2s ease;
-            `;
-            screenGuard.innerHTML = `
-                <div style="text-align: center; color: rgba(255,255,255,0.7);">
-                    <div style="font-size: 48px; margin-bottom: 16px;">🚫</div>
-                    <div style="font-size: 16px; font-weight: 600;">Скриншоты запрещены</div>
-                    <div style="font-size: 12px; color: rgba(255,255,255,0.5); margin-top: 8px;">Это одноразовое сообщение</div>
-                </div>
-            `;
-            document.body.appendChild(screenGuard);
-        }
-    } else {
-        // Приложение вернулось в фокус — удаляем чёрный экран
-        const screenGuard = document.getElementById('_once_screen_guard');
-        if (screenGuard) {
-            screenGuard.style.animation = 'fadeOutGuard 0.3s ease forwards';
-            setTimeout(() => screenGuard.remove(), 300);
-        }
-    }
-};
-
-// Добавляем CSS анимации для защиты
-(function() {
-    const guardStyle = document.createElement('style');
-    guardStyle.id = '_once_guard_styles';
-    guardStyle.textContent = `
-        @keyframes _onceGuardIn  { from{opacity:0} to{opacity:1} }
-        @keyframes _onceGuardOut { from{opacity:1} to{opacity:0} }
-        @keyframes fadeInGuard   { from{opacity:0} to{opacity:1} }
-        @keyframes fadeOutGuard  { from{opacity:1} to{opacity:0} }
-        @keyframes fadeOut {
-            from { opacity:1; transform:translateY(0) scale(1); }
-            to   { opacity:0; transform:translateY(10px) scale(0.92); }
-        }
-        /* Запрет выделения по всему приложению при просмотре once */
-        body._once-open {
-            -webkit-user-select: none !important;
-            user-select: none !important;
-            -webkit-touch-callout: none !important;
-        }
-    `;
-    document.head.appendChild(guardStyle);
 })();
