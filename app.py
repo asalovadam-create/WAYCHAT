@@ -1198,6 +1198,36 @@ def _gen_code():
     return str(random.randint(100000, 999999))
 
 
+def _send_sms(phone: str, code: str) -> bool:
+    """Отправка SMS через sms.ru. Возвращает True при успехе."""
+    api_id = os.environ.get('SMSRU_API_ID', 'CC806976-2EC6-F295-39C8-A521F9C8F792')
+    msg    = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
+    try:
+        resp = req_lib.get(
+            'https://sms.ru/sms/send',
+            params={
+                'api_id': api_id,
+                'to':     phone,
+                'msg':    msg,
+                'json':   1,
+            },
+            timeout=10,
+        )
+        data = resp.json()
+        # sms.ru: status_code == 100 означает успех
+        sms_result = data.get('sms', {})
+        for _num, info in sms_result.items():
+            if info.get('status_code') == 100:
+                print(f'✅ SMS отправлено: {phone[:4]}***')
+                return True
+            else:
+                print(f'⚠️  SMS ошибка: {info.get("status_text")} (код {info.get("status_code")})')
+        return False
+    except Exception as e:
+        print(f'❌ SMS exception: {e}')
+        return False
+
+
 @app.route('/check_phone', methods=['POST'])
 @ip_rate_limit('check_phone', max_calls=10, window_sec=60)
 def check_phone():
@@ -1251,14 +1281,11 @@ def send_code():
             is_login = existing is not None,
         )
 
-        print(f'\n{"="*50}')
-        if app.debug:
-            print(f'📱 КОД для {phone}: {code}')
-        else:
-            print(f'📱 Код отправлен: {phone[:3]}***')
-        print(f'{"="*50}\n')
+        if not _send_sms(phone, code):
+            PendingCode.delete(phone)
+            return jsonify({'success': False, 'error': 'Не удалось отправить SMS. Проверьте номер телефона.'}), 500
 
-        return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
+        return jsonify({'success': True, 'message': 'Код отправлен'})
 
     except Exception as e:
         app.logger.error(f'send_code: {e}')
@@ -1367,11 +1394,12 @@ def register_step1():
 
         code    = _gen_code()
         PendingCode.set(phone=phone, code=code, name=name, username=username, is_login=False)
-        if app.debug:
-            print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
-        else:
-            print(f'📱 Код отправлен: {phone[:3]}***')
-        return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
+
+        if not _send_sms(phone, code):
+            PendingCode.delete(phone)
+            return jsonify({'success': False, 'error': 'Не удалось отправить SMS. Проверьте номер телефона.'}), 500
+
+        return jsonify({'success': True, 'message': 'Код отправлен'})
 
     except Exception as e:
         app.logger.error(f'register_step1 error: {e}')
