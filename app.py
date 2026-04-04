@@ -1148,7 +1148,7 @@ def login():
             phone    = normalize_phone(data.get('phone', '').strip())
             password = data.get('password', '').strip()
         else:
-            phone    = request.form.get('phone', '').strip()
+            phone    = normalize_phone(request.form.get('phone', '').strip())
             password = request.form.get('password', '').strip()
 
         if not phone or not password:
@@ -1193,31 +1193,22 @@ def register():
 
 _pending_registrations = {}  # Legacy — заменён на PendingCode (БД), оставлен для совместимости
 
-def normalize_phone(phone):
-    import re
-    phone = re.sub(r'\D', '', phone)
-    if phone.startswith('8') and len(phone) == 11:
-        phone = '7' + phone[1:]
-    if not phone.startswith('7'):
-        phone = '7' + phone
-    if len(phone) > 11:
-        phone = phone[:11]
-    print(f'PHONE NORMALIZE: raw={phone!r} → {phone}')
-    return phone
 
 def _gen_code():
-
+    return str(random.randint(100000, 999999))
 
 
 def normalize_phone(phone: str) -> str:
-    """Приводит любой формат к 7XXXXXXXXXX (только цифры, без +)."""
-    import re
-    digits = re.sub(r'\D', '', phone)
-    if digits.startswith('8') and len(digits) == 11:
-        digits = '7' + digits[1:]
-    if len(digits) == 10:
-        digits = '7' + digits
-    return digits
+    """Приводит любой формат к 7XXXXXXXXXX — только цифры, без +, без пробелов."""
+    import re as _re
+    d = _re.sub(r'\D', '', phone)        # убираем всё кроме цифр
+    if d.startswith('8') and len(d) == 11:
+        d = '7' + d[1:]                  # 8-xxx → 7-xxx
+    if len(d) == 10:
+        d = '7' + d                      # 9xxxxxxxxx → 79xxxxxxxxx
+    if d.startswith('7') and len(d) > 11:
+        d = d[:11]                       # обрезаем лишнее
+    return d
 
 
 def _send_sms(phone: str, code: str) -> bool:
@@ -1227,8 +1218,8 @@ def _send_sms(phone: str, code: str) -> bool:
     phone_norm = normalize_phone(phone)
     msg        = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
     print(f'=== SMS DEBUG ===')
-    print(f'phone raw:  {phone}')
-    print(f'phone norm: {phone_norm} (digits only, no +)')
+    print(f'phone raw:  {repr(phone)}')
+    print(f'phone norm: {phone_norm}')
     print(f'api_id:     {api_id[:8]}...')
     try:
         resp = req_lib.get(
@@ -1248,36 +1239,6 @@ def _send_sms(phone: str, code: str) -> bool:
     except Exception as e:
         print(f'❌ SMS EXCEPTION: {e}')
         print(_tb.format_exc())
-        return False
-
-
-def _send_sms(phone: str, code: str) -> bool:
-    """Отправка SMS через sms.ru. Возвращает True при успехе."""
-    api_id = os.environ.get('SMSRU_API_ID', 'CC806976-2EC6-F295-39C8-A521F9C8F792')
-    msg    = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
-    try:
-        resp = req_lib.get(
-            'https://sms.ru/sms/send',
-            params={
-                'api_id': api_id,
-                'to':     phone,
-                'msg':    msg,
-                'json':   1,
-            },
-            timeout=10,
-        )
-        data = resp.json()
-        # sms.ru: status_code == 100 означает успех
-        sms_result = data.get('sms', {})
-        for _num, info in sms_result.items():
-            if info.get('status_code') == 100:
-                print(f'✅ SMS отправлено: {phone[:4]}***')
-                return True
-            else:
-                print(f'⚠️  SMS ошибка: {info.get("status_text")} (код {info.get("status_code")})')
-        return False
-    except Exception as e:
-        print(f'❌ SMS exception: {e}')
         return False
 
 
