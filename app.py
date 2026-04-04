@@ -1199,13 +1199,14 @@ def _gen_code():
 
 
 def normalize_phone(phone: str) -> str:
-    """Приводит любой формат к +7XXXXXXXXXX."""
-    digits = ''.join(c for c in phone if c.isdigit())
+    """Приводит любой формат к 7XXXXXXXXXX (только цифры, без +)."""
+    import re
+    digits = re.sub(r'\D', '', phone)
     if digits.startswith('8') and len(digits) == 11:
         digits = '7' + digits[1:]
     if len(digits) == 10:
         digits = '7' + digits
-    return '+' + digits
+    return digits
 
 
 def _send_sms(phone: str, code: str) -> bool:
@@ -1216,7 +1217,7 @@ def _send_sms(phone: str, code: str) -> bool:
     msg        = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
     print(f'=== SMS DEBUG ===')
     print(f'phone raw:  {phone}')
-    print(f'phone norm: {phone_norm}')
+    print(f'phone norm: {phone_norm} (digits only, no +)')
     print(f'api_id:     {api_id[:8]}...')
     try:
         resp = req_lib.get(
