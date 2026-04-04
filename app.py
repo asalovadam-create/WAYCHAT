@@ -1193,9 +1193,20 @@ def register():
 
 _pending_registrations = {}  # Legacy — заменён на PendingCode (БД), оставлен для совместимости
 
+def normalize_phone(phone):
+    import re
+    phone = re.sub(r'\D', '', phone)
+    if phone.startswith('8') and len(phone) == 11:
+        phone = '7' + phone[1:]
+    if not phone.startswith('7'):
+        phone = '7' + phone
+    if len(phone) > 11:
+        phone = phone[:11]
+    print(f'PHONE NORMALIZE: raw={phone!r} → {phone}')
+    return phone
 
 def _gen_code():
-    return str(random.randint(100000, 999999))
+
 
 
 def normalize_phone(phone: str) -> str:
