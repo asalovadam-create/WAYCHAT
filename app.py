@@ -1199,46 +1199,59 @@ def _gen_code():
 
 
 def normalize_phone(phone: str) -> str:
-    """Приводит любой формат к 7XXXXXXXXXX — только цифры, без +, без пробелов."""
+    """Приводит номер к международному формату без + для sms.ru.
+    РФ: 7XXXXXXXXXX (11 цифр).
+    Остальные страны: оставляем цифры как есть (код страны + номер).
+    """
     import re as _re
-    d = _re.sub(r'\D', '', phone)        # убираем всё кроме цифр
-    if d.startswith('8') and len(d) == 11:
-        d = '7' + d[1:]                  # 8-xxx → 7-xxx
-    if len(d) == 10:
-        d = '7' + d                      # 9xxxxxxxxx → 79xxxxxxxxx
-    if d.startswith('7') and len(d) > 11:
-        d = d[:11]                       # обрезаем лишнее
+    if not phone:
+        return ''
+    phone_stripped = phone.strip()
+    has_plus = phone_stripped.startswith('+')
+    d = _re.sub(r'\D', '', phone_stripped)
+    if not d:
+        return ''
+    # РФ: 8-xxx → 7-xxx
+    if not has_plus and d.startswith('8') and len(d) == 11:
+        d = '7' + d[1:]
+    # РФ: 10 цифр (начало с 9) → добавляем 7
+    if not has_plus and len(d) == 10 and d.startswith('9'):
+        d = '7' + d
     return d
 
 
 def _send_sms(phone: str, code: str) -> bool:
     """Отправка SMS через sms.ru."""
     import traceback as _tb
-    api_id     = os.environ.get('SMSRU_API_ID', 'CC806976-2EC6-F295-39C8-A521F9C8F792')
+    api_id = os.environ.get('SMSRU_API_ID', '').strip()
+    if not api_id:
+        app.logger.error('SMSRU_API_ID не задан в переменных окружения!')
+        return False
     phone_norm = normalize_phone(phone)
-    msg        = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
-    print(f'=== SMS DEBUG ===')
-    print(f'phone raw:  {repr(phone)}')
-    print(f'phone norm: {phone_norm}')
-    print(f'api_id:     {api_id[:8]}...')
+    if not phone_norm or len(phone_norm) < 10:
+        app.logger.error(f'Некорректный номер телефона: {repr(phone)} → {repr(phone_norm)}')
+        return False
+    msg = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
     try:
         resp = req_lib.get(
             'https://sms.ru/sms/send',
             params={'api_id': api_id, 'to': phone_norm, 'msg': msg, 'json': 1},
             timeout=10,
         )
-        print(f'HTTP status: {resp.status_code}')
-        print(f'SMS.RU raw:  {resp.text}')
         data = resp.json()
+        # Проверяем общий статус запроса
+        status_code = data.get('status_code')
+        if status_code != 100:
+            app.logger.error(f'SMS.RU ошибка: status_code={status_code}, status={data.get("status")}')
+            return False
+        # Проверяем статус для каждого номера
         for _num, info in data.get('sms', {}).items():
             if info.get('status_code') == 100:
-                print(f'✅ SMS OK → {phone_norm}')
                 return True
-            print(f'⚠️  SMS FAIL: {info.get("status_text")} (код {info.get("status_code")})')
+            app.logger.error(f'SMS FAIL для {phone_norm}: {info.get("status_text")} (код {info.get("status_code")})')
         return False
     except Exception as e:
-        print(f'❌ SMS EXCEPTION: {e}')
-        print(_tb.format_exc())
+        app.logger.error(f'SMS EXCEPTION: {e}\n{_tb.format_exc()}')
         return False
 
 
@@ -1297,13 +1310,15 @@ def send_code():
 
         if not _send_sms(phone, code):
             PendingCode.delete(phone)
-            return jsonify({'success': False, 'error': 'Не удалось отправить SMS. Проверьте номер телефона.'}), 500
+            return jsonify({'success': False, 'error': 'Не удалось отправить SMS. Проверьте номер телефона.'}), 400
 
         return jsonify({'success': True, 'message': 'Код отправлен'})
 
     except Exception as e:
-        app.logger.error(f'send_code: {e}')
-        return jsonify({'success': False, 'error': 'Ошибка сервера'}), 500
+        import traceback
+        app.logger.error(f'send_code: {e}\n{traceback.format_exc()}')
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'Ошибка сервера. Попробуйте позже.'}), 500
 
 
 @app.route('/verify_code', methods=['POST'])
@@ -1411,13 +1426,15 @@ def register_step1():
 
         if not _send_sms(phone, code):
             PendingCode.delete(phone)
-            return jsonify({'success': False, 'error': 'Не удалось отправить SMS. Проверьте номер телефона.'}), 500
+            return jsonify({'success': False, 'error': 'Не удалось отправить SMS. Проверьте номер телефона.'}), 400
 
         return jsonify({'success': True, 'message': 'Код отправлен'})
 
     except Exception as e:
-        app.logger.error(f'register_step1 error: {e}')
-        return jsonify({'success': False, 'error': f'Ошибка сервера: {str(e)}'}), 500
+        import traceback
+        app.logger.error(f'register_step1 error: {e}\n{traceback.format_exc()}')
+        db.session.rollback()
+        return jsonify({'success': False, 'error': 'Ошибка сервера. Попробуйте позже.'}), 500
 
 
 @app.route('/register_step2', methods=['GET', 'POST'])
