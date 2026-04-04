@@ -104,6 +104,7 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
 .btn-main:disabled { opacity:0.38; pointer-events:none; }
 .alert { width:100%; padding:13px 16px; border-radius:14px; font-size:13px; font-weight:500; line-height:1.45; display:none; margin-bottom:14px; }
 .alert.err { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.28); color:#fca5a5; }
+.alert.dev { background:rgba(245,158,11,0.10); border:1px solid rgba(245,158,11,0.22); color:#fcd34d; }
 .country-sheet {
   position:fixed; inset:0; z-index:999; background:rgba(0,0,0,0.7); backdrop-filter:blur(12px);
   display:flex; align-items:flex-end; opacity:0; pointer-events:none; transition:opacity 0.25s;
@@ -253,8 +254,9 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       </svg>
     </div>
     <h1 id="code-login-title">+7 ...</h1>
-    <p class="subtitle">Мы отправили SMS с кодом на ваш номер.<br><b>Введите его для входа</b></p>
+    <p class="subtitle">Код напечатан в терминале сервера.<br><b>Введите его для входа</b></p>
     <div id="err-code-login" class="alert err"></div>
+    <div id="dev-code-login" class="alert dev"></div>
     <div class="field">
       <label>Код подтверждения</label>
       <input id="login-code" type="tel" inputmode="numeric" class="code-inp"
@@ -324,8 +326,9 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       </svg>
     </div>
     <h1 id="code-reg-title">+7 ...</h1>
-    <p class="subtitle">Мы отправили SMS с кодом на ваш номер.<br><b>Введите его для создания аккаунта</b></p>
+    <p class="subtitle">Код для создания аккаунта.<br><b>Смотрите в терминале сервера</b></p>
     <div id="err-code-reg" class="alert err"></div>
+    <div id="dev-code-reg" class="alert dev"></div>
     <div class="field">
       <label>Код подтверждения</label>
       <input id="reg-code" type="tel" inputmode="numeric" class="code-inp"
@@ -557,7 +560,9 @@ function getMinLength(code) {
 
 function getFullPhone() {
   const digits = document.getElementById('phone-num').value.replace(/\D/g,'');
-  return selCountry.code + digits;
+  // убираем + из кода страны, отправляем только цифры: 79899129141
+  const code = selCountry.code.replace(/\D/g,'');
+  return code + digits;
 }
 
 // ── ЭКРАНЫ ──
@@ -577,6 +582,13 @@ function showErr(id, msg) {
   const el = document.getElementById(id);
   if (!el) return;
   el.className = 'alert err';
+  el.textContent = msg || '';
+  el.style.display = msg ? 'block' : 'none';
+}
+function showDev(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'alert dev';
   el.textContent = msg || '';
   el.style.display = msg ? 'block' : 'none';
 }
@@ -631,6 +643,7 @@ async function requestLoginCode() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('code-login-title').textContent = _fullPhone;
+      showDev('dev-code-login', d.dev_code ? '🔑 Dev-код: ' + d.dev_code : '');
       showErr('err-code-login','');
       document.getElementById('login-code').value = '';
       showScreen('sc-code-login');
@@ -683,6 +696,7 @@ async function doRegStep1() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('code-reg-title').textContent = _fullPhone;
+      showDev('dev-code-reg', d.dev_code ? '🔑 Dev-код: ' + d.dev_code : '');
       showErr('err-code-reg','');
       document.getElementById('reg-code').value = '';
       showScreen('sc-code-reg');
@@ -813,6 +827,6 @@ function agreePrivacy() {
     <p>Мы можем обновлять настоящую Политику. О существенных изменениях мы уведомим вас через приложение.</p>
 
     <h3>9. Контакты</h3>
-    <p>По вопросам конфиденциальности: <b><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="1767657e6176746e5760766e747f766339766767">[email&#160;protected]</a></b></p>
+    <p>По вопросам конфиденциальности: <b><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e090928996818399a097819983888194ce819090">[email&#160;protected]</a></b></p>
 
     <button class="privacy-agree-b
