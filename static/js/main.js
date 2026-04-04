@@ -5234,40 +5234,84 @@ function buildMessageRow(msg, animate = true) {
         const _skId = 'sk_' + (msg.id || Math.random().toString(36).slice(2));
         // FIX PHOTO FLASH: start visible if blob (already in memory) or already loaded once
         const _startOpacity = (_isBlob || (window._imgLoaded && window._imgLoaded.has(_isSrc))) ? '1' : '0';
-        // ONCE-MESSAGE FIX: добавляем блюр для одноразовых сообщений
         const _isOnce = msg.once === true || msg.once === '1';
-        const _blurStyle = _isOnce ? 'filter:blur(24px);' : '';
-        const _onceOverlay = _isOnce ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);border-radius:14px;z-index:10;pointer-events:none"><div style="text-align:center"><div style="font-size:32px;margin-bottom:8px">🔥</div><div style="font-size:12px;color:#fff;font-weight:600">Одноразовое</div><div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:4px">Исчезает после просмотра</div></div></div>` : '';
-        contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
-            onclick="openImgZoom(this.querySelector('img')?.src||'', ${_isOnce ? 'true' : 'false'}, '${msg.id}')">
-            ${_startOpacity==='0'?`<div class="wc-img-sk" id="${_skId}"></div>`:''}
-             <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
-                 style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease;${_blurStyle}"
-                 onload="(function(el){window._imgLoaded=window._imgLoaded||new Set();window._imgLoaded.add(el.src);const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
-                 onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
-            ${_onceOverlay}
-            <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'}">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
-        </div>`;
+        const _viewed = msg.once_viewed === true; // уже просмотрено отправителем
+
+        if (_isOnce && !isMe) {
+            // Одноразовое сообщение — ЗАБЛЮРЕНО, нужно нажать
+            contentHtml = `<div class="img-bubble" style="position:relative;max-width:220px;min-height:120px;background:rgba(255,255,255,0.06);border-radius:18px;overflow:hidden;cursor:pointer;border:1.5px solid rgba(255,255,255,0.12)"
+                onclick="openImgZoom('${_isSrc}', true, '${msg.id}')">
+                <img src="${_isSrc}" loading="lazy" decoding="async"
+                    style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;filter:blur(28px) brightness(0.4) saturate(0.8);transform:scale(1.1);pointer-events:none;-webkit-user-select:none;user-select:none">
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:5">
+                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,0.3)">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg>
+                    </div>
+                    <div style="font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,0.8)">Нажмите для просмотра</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.6)">🔥 Одноразовое фото</div>
+                </div>
+                <div class="msg-media-time">${displayTime}</div>
+            </div>`;
+        } else if (_isOnce && isMe) {
+            // Для отправителя — показываем заблюренным с меткой «отправлено»
+            contentHtml = `<div class="img-bubble" style="position:relative;max-width:220px;min-height:100px;background:rgba(239,68,68,0.1);border-radius:18px;overflow:hidden;border:1.5px solid rgba(239,68,68,0.3)">
+                <img src="${_isSrc}" loading="lazy" decoding="async"
+                    style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;filter:blur(28px) brightness(0.4);transform:scale(1.1);pointer-events:none">
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;z-index:5">
+                    <div style="font-size:28px">🔥</div>
+                    <div style="font-size:12px;font-weight:700;color:#fff">Одноразовое фото</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.5)">Можно посмотреть 1 раз</div>
+                </div>
+                <div class="msg-media-time">${displayTime}&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'}">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span></div>
+            </div>`;
+        } else {
+            // Обычное фото
+            contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
+                onclick="openImgZoom('${_isSrc}', false, '${msg.id}')">
+                ${_startOpacity==='0'?`<div class="wc-img-sk" id="${_skId}"></div>`:''}
+                <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
+                    style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease"
+                    onload="(function(el){window._imgLoaded=window._imgLoaded||new Set();window._imgLoaded.add(el.src);const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
+                    onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
+                <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'}">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
+            </div>`;
+        }
         } else if (type === 'video') {
         const _vidId = 'vid_' + (msg.id || Math.random().toString(36).slice(2,8));
         const _wrpId = 'wrp_' + _vidId;
         const _vidSrc = msg.file_url || '';
         const _poster = msg.preview_url || msg.thumbnail_url || '';
-        // ONCE-MESSAGE FIX: добавляем блюр для одноразовых видео
         const _isOnceVid = msg.once === true || msg.once === '1';
-        const _vidBlurStyle = _isOnceVid ? 'filter:blur(24px);' : '';
-        const _vidOnceOverlay = _isOnceVid ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.3);border-radius:14px;z-index:10;pointer-events:none"><div style="text-align:center"><div style="font-size:32px;margin-bottom:8px">🔥</div><div style="font-size:12px;color:#fff;font-weight:600">Одноразовое видео</div><div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:4px">Исчезает после просмотра</div></div></div>` : '';
-        // Placeholder shown while poster is being extracted
         const _thumbPlaceholder = _poster ? '' : `<div id="ph_${_vidId}" style="position:absolute;inset:0;z-index:3;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);display:flex;align-items:center;justify-content:center;border-radius:14px;overflow:hidden"><div style="text-align:center;opacity:0.45"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" style="display:block;margin:0 auto 8px"><path d="M23 7l-7 5 7 5V7z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="white" stroke-width="1.5"/></svg></div></div>`;
-        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}', ${_isOnceVid ? 'true' : 'false'}, '${msg.id}')" style="cursor:pointer;min-height:160px">
+
+        if (_isOnceVid && !isMe) {
+            // Одноразовое видео для получателя — заблюренное
+            contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster||''}',true,'${msg.id}')" style="cursor:pointer;min-height:160px;max-width:220px;border:1.5px solid rgba(239,68,68,0.3)">
+                <video id="${_vidId}" src="${_vidSrc}" ${_poster?`poster="${_poster}"`:''}  playsinline preload="metadata" muted style="display:block;width:100%;max-height:280px;object-fit:cover;pointer-events:none;position:relative;z-index:1;filter:blur(20px) brightness(0.4);transform:scale(1.05)"></video>
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:10">
+                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,0.3)">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </div>
+                    <div style="font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,0.8)">Нажмите для просмотра</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.6)">🔥 Одноразовое видео</div>
+                </div>
+                <div class="msg-media-time">${displayTime}</div>
+            </div>`;
+        } else if (_isOnceVid && isMe) {
+            contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:default;min-height:120px;max-width:220px;border:1.5px solid rgba(239,68,68,0.3)">
+                <video src="${_vidSrc}" ${_poster?`poster="${_poster}"`:''}  playsinline preload="metadata" muted style="display:block;width:100%;max-height:280px;object-fit:cover;pointer-events:none;filter:blur(20px) brightness(0.4);transform:scale(1.05)"></video>
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;z-index:10"><div style="font-size:28px">🔥</div><div style="font-size:12px;font-weight:700;color:#fff">Одноразовое видео</div><div style="font-size:10px;color:rgba(255,255,255,0.5)">Можно посмотреть 1 раз</div></div>
+                <div class="msg-media-time">${displayTime}&nbsp;<span class="status-icon" style="color:${msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,0.55)'}">${msg.is_read?ICONS.checkDouble:ICONS.check}</span></div>
+            </div>`;
+        } else {
+        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}', false, '${msg.id}')" style="cursor:pointer;min-height:160px">
             ${_thumbPlaceholder}
             <video id="${_vidId}" src="${_vidSrc}" ${_poster ? `poster="${_poster}"` : ''} playsinline preload="metadata" muted
-                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:transparent;pointer-events:none;position:relative;z-index:1;${_vidBlurStyle}"
+                   style="display:block;width:100%;max-height:320px;object-fit:cover;background:transparent;pointer-events:none;position:relative;z-index:1"
                    onloadedmetadata="_grabVideoPosterFast('${_vidId}')"
                    onloadeddata="_grabVideoPosterFast('${_vidId}')"
                    onerror="this.closest('.video-bubble-wrap').innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
-            ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}');${_vidBlurStyle}"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}" style="${_vidBlurStyle}"></div>`}
-            ${_vidOnceOverlay}
+            ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}')"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}"></div>`}
             <div class="video-play-overlay">
                 <div class="video-play-btn">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="6 3 20 12 6 21 6 3"/></svg>
@@ -5275,6 +5319,7 @@ function buildMessageRow(msg, animate = true) {
             </div>
             <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
         </div>`;
+        }
     } else if (type === 'file' || type === 'document') {
         const fname = msg.content || 'Файл';
         const furl  = msg.file_url || '';
@@ -5819,82 +5864,195 @@ function showMsgContextMenu(row, msg) {
 
 function openImgZoom(src, isOnce = false, msgId = null) {
     if (!src) return;
-    let viewer = document.getElementById('wc-img-viewer');
-    if (!viewer) {
-        viewer = document.createElement('div');
-        viewer.id = 'wc-img-viewer';
-        viewer.innerHTML = `
-            <button id="wc-img-viewer-close" aria-label="Закрыть" onclick="closeImgZoom()">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>
-            </button>
-            <a id="wc-img-dl" download="photo.jpg" style="position:absolute;top:max(env(safe-area-inset-top,0px),12px);right:60px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:0.5px solid rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </a>
-            <img id="wc-img-viewer-img" src="" alt="" draggable="false">`;
-        document.body.appendChild(viewer);
-        viewer.addEventListener('click', function(e) { if (e.target === viewer) closeImgZoom(); });
-    }
-    const img = viewer.querySelector('#wc-img-viewer-img');
-    const dl  = viewer.querySelector('#wc-img-dl');
+
+    // ── Полноэкранный просмотрщик ──────────────────────────────
+    const viewer = document.createElement('div');
+    viewer.id = 'wc-img-viewer-' + Date.now();
+    viewer.style.cssText = 'position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.22s ease;-webkit-user-select:none;user-select:none';
+    viewer.setAttribute('data-once', isOnce ? '1' : '0');
+    viewer.setAttribute('data-msg-id', msgId || '');
+
+    const img = document.createElement('img');
     img.src = src;
-    if (dl) dl.href = src;
-    viewer.classList.add('open');
-    viewer._isOnce = isOnce;
-    viewer._msgId = msgId;
-    document.body.style.overflow = 'hidden';
-    if (isOnce) {
-        document.addEventListener('visibilitychange', _onceVisibilityChange);
+    img.draggable = false;
+    img.style.cssText = 'max-width:100vw;max-height:100vh;object-fit:contain;-webkit-user-select:none;user-select:none;pointer-events:none;-webkit-touch-callout:none';
+    img.setAttribute('data-once', isOnce ? '1' : '0');
+
+    // Запрет контекстного меню (долгий тап на iOS)
+    img.oncontextmenu = (e) => { e.preventDefault(); return false; };
+    viewer.oncontextmenu = (e) => { e.preventDefault(); return false; };
+
+    // Кнопка закрыть (для обычных фото)
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5';
+    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
+
+    // Кнопка скачать (только для обычных фото)
+    const dlBtn = document.createElement('a');
+    dlBtn.href = src; dlBtn.download = 'photo.jpg';
+    dlBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);right:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5;text-decoration:none';
+    dlBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+    viewer.appendChild(img);
+
+    if (!isOnce) {
+        viewer.appendChild(closeBtn);
+        viewer.appendChild(dlBtn);
     }
-    const onKey = (e) => { if (e.key === 'Escape') { closeImgZoom(); document.removeEventListener('keydown', onKey); } };
-    document.addEventListener('keydown', onKey);
-    // Swipe down to close
-    let _sy = 0, _dragging = false;
-    const onTS = (e) => { _sy = e.touches[0].clientY; _dragging = true; };
-    const onTM = (e) => {
-        if (!_dragging) return;
-        const dy = e.touches[0].clientY - _sy;
-        const dx = Math.abs(e.touches[0].clientX - (e.touches[0].clientX));
-        if (dy > 0) {
-            const prog = Math.min(dy / 250, 1);
-            img.style.transform = `translateY(${dy * 0.5}px) scale(${1 - prog * 0.15})`;
-            viewer.style.background = `rgba(0,0,0,${0.96 - prog * 0.5})`;
+
+    document.body.appendChild(viewer);
+    document.body.style.overflow = 'hidden';
+
+    requestAnimationFrame(() => { viewer.style.opacity = '1'; });
+
+    const _doClose = () => {
+        viewer.style.opacity = '0';
+        setTimeout(() => {
+            viewer.remove();
+            document.body.style.overflow = '';
+            _cleanupOnceGuard();
+        }, 220);
+        if (isOnce && msgId) {
+            _destroyOnceMessage(msgId);
         }
     };
-    const onTE = (e) => {
-        if (!_dragging) return; _dragging = false;
-        const dy = e.changedTouches[0].clientY - _sy;
-        if (dy > 90) { closeImgZoom(); }
-        else { img.style.transform = ''; viewer.style.background = ''; }
+
+    closeBtn.onclick = _doClose;
+    viewer.addEventListener('click', (e) => { if (e.target === viewer) _doClose(); });
+
+    // Свайп вниз для закрытия
+    let _sy = 0;
+    viewer.addEventListener('touchstart', (e) => { _sy = e.touches[0].clientY; }, { passive: true });
+    viewer.addEventListener('touchend', (e) => {
+        if (e.changedTouches[0].clientY - _sy > 80) _doClose();
+    });
+    document.addEventListener('keydown', function _k(e) {
+        if (e.key === 'Escape') { _doClose(); document.removeEventListener('keydown', _k); }
+    });
+
+    // ── ЗАЩИТА ДЛЯ ОДНОРАЗОВЫХ ────────────────────────────────
+    if (isOnce) {
+        // Запрет скачивания — убираем кнопку
+        // Подключаем все защитные механизмы
+        _attachOnceProtection(viewer, _doClose, msgId);
+    }
+}
+
+// ── Удаление одноразового сообщения с обеих сторон ───────────────────
+function _destroyOnceMessage(msgId) {
+    if (!msgId) return;
+    // Удаляем из DOM с анимацией
+    const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
+    if (msgRow) {
+        msgRow.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+        msgRow.style.opacity = '0';
+        msgRow.style.transform = 'scale(0.9)';
+        setTimeout(() => msgRow.remove(), 400);
+    }
+    // Сообщаем серверу — удалить для всех
+    try {
+        socket.emit('delete_message_for_everyone', { msg_id: msgId, chat_id: currentChatId });
+    } catch(e) {
+        try { socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId }); } catch(e2) {}
+    }
+    showToast('🔥 Одноразовое сообщение удалено', 'info', 2500);
+}
+
+// ── Полная защита одноразового контента ──────────────────────────────
+function _attachOnceProtection(viewer, onClose, msgId) {
+    // 1. CSS запрет выделения, копирования, скачивания
+    const guardSt = document.createElement('style');
+    guardSt.id = '_once_active_guard';
+    guardSt.textContent = `
+        #${viewer.id} { -webkit-user-select:none!important;user-select:none!important;-webkit-touch-callout:none!important; }
+        #${viewer.id} img { pointer-events:none!important;-webkit-user-drag:none!important; }
+        body._once-open * { -webkit-user-select:none!important;user-select:none!important; }
+        /* iOS Screen Recording block */
+        @media (display-mode: standalone) { #${viewer.id} { filter: none; } }
+    `;
+    document.head.appendChild(guardSt);
+    document.body.classList.add('_once-open');
+
+    // 2. Чёрный экран при потере видимости (скриншот/запись)
+    let _guardActive = false;
+    const _showBlackScreen = () => {
+        if (_guardActive) return;
+        _guardActive = true;
+        let g = document.getElementById('_once_black_guard');
+        if (!g) {
+            g = document.createElement('div');
+            g.id = '_once_black_guard';
+            g.style.cssText = 'position:fixed;inset:0;z-index:9999999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;animation:_onceGuardIn 0.1s ease';
+            g.innerHTML = `
+                <div style="font-size:52px;margin-bottom:16px">🚫</div>
+                <div style="font-size:17px;font-weight:700;color:#fff;margin-bottom:8px">Запись запрещена</div>
+                <div style="font-size:13px;color:rgba(255,255,255,0.5);text-align:center;padding:0 32px">Это одноразовое сообщение.<br>Скриншоты и запись экрана недоступны.</div>`;
+            document.body.appendChild(g);
+        }
     };
-    viewer.addEventListener('touchstart', onTS, { passive: true });
-    viewer.addEventListener('touchmove',  onTM, { passive: true });
-    viewer.addEventListener('touchend',   onTE);
-    viewer._cleanup = () => {
-        viewer.removeEventListener('touchstart', onTS);
-        viewer.removeEventListener('touchmove', onTM);
-        viewer.removeEventListener('touchend', onTE);
+    const _hideBlackScreen = () => {
+        _guardActive = false;
+        const g = document.getElementById('_once_black_guard');
+        if (g) { g.style.animation = '_onceGuardOut 0.2s ease forwards'; setTimeout(() => g.remove(), 200); }
+    };
+
+    // 3. visibilitychange — срабатывает при скриншоте на iOS и записи экрана на Android
+    const _visChange = () => {
+        if (document.hidden) {
+            _showBlackScreen();
+            // Закрываем одноразовое при попытке записи
+            setTimeout(() => {
+                if (document.hidden) onClose();
+            }, 500);
+        } else {
+            _hideBlackScreen();
+        }
+    };
+    document.addEventListener('visibilitychange', _visChange);
+
+    // 4. blur события — дополнительная защита
+    const _winBlur = () => { _showBlackScreen(); };
+    const _winFocus = () => { _hideBlackScreen(); };
+    window.addEventListener('blur', _winBlur);
+    window.addEventListener('focus', _winFocus);
+
+    // 5. Запрет правой кнопки и долгого тапа везде
+    const _noCtx = (e) => { e.preventDefault(); return false; };
+    document.addEventListener('contextmenu', _noCtx);
+
+    // 6. Обнаружение recording через MediaDevices (где доступно)
+    let _recordingCheck = null;
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+        _recordingCheck = setInterval(async () => {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                // Если активна запись — закрываем
+                if (document.hidden) { onClose(); }
+            } catch(e) {}
+        }, 2000);
+    }
+
+    // 7. Сохраняем cleanup в viewer
+    viewer._onceCleanup = () => {
+        document.removeEventListener('visibilitychange', _visChange);
+        window.removeEventListener('blur', _winBlur);
+        window.removeEventListener('focus', _winFocus);
+        document.removeEventListener('contextmenu', _noCtx);
+        if (_recordingCheck) clearInterval(_recordingCheck);
+        guardSt.remove();
+        document.body.classList.remove('_once-open');
+        _hideBlackScreen();
     };
 }
 
-function closeImgZoom() {
-    const viewer = document.getElementById('wc-img-viewer');
-    if (!viewer) return;
-    const img = viewer.querySelector('#wc-img-viewer-img');
-    if (img) img.style.transform = '';
-    viewer.style.background = '';
-    viewer.classList.remove('open');
-    document.body.style.overflow = '';
-    if (viewer._cleanup) { viewer._cleanup(); viewer._cleanup = null; }
-    if (viewer._isOnce && viewer._msgId) {
-        if (window._onceVisibilityChange) document.removeEventListener('visibilitychange', window._onceVisibilityChange);
-        socket.emit('delete_message_for_me', { msg_id: viewer._msgId, chat_id: currentChatId });
-        showToast('🔥 Одноразовое сообщение удалено', 'info', 2000);
-        const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(viewer._msgId)) + '"]');
-        if (msgRow) {
-            msgRow.style.animation = 'fadeOut 0.4s ease forwards';
-            setTimeout(() => msgRow.remove(), 400);
-        }
-    }
+function _cleanupOnceGuard() {
+    document.getElementById('_once_black_guard')?.remove();
+    document.getElementById('_once_active_guard')?.remove();
+    document.body.classList.remove('_once-open');
+    // Cleanup всех viewers
+    document.querySelectorAll('[id^="wc-img-viewer-"]').forEach(v => {
+        if (v._onceCleanup) v._onceCleanup();
+    });
 }
 
 function copyMessage(text) {
@@ -6524,46 +6682,54 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
     seekBar.addEventListener('touchmove',  e => { if (_seekDrag) { e.preventDefault(); _doSeek(e.touches[0].clientX); } }, { passive: false });
     seekBar.addEventListener('touchend',   () => { _seekDrag = false; });
 
+    const _closeModal = () => {
+        vid.pause(); vid.src = ''; modal.remove();
+        _cleanupOnceGuard();
+        if (isOnce && msgId) _destroyOnceMessage(msgId);
+    };
+
+    btnClose.onclick = _closeModal;
+
     btnRow.appendChild(btnClose);
     btnRow.appendChild(btnPlay);
     btnRow.appendChild(timeLabel);
     btnRow.appendChild(btnSpeed);
-    btnRow.appendChild(btnSave);
+    if (!isOnce) btnRow.appendChild(btnSave); // скачивание только для обычных
     ctrlWrap.appendChild(seekBar);
     ctrlWrap.appendChild(btnRow);
     modal.appendChild(ctrlWrap);
 
     // Закрыть на backdrop
-    modal.addEventListener('click', e => {
-        if (e.target === modal) {
-            vid.pause(); vid.src=''; modal.remove();
-            if (isOnce && msgId) {
-                socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
-                showToast('🔥 Одноразовое видео удалено', 'info', 2000);
-                const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
-                if (msgRow) {
-                    msgRow.style.animation = 'fadeOut 0.4s ease forwards';
-                    setTimeout(() => msgRow.remove(), 400);
-                }
-            }
-        }
-    });
+    modal.addEventListener('click', e => { if (e.target === modal) _closeModal(); });
 
     // Свайп вверх/вниз → закрыть
     let _sty = 0;
     modal.addEventListener('touchstart', e => { _sty = e.touches[0].clientY; }, { passive: true });
     modal.addEventListener('touchend', e => {
         const dy = e.changedTouches[0].clientY - _sty;
-        if (Math.abs(dy) > 80 && e.target !== seekBar && e.target !== vid) {
-            vid.pause(); vid.src=''; modal.remove();
-        }
+        if (Math.abs(dy) > 80 && e.target !== seekBar && e.target !== vid) _closeModal();
     }, { passive: true });
+
+    // После окончания одноразового видео — закрываем
+    if (isOnce) {
+        vid.addEventListener('ended', () => { setTimeout(_closeModal, 500); });
+    }
 
     // ESC
     const _onEsc = e => { if (e.key === 'Escape') { vid.pause(); vid.src=''; modal.remove(); document.removeEventListener('keydown', _onEsc); } };
     document.addEventListener('keydown', _onEsc);
 
     document.body.appendChild(modal);
+
+    // Подключаем защиту для одноразовых видео
+    if (isOnce) {
+        modal.oncontextmenu = (e) => { e.preventDefault(); return false; };
+        modal.style.setProperty('-webkit-user-select', 'none');
+        modal.style.setProperty('user-select', 'none');
+        vid.setAttribute('controlsList', 'nodownload');
+        vid.setAttribute('disablePictureInPicture', 'true');
+        _attachOnceProtection(modal, _closeModal, msgId);
+    }
 }
 
 // Grab first frame as poster for video bubbles (blur preview)
@@ -14983,17 +15149,19 @@ window._onceVisibilityChange = function() {
     const guardStyle = document.createElement('style');
     guardStyle.id = '_once_guard_styles';
     guardStyle.textContent = `
-        @keyframes fadeInGuard {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-        @keyframes fadeOutGuard {
-            from { opacity: 1; }
-            to { opacity: 0; }
-        }
+        @keyframes _onceGuardIn  { from{opacity:0} to{opacity:1} }
+        @keyframes _onceGuardOut { from{opacity:1} to{opacity:0} }
+        @keyframes fadeInGuard   { from{opacity:0} to{opacity:1} }
+        @keyframes fadeOutGuard  { from{opacity:1} to{opacity:0} }
         @keyframes fadeOut {
-            from { opacity: 1; transform: translateY(0) scale(1); }
-            to { opacity: 0; transform: translateY(10px) scale(0.95); }
+            from { opacity:1; transform:translateY(0) scale(1); }
+            to   { opacity:0; transform:translateY(10px) scale(0.92); }
+        }
+        /* Запрет выделения по всему приложению при просмотре once */
+        body._once-open {
+            -webkit-user-select: none !important;
+            user-select: none !important;
+            -webkit-touch-callout: none !important;
         }
     `;
     document.head.appendChild(guardStyle);
