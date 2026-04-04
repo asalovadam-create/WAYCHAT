@@ -1198,44 +1198,35 @@ def _gen_code():
     return str(random.randint(100000, 999999))
 
 
-def _send_sms(phone: str, code: str) -> bool:
-    """Отправка SMS через sms.ru. Возвращает True при успехе."""
-    api_id = os.environ.get('SMSRU_API_ID', 'CC806976-2EC6-F295-39C8-A521F9C8F792')
-
-    # ── Нормализация номера ──────────────────────────────────
-    # Убираем всё кроме цифр
+def normalize_phone(phone: str) -> str:
+    """Приводит любой формат номера к +7XXXXXXXXXX."""
     digits = ''.join(c for c in phone if c.isdigit())
-    # Если номер начинается с 8 (советский формат) → заменяем на 7
     if digits.startswith('8') and len(digits) == 11:
         digits = '7' + digits[1:]
-    # Если 10 цифр (без кода страны, например 9899129141) → добавляем 7
     if len(digits) == 10:
         digits = '7' + digits
-    phone_norm = '+' + digits
-    # ────────────────────────────────────────────────────────
+    return '+' + digits
 
-    msg = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
+
+def _send_sms(phone: str, code: str) -> bool:
+    """Отправка SMS через sms.ru. Возвращает True при успехе."""
+    api_id     = os.environ.get('SMSRU_API_ID', 'CC806976-2EC6-F295-39C8-A521F9C8F792')
+    phone_norm = normalize_phone(phone)
+    msg        = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
     print(f'📱 SMS → {phone_norm} (исходный: {phone})')
     try:
         resp = req_lib.get(
             'https://sms.ru/sms/send',
-            params={
-                'api_id': api_id,
-                'to':     phone_norm,
-                'msg':    msg,
-                'json':   1,
-            },
+            params={'api_id': api_id, 'to': phone_norm, 'msg': msg, 'json': 1},
             timeout=10,
         )
         data = resp.json()
         print(f'📨 SMS.RU ответ: {data}')
-        sms_result = data.get('sms', {})
-        for _num, info in sms_result.items():
+        for _num, info in data.get('sms', {}).items():
             if info.get('status_code') == 100:
                 print(f'✅ SMS отправлено: {phone_norm[:6]}***')
                 return True
-            else:
-                print(f'⚠️  SMS ошибка: {info.get("status_text")} (код {info.get("status_code")})')
+            print(f'⚠️  SMS ошибка: {info.get("status_text")} (код {info.get("status_code")})')
         return False
     except Exception as e:
         print(f'❌ SMS exception: {e}')
@@ -1248,7 +1239,7 @@ def check_phone():
     try:
         db.session.rollback()  # сбрасываем зависшую транзакцию если есть
         data  = request.get_json() if request.is_json else request.form
-        phone = (data.get('phone') or '').strip()
+        phone = normalize_phone((data.get('phone') or '').strip())
         if not phone:
             return jsonify({'success': False, 'error': 'Укажите номер телефона'}), 400
         exists = User.query.filter_by(phone=phone).first() is not None
@@ -1264,7 +1255,7 @@ def check_phone():
 def send_code():
     try:
         data     = request.get_json() if request.is_json else request.form
-        phone    = (data.get('phone')    or '').strip()
+        phone    = normalize_phone((data.get('phone')    or '').strip())
         name     = (data.get('name')     or '').strip()
         username = (data.get('username') or '').strip().lower().lstrip('@')
 
@@ -1311,7 +1302,7 @@ def send_code():
 def verify_code():
     try:
         data  = request.get_json() if request.is_json else request.form
-        phone = (data.get('phone') or '').strip()
+        phone = normalize_phone((data.get('phone') or '').strip())
         code  = (data.get('code')  or '').strip()
 
         if not phone or not code:
@@ -1383,7 +1374,7 @@ def register_step1():
         return render_template('login.html', is_dev=IS_DEV)
     try:
         data     = request.get_json() if request.is_json else request.form
-        phone    = (data.get('phone', '') or '').strip()
+        phone    = normalize_phone((data.get('phone', '') or '').strip())
         name     = (data.get('name',  '') or '').strip()
         username = (data.get('username', '') or '').strip().lower().lstrip('@')
 
@@ -1428,7 +1419,7 @@ def register_step2_page():
         return render_template('login.html', is_dev=IS_DEV)
     try:
         data  = request.get_json() if request.is_json else request.form
-        phone = (data.get('phone', '') or '').strip()
+        phone = normalize_phone((data.get('phone', '') or '').strip())
         code  = (data.get('code',  '') or '').strip()
 
         pending = PendingCode.get(phone)
