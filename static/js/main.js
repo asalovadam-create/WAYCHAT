@@ -6452,7 +6452,7 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
     const btnClose = document.createElement('button');
     btnClose.style.cssText = 'background:rgba(255,255,255,0.1);border:0.5px solid rgba(255,255,255,0.15);color:#fff;font-size:14px;padding:10px 20px;border-radius:22px;cursor:pointer;font-family:inherit;font-weight:600;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px)';
     btnClose.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg> Закрыть`;
-    btnClose.onclick = () => { 
+    btnClose.onclick = () => {
         vid.pause(); vid.src=''; modal.remove();
         if (isOnce && msgId) {
             socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
@@ -6534,8 +6534,8 @@ function openVideoModal(src, poster, isOnce = false, msgId = null) {
     modal.appendChild(ctrlWrap);
 
     // Закрыть на backdrop
-    modal.addEventListener('click', e => { 
-        if (e.target === modal) { 
+    modal.addEventListener('click', e => {
+        if (e.target === modal) {
             vid.pause(); vid.src=''; modal.remove();
             if (isOnce && msgId) {
                 socket.emit('delete_message_for_me', { msg_id: msgId, chat_id: currentChatId });
@@ -9209,26 +9209,36 @@ function _showMediaPreviewModal(file) {
         if (existing) { existing.remove(); return; }
         const sheet = document.createElement('div');
         sheet.id = '_pvMenuSheet';
-        sheet.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);right:16px;background:rgba(30,30,35,0.98);border-radius:18px;padding:6px;min-width:220px;z-index:10001;border:0.5px solid rgba(255,255,255,0.12);backdrop-filter:blur(20px);box-shadow:0 8px 40px rgba(0,0,0,0.6)';
+        // Используем fixed позиционирование — НЕ меняем position у ov
+        sheet.style.cssText = 'position:fixed;top:max(env(safe-area-inset-top,60px),60px);right:16px;background:rgba(28,28,32,0.98);border-radius:18px;padding:6px;min-width:230px;z-index:10010;border:0.5px solid rgba(255,255,255,0.12);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);box-shadow:0 8px 40px rgba(0,0,0,0.7)';
         const opts = [
-            { id:'hd',   icon:'🎯', label:'HD-качество',        sub:'Оригинальное разрешение' },
-            { id:'compressed', icon:'⚡', label:'Сжатое',        sub:'Быстрее, меньше места' },
-            { id:'once', icon:'🔥', label:'Одноразовое',         sub:'Исчезает после просмотра' },
+            { id:'hd',         icon:'🎯', label:'HD-качество',   sub:'Оригинальное разрешение' },
+            { id:'compressed', icon:'⚡', label:'Сжатое',         sub:'Быстрее, меньше места' },
+            { id:'once',       icon:'🔥', label:'Одноразовое',    sub:'Исчезает после просмотра' },
         ];
         opts.forEach(o => {
             const row = document.createElement('div');
             const isActive = _sendMode === o.id;
-            row.style.cssText = `display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;cursor:pointer;background:${isActive?'rgba(16,185,129,0.15)':'transparent'}`;
+            row.style.cssText = `display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:13px;cursor:pointer;background:${isActive?'rgba(16,185,129,0.15)':'transparent'};transition:background 0.15s`;
             row.innerHTML = `<span style="font-size:20px">${o.icon}</span><div style="flex:1"><div style="font-size:14px;font-weight:${isActive?'700':'600'};color:${isActive?'var(--accent,#10b981)':'#fff'}">${o.label}</div><div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:1px">${o.sub}</div></div>${isActive?'<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>':''}`;
-            row.onclick = () => { _sendMode = o.id; _updateBadge(); sheet.remove(); };
+            row.onclick = (e) => { e.stopPropagation(); _sendMode = o.id; _updateBadge(); sheet.remove(); };
             sheet.appendChild(row);
         });
-        ov.style.position = 'relative';
-        ov.appendChild(sheet);
-        // Close on outside tap
-        setTimeout(() => { document.addEventListener('click', function _c(e){ if(!sheet.contains(e.target)&&e.target.id!=='_pvMenuBtn'){sheet.remove();document.removeEventListener('click',_c);}},{once:false}); }, 100);
+        document.body.appendChild(sheet);
+        // Закрывать при тапе вне меню
+        const _closeMenu = (e) => {
+            if (!sheet.contains(e.target) && e.target.id !== '_pvMenuBtn') {
+                sheet.remove();
+                document.removeEventListener('touchend', _closeMenu);
+                document.removeEventListener('click', _closeMenu);
+            }
+        };
+        setTimeout(() => {
+            document.addEventListener('click', _closeMenu);
+            document.addEventListener('touchend', _closeMenu, { passive: true });
+        }, 50);
     };
-    hdr.querySelector('#_pvMenuBtn').onclick = _showMenu;
+    hdr.querySelector('#_pvMenuBtn').onclick = (e) => { e.stopPropagation(); _showMenu(); };
 
     // Send
     bottom.querySelector('#_pvSendBtn').onclick = async () => {
@@ -10141,9 +10151,10 @@ function _openMomentsOverlay(moments, startIdx) {
 
         if (isImg) {
             const img = document.createElement('img');
-            img.src = m.media_url;
             img.draggable = false;
-            img.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none;-webkit-user-select:none';
+            img.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;user-select:none;-webkit-user-select:none;opacity:0;transition:opacity 0.2s ease';
+            img.onload = () => { img.style.opacity = '1'; };
+            img.src = m.media_url;
             mediaWrap.appendChild(img);
             // Авто-перелистывание через 7 сек для фото + анимированный прогресс
             const PHOTO_DURATION = 7000;
@@ -10161,24 +10172,36 @@ function _openMomentsOverlay(moments, startIdx) {
             loader.innerHTML = '<div class="wc-moment-spinner"></div>';
             mediaWrap.appendChild(loader);
 
+            // Если есть poster — показываем сразу как фон
+            if (m.preview_url) {
+                const posterImg = document.createElement('img');
+                posterImg.src = m.preview_url;
+                posterImg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;z-index:5';
+                mediaWrap.appendChild(posterImg);
+            }
+
             const vid = document.createElement('video');
             vid.src       = m.media_url;
-            vid.autoplay  = false;      // НЕ autoplay — ждём canplay
+            if (m.preview_url) vid.poster = m.preview_url;
+            vid.autoplay  = false;
             vid.playsInline = true;
             vid.muted     = false;
             vid.loop      = false;
             vid.controls  = false;
-            vid.preload   = 'auto';
-            vid.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;transition:opacity 0.3s ease';
+            vid.preload   = 'metadata';  // сначала только метаданные — быстрее
+            vid.style.cssText = 'width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;transition:opacity 0.25s ease;position:relative;z-index:6';
             _videoEl = vid;
             mediaWrap.appendChild(vid);
 
-            // Показываем и воспроизводим только когда достаточно данных
+            // Начинаем загружать данные после вставки в DOM
+            requestAnimationFrame(() => { vid.preload = 'auto'; vid.load(); });
+
             vid.addEventListener('canplay', () => {
                 loader.style.display = 'none';
                 vid.style.opacity = '1';
+                // Убираем poster-img если есть
+                mediaWrap.querySelectorAll('img').forEach(img => { if (img !== vid) img.remove(); });
                 vid.play().catch(() => {
-                    // autoplay заблокирован — показываем кнопку play
                     const playBtn = document.createElement('div');
                     playBtn.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;z-index:15;cursor:pointer';
                     playBtn.innerHTML = '<div style="width:72px;height:72px;border-radius:50%;background:rgba(255,255,255,0.2);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><polygon points="5 3 19 12 5 21 5 3" fill="white"/></svg></div>';
@@ -10187,13 +10210,15 @@ function _openMomentsOverlay(moments, startIdx) {
                 });
             }, { once: true });
 
-            // Прогресс для видео
+            // Если долго грузится — не блокируем UI
+            vid.addEventListener('waiting', () => { loader.style.display = 'flex'; });
+            vid.addEventListener('playing', () => { loader.style.display = 'none'; });
+
             vid.addEventListener('timeupdate', () => {
                 if (!vid.duration) return;
                 const fill = document.getElementById('moment-prog-fill');
                 if (fill) fill.style.width = (vid.currentTime / vid.duration * 100) + '%';
             });
-            // Автопереход после окончания видео
             vid.addEventListener('ended', () => goTo(idx + 1));
         } else {
             // Текстовый момент
@@ -10384,9 +10409,20 @@ function _confirmDialog(title, message, confirmText, cancelText) {
 // ── Preload helper ───────────────────────────────────────
 function _preloadMedia(url) {
     if (!url || _mediaCache.has(url)) return;
-    _mediaCache.set(url, url); // Map: key=url, value=url
-    if (/\.(mp4|mov|webm)/i.test(url)) return;
-    const img = new Image(); img.src = url;
+    _mediaCache.set(url, url);
+    if (/\.(mp4|mov|webm|m4v)/i.test(url)) {
+        // Preload video metadata so first frame is ready
+        const v = document.createElement('video');
+        v.preload = 'metadata';
+        v.src = url;
+        v.muted = true;
+        v.style.cssText = 'position:fixed;top:-9999px;pointer-events:none;opacity:0';
+        document.body.appendChild(v);
+        v.addEventListener('loadedmetadata', () => { v.remove(); }, { once: true });
+        setTimeout(() => { try { v.remove(); } catch(e) {} }, 5000);
+    } else {
+        const img = new Image(); img.src = url;
+    }
 }
 
 
@@ -10520,6 +10556,14 @@ function _renderMomentsBar() {
             () => openUserMomentsViewer(uid)
         );
         scroll.appendChild(item);
+    });
+
+    // Preload media для первых 3 пользователей — чтобы не было чёрного экрана
+    let _preloadCount = 0;
+    moments.forEach(m => {
+        if (_preloadCount >= 3) return;
+        if (m.preview_url) { _preloadMedia(m.preview_url); _preloadCount++; }
+        else if (m.media_url && !/\.(mp4|mov|webm)/i.test(m.media_url)) { _preloadMedia(m.media_url); _preloadCount++; }
     });
 }
 
@@ -14895,9 +14939,9 @@ document.addEventListener('visibilitychange', function() {
 window._onceVisibilityChange = function() {
     const imgViewer = document.getElementById('wc-img-viewer');
     const vidModal = document.getElementById('_wc_vid_modal');
-    
+
     if (!imgViewer && !vidModal) return;
-    
+
     // Если приложение потеряло фокус (пользователь делает скриншот/запись)
     if (document.hidden) {
         // Показываем чёрный экран поверх всего
