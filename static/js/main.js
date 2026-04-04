@@ -5228,22 +5228,46 @@ function buildMessageRow(msg, animate = true) {
           ${_callbackBtn}
         </div>`;
         } else if (type === 'image' || type === 'photo') {
-        // FIXED: skeleton + retry + eager load для blob (optimistic UI)
         const _isSrc  = msg.file_url || '';
         const _isBlob = _isSrc.startsWith('blob:');
-        const _skId = 'sk_' + (msg.id || Math.random().toString(36).slice(2));
-        // FIX PHOTO FLASH: start visible if blob (already in memory) or already loaded once
+        const _skId   = 'sk_' + (msg.id || Math.random().toString(36).slice(2));
         const _startOpacity = (_isBlob || (window._imgLoaded && window._imgLoaded.has(_isSrc))) ? '1' : '0';
+        const _isOnce = msg.once === true || msg.once === '1';
+        if (_isOnce && !isMe) {
+            // Получатель: заблюренное, нажать для просмотра
+            contentHtml = `<div class="img-bubble" style="position:relative;max-width:220px;min-height:120px;background:rgba(255,255,255,0.06);border-radius:18px;overflow:hidden;cursor:pointer;border:1.5px solid rgba(255,255,255,0.12)"
+                onclick="openImgZoom('${_isSrc}', true, '${msg.id}')">
+                <img src="${_isSrc}" loading="lazy" style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;filter:blur(28px) brightness(0.4);transform:scale(1.1);pointer-events:none">
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:5">
+                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,0.3)">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke="white" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="white" stroke-width="2"/></svg>
+                    </div>
+                    <div style="font-size:12px;font-weight:700;color:#fff;text-shadow:0 1px 8px rgba(0,0,0,0.8)">Нажмите для просмотра</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.6)">🔥 Одноразовое</div>
+                </div>
+                <div class="msg-media-time">${displayTime}</div>
+            </div>`;
+        } else if (_isOnce && isMe) {
+            // Отправитель: заблюрено
+            contentHtml = `<div class="img-bubble" style="position:relative;max-width:220px;min-height:100px;background:rgba(239,68,68,0.08);border-radius:18px;overflow:hidden;border:1.5px solid rgba(239,68,68,0.3)">
+                <img src="${_isSrc}" loading="lazy" style="display:block;width:100%;height:auto;max-height:280px;object-fit:cover;filter:blur(28px) brightness(0.4);transform:scale(1.1);pointer-events:none">
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;z-index:5">
+                    <div style="font-size:28px">🔥</div>
+                    <div style="font-size:12px;font-weight:700;color:#fff">Одноразовое фото</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.5)">Можно посмотреть 1 раз</div>
+                </div>
+                <div class="msg-media-time">${displayTime}&nbsp;<span class="status-icon" style="color:${msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,0.55)'}">${msg.is_read?ICONS.checkDouble:ICONS.check}</span></div>
+            </div>`;
         } else {
             // Обычное фото
             contentHtml = `<div class="img-bubble" style="position:relative;max-width:260px;min-height:40px;background:transparent;cursor:zoom-in;border-radius:14px;overflow:hidden;border:none;outline:none;box-shadow:none"
-                onclick="openImgZoom('${_isSrc}')">
+                onclick="openImgZoom('${_isSrc}', false, '${msg.id}')">
                 ${_startOpacity==='0'?`<div class="wc-img-sk" id="${_skId}"></div>`:''}
-                <img src="${_isSrc}" loading="${_isBlob ? 'eager' : 'lazy'}" decoding="async"
+                <img src="${_isSrc}" loading="${_isBlob?'eager':'lazy'}" decoding="async"
                     style="display:block;width:100%;height:auto;max-height:320px;object-fit:cover;border-radius:14px;border:none;outline:none;box-shadow:none;opacity:${_startOpacity};transition:opacity 0.18s ease"
                     onload="(function(el){window._imgLoaded=window._imgLoaded||new Set();window._imgLoaded.add(el.src);const sk=document.getElementById('${_skId}');if(sk)sk.remove();el.style.opacity=1})(this)"
-                    onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Фото не загрузилось</div>';}})(this)">
-                <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'}">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
+                    onerror="(function(img){const sk=document.getElementById('${_skId}');if(sk)sk.remove();let r=parseInt(img.dataset.retries||0);if(r<3){img.dataset.retries=r+1;setTimeout(()=>{img.src=img.src.split('?r=')[0]+'?r='+Date.now();},1500*Math.pow(2,r));}else{img.style.display='none';img.parentElement.innerHTML='<div style=\'padding:14px 16px;color:rgba(255,255,255,.35);font-size:13px\'>⚠️ Фото не загрузилось</div>';}})(this)">
+                <div class="msg-media-time">${displayTime}${isMe?`&nbsp;<span class="status-icon" style="color:${msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,0.55)'}">${msg.is_read?ICONS.checkDouble:ICONS.check}</span>`:''}</div>
             </div>`;
         }
         } else if (type === 'video') {
@@ -5251,21 +5275,39 @@ function buildMessageRow(msg, animate = true) {
         const _wrpId = 'wrp_' + _vidId;
         const _vidSrc = msg.file_url || '';
         const _poster = msg.preview_url || msg.thumbnail_url || '';
+        const _isOnceVid = msg.once === true || msg.once === '1';
+        const _thumbPlaceholder = _poster ? '' : `<div id="ph_${_vidId}" style="position:absolute;inset:0;z-index:3;background:linear-gradient(135deg,#1a1a2e,#0f3460);display:flex;align-items:center;justify-content:center;border-radius:14px"><div style="opacity:0.45"><svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M23 7l-7 5 7 5V7z" stroke="white" stroke-width="1.5" stroke-linecap="round"/><rect x="1" y="5" width="15" height="14" rx="2" stroke="white" stroke-width="1.5"/></svg></div></div>`;
+        if (_isOnceVid && !isMe) {
+            contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster||''}',true,'${msg.id}')" style="cursor:pointer;min-height:160px;max-width:220px;border:1.5px solid rgba(255,255,255,0.12)">
+                <div style="position:absolute;inset:0;background:rgba(0,0,0,0.6);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;z-index:10">
+                    <div style="width:52px;height:52px;border-radius:50%;background:rgba(255,255,255,0.15);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;border:1.5px solid rgba(255,255,255,0.3)">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    </div>
+                    <div style="font-size:12px;font-weight:700;color:#fff">Нажмите для просмотра</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.6)">🔥 Одноразовое видео</div>
+                </div>
+                <div class="msg-media-time">${displayTime}</div>
+            </div>`;
+        } else if (_isOnceVid && isMe) {
+            contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" style="cursor:default;min-height:120px;max-width:220px;border:1.5px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.08)">
+                <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;z-index:10">
+                    <div style="font-size:28px">🔥</div>
+                    <div style="font-size:12px;font-weight:700;color:#fff">Одноразовое видео</div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.5)">Можно посмотреть 1 раз</div>
+                </div>
+                <div class="msg-media-time">${displayTime}&nbsp;<span class="status-icon" style="color:${msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,0.55)'}">${msg.is_read?ICONS.checkDouble:ICONS.check}</span></div>
+            </div>`;
         } else {
-        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster || ''}', false, '${msg.id}')" style="cursor:pointer;min-height:160px">
+        contentHtml = `<div class="video-bubble-wrap" id="${_wrpId}" onclick="openVideoModal('${_vidSrc}','${_poster||''}',false,'${msg.id}')" style="cursor:pointer;min-height:160px">
             ${_thumbPlaceholder}
-            <video id="${_vidId}" src="${_vidSrc}" ${_poster ? `poster="${_poster}"` : ''} playsinline preload="metadata" muted
+            <video id="${_vidId}" src="${_vidSrc}" ${_poster?`poster="${_poster}"`:''}  playsinline preload="metadata" muted
                    style="display:block;width:100%;max-height:320px;object-fit:cover;background:transparent;pointer-events:none;position:relative;z-index:1"
                    onloadedmetadata="_grabVideoPosterFast('${_vidId}')"
                    onloadeddata="_grabVideoPosterFast('${_vidId}')"
                    onerror="this.closest('.video-bubble-wrap').innerHTML='<div style=\'padding:14px;color:rgba(255,255,255,.35);font-size:13px;text-align:center\'>⚠️ Видео недоступно</div>'"></video>
-            ${_poster ? `<div class="video-blur-poster" style="background-image:url('${_poster}')"></div>` : `<div class="video-blur-poster" id="blr_${_vidId}"></div>`}
-            <div class="video-play-overlay">
-                <div class="video-play-btn">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="6 3 20 12 6 21 6 3"/></svg>
-                </div>
-            </div>
-            <div class="msg-media-time">${displayTime}${isMe ? `&nbsp;<span class="status-icon" style="color:${msg.is_read ? 'rgba(147,197,253,1)' : 'rgba(255,255,255,0.55)'};">${msg.is_read ? ICONS.checkDouble : ICONS.check}</span>` : ''}</div>
+            ${_poster?`<div class="video-blur-poster" style="background-image:url('${_poster}')"></div>`:`<div class="video-blur-poster" id="blr_${_vidId}"></div>`}
+            <div class="video-play-overlay"><div class="video-play-btn"><svg width="22" height="22" viewBox="0 0 24 24" fill="white"><polygon points="6 3 20 12 6 21 6 3"/></svg></div></div>
+            <div class="msg-media-time">${displayTime}${isMe?`&nbsp;<span class="status-icon" style="color:${msg.is_read?'rgba(147,197,253,1)':'rgba(255,255,255,0.55)'};">${msg.is_read?ICONS.checkDouble:ICONS.check}</span>`:''}</div>
         </div>`;
         }
     } else if (type === 'file' || type === 'document') {
@@ -5810,63 +5852,103 @@ function showMsgContextMenu(row, msg) {
     requestAnimationFrame(() => requestAnimationFrame(() => { sh.style.transform = 'translateY(0)'; }));
 }
 
-function openImgZoom(src) {
+function openImgZoom(src, isOnce = false, msgId = null) {
     if (!src) return;
+    document.getElementById('wc-img-viewer')?.remove();
 
-    // ── Полноэкранный просмотрщик ──────────────────────────────
     const viewer = document.createElement('div');
-    viewer.id = 'wc-img-viewer-' + Date.now();
-    viewer.style.cssText = 'position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.22s ease;-webkit-user-select:none;user-select:none';
+    viewer.id = 'wc-img-viewer';
+    viewer.style.cssText = 'position:fixed;inset:0;z-index:99000;background:rgba(0,0,0,0.97);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity 0.22s ease';
+    document.body.appendChild(viewer);
+    document.body.style.overflow = 'hidden';
+    requestAnimationFrame(() => { viewer.style.opacity = '1'; });
 
     const img = document.createElement('img');
     img.src = src;
     img.draggable = false;
-    img.style.cssText = 'max-width:100vw;max-height:100vh;object-fit:contain;-webkit-user-select:none;user-select:none;pointer-events:none;-webkit-touch-callout:none';
-
-    // Запрет контекстного меню (долгий тап на iOS)
-    img.oncontextmenu = (e) => { e.preventDefault(); return false; };
-    viewer.oncontextmenu = (e) => { e.preventDefault(); return false; };
-
-    // Кнопка закрыть (для обычных фото)
-    const closeBtn = document.createElement('button');
-    closeBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5';
-    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
-
-    // Кнопка скачать (только для обычных фото)
-    const dlBtn = document.createElement('a');
-    dlBtn.href = src; dlBtn.download = 'photo.jpg';
-    dlBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);right:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5;text-decoration:none';
-    dlBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-
+    img.style.cssText = 'max-width:100vw;max-height:100vh;object-fit:contain;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none';
+    if (isOnce) img.style.pointerEvents = 'none';
+    img.oncontextmenu = (e) => e.preventDefault();
     viewer.appendChild(img);
+
+    // Кнопка закрыть
+    const closeBtn = document.createElement('button');
+    closeBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);left:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);border:none;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5;-webkit-tap-highlight-color:transparent';
+    closeBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="white" stroke-width="2.5" stroke-linecap="round"/></svg>';
     viewer.appendChild(closeBtn);
-    viewer.appendChild(dlBtn);
 
-    document.body.appendChild(viewer);
-    document.body.style.overflow = 'hidden';
+    // Скачать — только для обычных фото
+    if (!isOnce) {
+        const dlBtn = document.createElement('a');
+        dlBtn.href = src; dlBtn.download = 'photo.jpg';
+        dlBtn.style.cssText = 'position:absolute;top:max(env(safe-area-inset-top,12px),12px);right:16px;width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.12);backdrop-filter:blur(8px);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:5;text-decoration:none;-webkit-tap-highlight-color:transparent';
+        dlBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        viewer.appendChild(dlBtn);
+    }
 
-    requestAnimationFrame(() => { viewer.style.opacity = '1'; });
+    let _onceCleanup = () => {};
 
     const _doClose = () => {
         viewer.style.opacity = '0';
-        setTimeout(() => {
-            viewer.remove();
-            document.body.style.overflow = '';
-        }, 220);
+        _onceCleanup();
+        setTimeout(() => { viewer.remove(); document.body.style.overflow = ''; }, 220);
+        if (isOnce && msgId) {
+            const msgRow = document.querySelector('[data-msg-id="' + CSS.escape(String(msgId)) + '"]');
+            if (msgRow) {
+                msgRow.style.transition = 'opacity 0.4s,transform 0.4s';
+                msgRow.style.opacity = '0';
+                msgRow.style.transform = 'scale(0.9)';
+                setTimeout(() => msgRow.remove(), 400);
+            }
+            try { socket.emit('delete_message_for_everyone', { msg_id: msgId, chat_id: currentChatId }); } catch(e) {}
+            showToast('🔥 Одноразовое сообщение удалено', 'info', 2500);
+        }
     };
 
     closeBtn.onclick = _doClose;
     viewer.addEventListener('click', (e) => { if (e.target === viewer) _doClose(); });
+    document.addEventListener('keydown', function _k(e) { if (e.key === 'Escape') { _doClose(); document.removeEventListener('keydown', _k); } });
 
     // Свайп вниз для закрытия
     let _sy = 0;
     viewer.addEventListener('touchstart', (e) => { _sy = e.touches[0].clientY; }, { passive: true });
-    viewer.addEventListener('touchend', (e) => {
-        if (e.changedTouches[0].clientY - _sy > 80) _doClose();
-    });
-    document.addEventListener('keydown', function _k(e) {
-        if (e.key === 'Escape') { _doClose(); document.removeEventListener('keydown', _k); }
-    });
+    viewer.addEventListener('touchend', (e) => { if (e.changedTouches[0].clientY - _sy > 80) _doClose(); });
+
+    // ── ЗАЩИТА для одноразовых ────────────────────────────────
+    if (isOnce) {
+        viewer.oncontextmenu = (e) => e.preventDefault();
+        document.body.classList.add('_once-open');
+
+        const _showGuard = () => {
+            if (document.getElementById('_once_guard')) return;
+            const g = document.createElement('div');
+            g.id = '_once_guard';
+            g.style.cssText = 'position:fixed;inset:0;z-index:9999999;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center';
+            g.innerHTML = '<div style="font-size:48px;margin-bottom:16px">🚫</div><div style="font-size:17px;font-weight:700;color:#fff;margin-bottom:8px">Запись запрещена</div><div style="font-size:13px;color:rgba(255,255,255,0.5);text-align:center;padding:0 32px">Это одноразовое сообщение</div>';
+            document.body.appendChild(g);
+        };
+        const _hideGuard = () => { document.getElementById('_once_guard')?.remove(); };
+
+        const _visChange = () => {
+            if (document.hidden) { _showGuard(); setTimeout(() => { if (document.hidden) _doClose(); }, 600); }
+            else _hideGuard();
+        };
+        const _noCtx = (e) => e.preventDefault();
+
+        document.addEventListener('visibilitychange', _visChange);
+        window.addEventListener('blur', _showGuard);
+        window.addEventListener('focus', _hideGuard);
+        document.addEventListener('contextmenu', _noCtx);
+
+        _onceCleanup = () => {
+            document.removeEventListener('visibilitychange', _visChange);
+            window.removeEventListener('blur', _showGuard);
+            window.removeEventListener('focus', _hideGuard);
+            document.removeEventListener('contextmenu', _noCtx);
+            document.body.classList.remove('_once-open');
+            _hideGuard();
+        };
+    }
 }
 
 
