@@ -1201,24 +1201,33 @@ def _gen_code():
 def _send_sms(phone: str, code: str) -> bool:
     """Отправка SMS через sms.ru. Возвращает True при успехе."""
     api_id = os.environ.get('SMSRU_API_ID', 'CC806976-2EC6-F295-39C8-A521F9C8F792')
-    msg    = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
+    # нормализуем номер: убираем всё кроме цифр, добавляем +
+    digits = ''.join(c for c in phone if c.isdigit())
+    if digits.startswith('8'):
+        digits = '7' + digits[1:]
+    if not digits.startswith('7'):
+        digits = '7' + digits
+    phone_norm = '+' + digits
+    msg = f'Ваш код WayChat: {code}. Никому не сообщайте его.'
+    print(f'📱 SMS → {phone_norm[:5]}*** api_id={api_id[:8]}...')
     try:
         resp = req_lib.get(
             'https://sms.ru/sms/send',
             params={
                 'api_id': api_id,
-                'to':     phone,
+                'to':     phone_norm,
                 'msg':    msg,
                 'json':   1,
             },
             timeout=10,
         )
         data = resp.json()
+        print(f'📨 SMS.RU ответ: {data}')
         # sms.ru: status_code == 100 означает успех
         sms_result = data.get('sms', {})
         for _num, info in sms_result.items():
             if info.get('status_code') == 100:
-                print(f'✅ SMS отправлено: {phone[:4]}***')
+                print(f'✅ SMS отправлено: {phone_norm[:5]}***')
                 return True
             else:
                 print(f'⚠️  SMS ошибка: {info.get("status_text")} (код {info.get("status_code")})')
