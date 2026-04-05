@@ -4305,7 +4305,7 @@ function renderChatList(chats) {
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
                     <p style="font-size:15px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
-                    ${isUnread?`<span class="wc-unread-badge" style="background:var(--accent);color:#fff;font-size:11px;font-weight:800;min-width:22px;height:22px;border-radius:12px;display:flex;align-items:center;justify-content:center;padding:0 6px;flex-shrink:0">${chat.unread_count}</span>`:''}
+                    
                 </div>`;
         }
 
@@ -6877,8 +6877,9 @@ function onNewMessage(msg) {
     // FIX REALTIME: cast both sides to int for safe comparison (server may send string)
     const _msgChatId = +msg.chat_id || 0;
     const _isOpenChat = (currentChatId && _msgChatId === +currentChatId)
-        || (!currentChatId && currentPartnerId && (
+        || (currentPartnerId && (
             +msg.sender_id === +currentPartnerId || +msg.to_id === +currentPartnerId
+            || (typeof currentUser !== 'undefined' && +msg.sender_id === +currentUser.id && +msg.to_id === +currentPartnerId)
         ));
     if (_isOpenChat) {
         // Удаляем оптимистичные дубликаты — заменяем реальным id вместо удаления
