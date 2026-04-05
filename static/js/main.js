@@ -465,7 +465,8 @@ const VirtualList=(()=>{
     }
 
     function mount(el2){
-        if(el)destroy();
+        if(el && el === el2) { ms=[]; return; } // уже смонтирован на этот элемент
+        if(el) destroy();
         el=el2; ms=[];
         el.style.overflowY='auto';
         el.style.webkitOverflowScrolling='touch';
@@ -4659,6 +4660,7 @@ async function openChat(id, name, avatar) {
     // ── 5. Кэш сообщений ─────────────────────────────────────
     VirtualList.destroy();
     msgs.innerHTML = '';
+    VirtualList.mount(msgs); // монтируем сразу — el не будет null пока грузится chat_id
     const cacheKey = `p_${id}`;
 
     if (_deletedPartnerIds.has(id)) {
@@ -4801,6 +4803,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 
     VirtualList.destroy();
     msgs.innerHTML = '';
+    VirtualList.mount(msgs); // монтируем сразу — el не будет null пока грузится chat_id
     const cacheKey = `g_${groupId}`;
     const cached   = messagesByChatCache[cacheKey];
 
@@ -5058,9 +5061,7 @@ function renderMessagesFromCache(msgs) {
     // Без opacity-анимации — вызывает 1с мигание при каждом открытии чата
     container.style.opacity = '1';
     container.style.transition = '';
-    if (!container.querySelector('.vl-ph')) {
-        VirtualList.mount(container);
-    }
+    VirtualList.mount(container);
     VirtualList.setMessages(msgs);
 }
 
@@ -6876,8 +6877,11 @@ function onNewMessage(msg) {
     // Проверяем: это сообщение для открытого чата?
     // FIX REALTIME: cast both sides to int for safe comparison (server may send string)
     const _msgChatId = +msg.chat_id || 0;
+    // Сообщение считается "для открытого чата" только если:
+    // 1) chat_id совпадает с текущим (наиболее надёжная проверка), ИЛИ
+    // 2) chat_id ещё неизвестен (null) — чат только открывается — и partner совпадает
     const _isOpenChat = (currentChatId && _msgChatId === +currentChatId)
-        || (currentPartnerId && (
+        || (!currentChatId && currentPartnerId && (
             +msg.sender_id === +currentPartnerId || +msg.to_id === +currentPartnerId
             || (typeof currentUser !== 'undefined' && +msg.sender_id === +currentUser.id && +msg.to_id === +currentPartnerId)
         ));
