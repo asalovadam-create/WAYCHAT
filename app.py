@@ -34,7 +34,7 @@ from flask_login import (
 )
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
-from sqlalchemy import or_, func, text
+from sqlalchemy import or_, func, text"""
 ╔══════════════════════════════════════════════════════════════╗
 ║          WAYCHAT SERVER ENGINE 2026                          ║
 ║          Version: 9.0.0 — 1K USERS · REDIS · ASYNC UPLOAD   ║
