@@ -255,6 +255,82 @@ login_manager.login_view = 'login'
 # При REDIS_URL='' — работает без Redis (1 worker)
 _REDIS_URL = os.environ.get('REDIS_URL', '').strip()
 
+# ── Redis-клиент для кэша переписок ──────────────────────────────────────
+# Отдельный клиент (не SocketIO message_queue) — только для кэша сообщений.
+# Если Redis недоступен — функции ниже прозрачно возвращают None и работает
+# обычный PostgreSQL-путь без каких-либо ошибок.
+_redis_msg_cache  = None
+MSG_CACHE_TTL_SEC = 7 * 24 * 3600   # 7 дней
+MSG_CACHE_MAX     = 300              # макс сообщений в кэше
+
+if _REDIS_URL:
+    try:
+        import redis as _redis_lib
+        _redis_msg_cache = _redis_lib.from_url(
+            _REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=3,
+            socket_timeout=3,
+        )
+        _redis_msg_cache.ping()
+        print('✅ Redis message cache connected')
+    except Exception as _re:
+        _redis_msg_cache = None
+        print(f'⚠️  Redis message cache unavailable: {_re}')
+
+def _redis_msgs_key(chat_id):
+    return f'wc:msgs:{chat_id}'
+
+def _redis_get_msgs(chat_id):
+    """Возвращает list[dict] сообщений из Redis или None."""
+    if not _redis_msg_cache:
+        return None
+    try:
+        raw = _redis_msg_cache.get(_redis_msgs_key(chat_id))
+        return json.loads(raw) if raw else None
+    except Exception as _e:
+        print(f'[Redis] get msgs {chat_id}: {_e}')
+        return None
+
+def _redis_set_msgs(chat_id, msgs_list):
+    """Сохраняет последние MSG_CACHE_MAX сообщений в Redis с TTL."""
+    if not _redis_msg_cache or not msgs_list:
+        return
+    try:
+        payload = msgs_list[-MSG_CACHE_MAX:]
+        _redis_msg_cache.setex(
+            _redis_msgs_key(chat_id),
+            MSG_CACHE_TTL_SEC,
+            json.dumps(payload, ensure_ascii=False),
+        )
+    except Exception as _e:
+        print(f'[Redis] set msgs {chat_id}: {_e}')
+
+def _redis_append_msg(chat_id, msg_dict):
+    """Добавляет одно сообщение в Redis-кэш чата (при отправке)."""
+    if not _redis_msg_cache:
+        return
+    try:
+        key = _redis_msgs_key(chat_id)
+        raw = _redis_msg_cache.get(key)
+        msgs = json.loads(raw) if raw else []
+        if not any(str(m.get('id')) == str(msg_dict.get('id')) for m in msgs):
+            msgs.append(msg_dict)
+            msgs = msgs[-MSG_CACHE_MAX:]
+            _redis_msg_cache.setex(key, MSG_CACHE_TTL_SEC,
+                                   json.dumps(msgs, ensure_ascii=False))
+    except Exception as _e:
+        print(f'[Redis] append msg {chat_id}: {_e}')
+
+def _redis_invalidate_chat(chat_id):
+    """Инвалидирует кэш чата (при удалении сообщений)."""
+    if not _redis_msg_cache:
+        return
+    try:
+        _redis_msg_cache.delete(_redis_msgs_key(chat_id))
+    except Exception:
+        pass
+
 socketio = SocketIO(
     app,
     async_mode            = 'threading',
@@ -1953,6 +2029,14 @@ def get_messages(chat_id):
         if p_id:
             emit_to_user(p_id, 'messages_read_bulk', {'chat_id': chat_id})
 
+    # ── Redis-кэш: только для начальной загрузки (без before_id) ──────
+    # При пагинации (before_id задан) всегда идём в PostgreSQL
+    if not before_id:
+        _cached = _redis_get_msgs(chat_id)
+        if _cached is not None:
+            _chat_cache.delete(uid)
+            return jsonify(_cached)
+
     # FIX: ORM-запрос вместо raw SQL — не падает при отсутствующих колонках в БД
     q = Message.query.filter(
         Message.chat_id == chat_id,
@@ -1963,8 +2047,14 @@ def get_messages(chat_id):
     msgs = q.order_by(Message.id.desc()).limit(limit).all()
     msgs = list(reversed(msgs))
 
+    result = [m.to_dict() for m in msgs]
+
+    # Сохраняем в Redis только начальную загрузку (без before_id)
+    if not before_id:
+        _redis_set_msgs(chat_id, result)
+
     _chat_cache.delete(uid)
-    return jsonify([m.to_dict() for m in msgs])
+    return jsonify(result)
 
 # ══════════════════════════════════════════════════════════
 #  ГРУППЫ
@@ -2587,6 +2677,7 @@ def delete_message_route(msg_id):
     msg.is_deleted = True
     msg.content    = None
     db_safe_commit()
+    _redis_invalidate_chat(msg.chat_id)  # инвалидируем Redis-кэш
 
     chat = db.session.get(Chat, msg.chat_id)
     if chat:
@@ -3630,6 +3721,8 @@ def handle_msg(data):
     _chat_cache.delete(uid)
     payload = msg.to_dict()
     payload['chat_id'] = chat_id
+    # Добавляем новое сообщение в Redis-кэш чата
+    _redis_append_msg(chat_id, payload)
     # Прокидываем extra поля в payload для live-сообщений
     for _k in ('forwarded_from','fwd_avatar','music_title','music_artist','music_url'):
         if data.get(_k): payload[_k] = data[_k]
@@ -3785,6 +3878,7 @@ def handle_delete_message(data):
     msg.content    = None
     db_safe_commit()
     _chat_cache.invalidate_prefix(str(chat_id))
+    _redis_invalidate_chat(chat_id)  # инвалидируем Redis-кэш при удалении
 
     del_payload = {'msg_id': msg_id, 'chat_id': chat_id}
     chat = db.session.get(Chat, chat_id)
