@@ -223,6 +223,9 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
     </div>
     <h1>WayChat</h1>
     <p class="subtitle">Введите ваш номер телефона для входа или регистрации</p>
+    <div style="margin-bottom:12px;padding:10px 14px;background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.2);border-radius:12px;font-size:12px;color:var(--text2);line-height:1.5;">
+      💬 Код придёт в <b style="color:var(--accent)">Telegram</b>. Сначала напишите боту <a href="https://t.me/WayChatVerifyBot" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600;">@WayChatVerifyBot</a> ваш номер.
+    </div>
     <div id="err-phone" class="alert err"></div>
     <div class="phone-row">
       <button class="flag-btn" onclick="openCountrySheet()" id="flag-btn">
@@ -254,7 +257,7 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       </svg>
     </div>
     <h1 id="code-login-title">+7 ...</h1>
-    <p class="subtitle">Код напечатан в терминале сервера.<br><b>Введите его для входа</b></p>
+    <p class="subtitle">Код отправлен в <b style="color:var(--accent)">Telegram</b>.<br>Введите его для входа.</p>
     <div id="err-code-login" class="alert err"></div>
     <div id="dev-code-login" class="alert dev"></div>
     <div class="field">
@@ -307,6 +310,9 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
         Я прочитал(а) и принимаю <a href="#" onclick="openPrivacy(event)">Политику конфиденциальности</a> WayChat
       </div>
     </div>
+    <div id="tg-hint-reg" style="display:none;margin-bottom:12px;padding:12px 14px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:12px;font-size:13px;color:#fca5a5;line-height:1.5;">
+      ❗ Сначала напишите боту <a id="tg-bot-link" href="https://t.me/WayChatVerifyBot" target="_blank" style="color:var(--accent);font-weight:700;">@WayChatVerifyBot</a> ваш номер телефона в Telegram, затем нажмите «Получить код» снова.
+    </div>
     <button class="btn-main" id="btn-reg-info" onclick="doRegStep1()" disabled>Получить код →</button>
   </div>
 </div>
@@ -326,7 +332,7 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       </svg>
     </div>
     <h1 id="code-reg-title">+7 ...</h1>
-    <p class="subtitle">Код для создания аккаунта.<br><b>Смотрите в терминале сервера</b></p>
+    <p class="subtitle">Код отправлен в <b style="color:var(--accent)">Telegram</b>.<br>Введите его для создания аккаунта.</p>
     <div id="err-code-reg" class="alert err"></div>
     <div id="dev-code-reg" class="alert dev"></div>
     <div class="field">
@@ -701,7 +707,17 @@ async function doRegStep1() {
       document.getElementById('reg-code').value = '';
       showScreen('sc-code-reg');
       setTimeout(() => document.getElementById('reg-code').focus(), 200);
-    } else { showErr('err-reg-info', d.error||'Ошибка'); }
+    } else {
+      if (d.need_tg) {
+        const hint = document.getElementById('tg-hint-reg');
+        const link = document.getElementById('tg-bot-link');
+        if (hint) hint.style.display = 'block';
+        if (link && d.bot_username) link.href = 'https://t.me/' + d.bot_username;
+        showErr('err-reg-info', '');
+      } else {
+        showErr('err-reg-info', d.error||'Ошибка');
+      }
+    }
   } catch(e) { showErr('err-reg-info','Ошибка соединения'); }
   busy('btn-reg-info', false, 'Получить код →');
 }
