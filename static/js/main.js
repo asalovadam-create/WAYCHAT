@@ -449,6 +449,7 @@ const VirtualList=(()=>{
             const r=buildMessageRow(m,false);
             if(!r)continue;
             r.dataset.vi=i;
+            r.classList.add('no-anim');   // история не анимируется — только новые сообщения
             f.appendChild(r);
         }
         el.appendChild(f);
@@ -2283,9 +2284,21 @@ body {
 .msg-container { display:flex;flex-direction:column;gap:2px;padding:4px 8px 4px;scroll-behavior:auto;justify-content:flex-end;min-height:100%; }
 .msg-container::-webkit-scrollbar { width:3px; }
 .msg-container::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.1);border-radius:2px; }
-.msg-row { display:flex;width:100%;margin-bottom:1px; }
+.msg-row { display:flex;width:100%;margin-bottom:1px;animation:msgSlideIn 0.2s cubic-bezier(0.4,0,0.2,1) both; }
+.msg-row.no-anim { animation:none !important; }
 .msg-row.out { justify-content:flex-end; }
 .msg-row.in  { justify-content:flex-start;align-items:flex-end; }
+
+/* Плавное появление новых сообщений */
+@keyframes msgSlideIn {
+    from { opacity:0; transform:translateY(6px) scale(0.98); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
+}
+/* Входящие появляются чуть слева, исходящие — справа */
+.msg-row.in  { animation-name:msgSlideInLeft; }
+.msg-row.out { animation-name:msgSlideInRight; }
+@keyframes msgSlideInLeft  { from{opacity:0;transform:translateX(-8px) translateY(4px) scale(0.98)} to{opacity:1;transform:none} }
+@keyframes msgSlideInRight { from{opacity:0;transform:translateX(8px) translateY(4px) scale(0.98)} to{opacity:1;transform:none} }
 
 .bubble { max-width:74%;padding:10px 14px 8px;font-size:15px;line-height:1.5;position:relative;word-break:break-word; }
 .msg-row.out .bubble { background:#128C7E;border-radius:22px 22px 6px 22px;margin-left:44px;box-shadow:0 2px 8px rgba(0,0,0,0.35); }
@@ -3835,11 +3848,118 @@ function _showChatsError() {
         <button onclick="loadChats(true)" style="padding:10px 24px;background:var(--accent);border:none;border-radius:14px;color:#000;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit">Повторить</button>
     </div>`;
 }
-// Debounced loadChats — не вызываем чаще раз в 1.5с при потоке сообщений
+// ── МГНОВЕННОЕ обновление чата в списке (без запроса к серверу) ──────────────
+// Вместо полного loadChats() — хирургически обновляем только нужный элемент.
+// Это убирает «дёргание» списка чатов при каждом входящем сообщении.
+function _updateChatInListInstant(msg) {
+    if (!msg) return false;
+    const isGroup   = !!msg.is_group_msg;
+    const myId      = currentUser?.id;
+    let   partnerId;
+
+    if (isGroup) {
+        partnerId = msg.group_id;
+    } else if (+msg.sender_id === +myId) {
+        // Наше исходящее — партнёр это получатель
+        partnerId = msg.to_id || currentPartnerId;
+    } else {
+        partnerId = msg.sender_id;
+    }
+    if (!partnerId) return false;
+
+    const chatKey = isGroup ? `g_${partnerId}` : `p_${partnerId}`;
+    const el = document.querySelector(`[data-chat-key="${chatKey}"]`);
+    if (!el) return false;   // чат новый — упадём в loadChats
+
+    // Текст превью
+    const typeMap = {
+        image:'🖼 Фото', audio:'🎙 Голосовое', video:'📹 Видео',
+        call_audio:'📞 Звонок', call_video:'📹 Видеозвонок',
+        sticker:'🎭 Стикер', file:'📎 Файл',
+    };
+    const previewText = typeMap[msg.type] || msg.content || '...';
+    const previewEl   = el.querySelector('[data-chat-preview]');
+    if (previewEl) {
+        previewEl.textContent = previewText;
+        previewEl.style.color = 'rgba(255,255,255,0.85)';
+        previewEl.style.fontWeight = '500';
+    }
+
+    // Время
+    const timeEl = el.querySelector('[data-chat-time]');
+    if (timeEl) {
+        const ts = msg.raw_timestamp || new Date().toISOString();
+        timeEl.textContent = getChatPreviewTime(ts) || '';
+        timeEl.style.color = 'var(--accent)';
+        timeEl.style.fontWeight = '700';
+    }
+
+    // Счётчик непрочитанных — только для чужих сообщений в закрытом чате
+    const isMine       = +msg.sender_id === +myId;
+    const isOpenChat   = currentChatId && +msg.chat_id === +currentChatId;
+    const badgeEl      = el.querySelector('[data-chat-badge]');
+    if (badgeEl && !isMine && !isOpenChat) {
+        const cur = parseInt(badgeEl.textContent) || 0;
+        badgeEl.textContent = cur + 1;
+        badgeEl.style.display = 'flex';
+    }
+
+    // Плавно поднимаем чат наверх без reflow всего списка
+    const container = el.parentElement;
+    if (container && el !== container.firstElementChild) {
+        // Запоминаем текущую позицию для FLIP-анимации
+        const rect0 = el.getBoundingClientRect();
+        container.prepend(el);
+        const rect1 = el.getBoundingClientRect();
+        const dy = rect0.top - rect1.top;
+        if (Math.abs(dy) > 2) {
+            // FLIP: применяем обратный сдвиг и анимируем до 0
+            el.style.transition = 'none';
+            el.style.transform  = `translateY(${dy}px)`;
+            requestAnimationFrame(() => {
+                el.style.transition = 'transform 0.3s cubic-bezier(0.4,0,0.2,1)';
+                el.style.transform  = 'translateY(0)';
+                // Убираем transition после завершения
+                el.addEventListener('transitionend', () => {
+                    el.style.transition = '';
+                    el.style.transform  = '';
+                }, { once: true });
+            });
+        }
+    }
+
+    // Обновляем recentChats в памяти
+    const idx = recentChats.findIndex(c =>
+        isGroup ? c.group_id === +partnerId : c.partner_id === +partnerId
+    );
+    if (idx !== -1) {
+        recentChats[idx].last_message      = previewText;
+        recentChats[idx].raw_timestamp     = msg.raw_timestamp || new Date().toISOString();
+        recentChats[idx].last_message_type = msg.type || 'text';
+        if (!isMine && !isOpenChat) {
+            recentChats[idx].unread_count  = (recentChats[idx].unread_count || 0) + 1;
+        }
+        // Перемещаем в начало массива
+        const [chat] = recentChats.splice(idx, 1);
+        recentChats.unshift(chat);
+        // Сохраняем в localStorage без задержки
+        try { localStorage.setItem('waychat_chats_cache', JSON.stringify(recentChats)); } catch(e) {}
+    }
+
+    // Обновляем общий счётчик непрочитанных в заголовке
+    if (!isMine && !isOpenChat) {
+        updateUnreadBadge((unreadTotal || 0) + 1);
+    }
+
+    return true;
+}
+
+// Debounced loadChats — вызываем ТОЛЬКО когда чат новый (нет в DOM)
+// При обычном новом сообщении используем _updateChatInListInstant
 let _loadChatsDebTimer = null;
 function _debouncedLoadChats() {
     clearTimeout(_loadChatsDebTimer);
-    _loadChatsDebTimer = setTimeout(() => loadChats(), 300);
+    _loadChatsDebTimer = setTimeout(() => loadChats(), 400);
 }
 
 // ════════════════════════════════════
@@ -4302,12 +4422,13 @@ function renderChatList(chats) {
             info.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
                     <span style="font-weight:${isUnread?'700':'600'};font-size:17px;letter-spacing:-0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:205px">${escHtml(displayName)}</span>
-                    <span style="font-size:12px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px;display:flex;align-items:center;gap:2px">${_readStatusHtml}${time}</span>
+                    <span data-chat-time style="font-size:12px;font-weight:${isUnread?'700':'400'};color:${isUnread?'var(--accent)':'var(--text-2)'};flex-shrink:0;margin-left:8px;display:flex;align-items:center;gap:2px">${_readStatusHtml}${time}</span>
                 </div>
                 <div style="display:flex;justify-content:space-between;align-items:center">
-                    <p style="font-size:15px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
-                    
+                    <p data-chat-preview style="font-size:15px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
+                    <span data-chat-badge style="display:${isUnread?'flex':'none'};align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;background:var(--accent);border-radius:10px;font-size:12px;font-weight:700;color:#000">${isUnread?(chat.unread_count||''):''}</span>
                 </div>`;
+        }
         }
 
         frag.appendChild(div);
@@ -6917,7 +7038,7 @@ function onNewMessage(msg) {
                 });
                 if (reused) {
                     // Обновляем кэш и выходим — DOM уже актуален
-                    _debouncedLoadChats();
+                    _updateChatInListInstant(msg);   // мгновенно без сервера
                     if (msg.id) _setLastMsgId(currentChatId, msg.id);
                     return;
                 }
@@ -6943,7 +7064,8 @@ function onNewMessage(msg) {
             }
         }
         socket.emit('mark_read', { chat_id: currentChatId });
-        _debouncedLoadChats();
+        // Мгновенно обновляем превью чата без запроса к серверу
+        _updateChatInListInstant(msg);
         if (msg.id) _setLastMsgId(currentChatId, msg.id);
         // FIX: keep memory cache in sync with new incoming message
         const _ck = currentChatType === 'group'
@@ -6963,7 +7085,13 @@ function onNewMessage(msg) {
         delete messagesByChatCache[cacheKey];
         // IDB тоже удаляем — принудит loadMessages к свежей загрузке с сервера
         MsgDB.delete(cacheKey).catch(() => {});
-        _debouncedLoadChats();
+
+        // Мгновенно обновляем чат в списке без запроса к серверу.
+        // Если чат новый (нет в DOM) — делаем полный loadChats с задержкой.
+        const _instantOk = _updateChatInListInstant(msg);
+        if (!_instantOk) {
+            _debouncedLoadChats();  // только для нового чата
+        }
         // Пульс аватара при новом сообщении
         const senderId = msg.is_group_msg ? msg.group_id : msg.sender_id;
         const chatKey  = msg.is_group_msg ? `g_${senderId}` : `p_${senderId}`;
