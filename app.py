@@ -85,38 +85,45 @@ for _folder in [AVATARS_FOLDER, MESSAGES_FOLDER, MOMENTS_FOLDER, GROUP_AVA_FOLDE
 #  TTL КЭШИ
 # ══════════════════════════════════════════════════════════
 class TTLCache:
+    """Thread-safe TTL кэш с RLock — FIX #3."""
     def __init__(self, maxsize=512, ttl=30.0):
         self._store   = {}
         self._times   = {}
         self._maxsize = maxsize
         self._ttl     = ttl
+        self._lock    = threading.RLock()   # ← FIX #3: потокобезопасность
 
     def get(self, key):
-        if key in self._store:
-            if time.monotonic() - self._times[key] < self._ttl:
-                return self._store[key]
-            self._evict(key)
+        with self._lock:
+            if key in self._store:
+                if time.monotonic() - self._times[key] < self._ttl:
+                    return self._store[key]
+                self._evict(key)
         return None
 
     def set(self, key, value):
-        if len(self._store) >= self._maxsize:
-            oldest = min(self._times, key=self._times.get)
-            self._evict(oldest)
-        self._store[key] = value
-        self._times[key] = time.monotonic()
+        with self._lock:
+            if len(self._store) >= self._maxsize:
+                oldest = min(self._times, key=self._times.get)
+                self._evict(oldest)
+            self._store[key] = value
+            self._times[key] = time.monotonic()
 
     def delete(self, key):
-        self._store.pop(key, None)
-        self._times.pop(key, None)
+        with self._lock:
+            self._store.pop(key, None)
+            self._times.pop(key, None)
 
     def _evict(self, key):
+        # Вызывается внутри уже захваченного lock
         self._store.pop(key, None)
         self._times.pop(key, None)
 
     def invalidate_prefix(self, prefix):
-        keys = [k for k in list(self._store) if str(k).startswith(str(prefix))]
-        for k in keys:
-            self._evict(k)
+        with self._lock:
+            keys = [k for k in list(self._store) if str(k).startswith(str(prefix))]
+            for k in keys:
+                self._evict(k)
 
 
 # ИСПРАВЛЕНИЕ: кэшируем СЛОВАРИ, не ORM-объекты!
@@ -129,67 +136,104 @@ _moments_cache    = TTLCache(maxsize=1,    ttl=30.0)
 _rate_limits     = defaultdict(lambda: defaultdict(list))
 _ip_rate_limits  = defaultdict(lambda: defaultdict(list))
 _status_throttle = {}
+_rl_lock         = threading.Lock()   # FIX #5: атомарный rate-limit
+_ip_rl_lock      = threading.Lock()   # FIX #5: атомарный IP rate-limit
 
+# ── FIX #1: Валидация телефона ───────────────────────────────────────
+import re as _re
+_PHONE_RE = _re.compile(r'^\+?[1-9]\d{6,14}$')
+
+def _validate_phone(phone: str) -> bool:
+    """Проверяет формат E.164 или локальный (только цифры, 7-15 знаков)"""
+    clean = _re.sub(r'[\s\-\(\)]', '', phone)
+    return bool(_PHONE_RE.match(clean))
+
+def _validate_geo(val: str):
+    """Принимает float -180..180, нормализует до 7 знаков, иначе None"""
+    try:
+        f = float(val)
+        if not (-180.0 <= f <= 180.0):
+            raise ValueError
+        return str(round(f, 7))
+    except (TypeError, ValueError):
+        return None
+
+
+_db_commit_stats = {'total': 0, 'retried': 0, 'failed': 0, 'slow': 0}
 
 def db_safe_commit(retries=2):
     """
-    Безопасный commit с автоматическим retry при SSL/connection ошибках.
-    Render Free усыпляет сервер → при пробуждении старые pool-соединения
-    падают с 'ssl/tls alert bad record mac'. pool_pre_ping помогает не всегда
-    потому что SSL handshake проходит но TLS-сессия уже инвалидна.
+    Безопасный commit с retry при SSL/connection ошибках + метрики.
+    FIX #11: добавлено логирование slow commits и статистика.
     """
     from sqlalchemy.exc import OperationalError as _SAOpErr
     last_exc = None
+    _t0 = time.monotonic()
+
     for attempt in range(retries + 1):
         try:
             db.session.commit()
+            elapsed_ms = (time.monotonic() - _t0) * 1000
+            _db_commit_stats['total'] += 1
+            if attempt > 0:
+                _db_commit_stats['retried'] += 1
+                app.logger.info(f'[DB] commit OK after {attempt} retries ({elapsed_ms:.0f}ms)')
+            elif elapsed_ms > 800:
+                _db_commit_stats['slow'] += 1
+                app.logger.warning(f'[DB] slow commit: {elapsed_ms:.0f}ms')
             return True
         except _SAOpErr as e:
             last_exc = e
             err_str = str(e).lower()
-            # SSL / connection ошибки — закрываем сессию и пробуем снова
-            if any(k in err_str for k in ('ssl', 'bad record mac', 'consuming input',
-                                           'connection', 'operational', 'server closed')):
+            is_conn_err = any(k in err_str for k in (
+                'ssl', 'bad record mac', 'consuming input',
+                'connection', 'operational', 'server closed',
+                'broken pipe', 'connection reset', 'timeout',
+            ))
+            if is_conn_err:
+                app.logger.warning(f'[DB] commit attempt {attempt+1}/{retries+1} conn error: {err_str[:120]}')
                 try:
                     db.session.rollback()
                 except Exception:
                     pass
                 try:
-                    db.session.remove()  # принудительно закрываем сессию из пула
+                    db.session.remove()
                 except Exception:
                     pass
                 if attempt < retries:
                     time.sleep(0.3 * (attempt + 1))
                     continue
             else:
-                # Не SSL-ошибка — роллбэк и пробрасываем
+                app.logger.error(f'[DB] non-retryable commit error: {e}')
                 try:
                     db.session.rollback()
                 except Exception:
                     pass
                 raise
-    # Все retry исчерпаны
-    if last_exc:
-        try:
-            db.session.rollback()
-        except Exception:
-            pass
-        app.logger.error(f'db_safe_commit failed after {retries+1} attempts: {last_exc}')
+
+    _db_commit_stats['failed'] += 1
+    elapsed_ms = (time.monotonic() - _t0) * 1000
+    app.logger.error(f'[DB] db_safe_commit FAILED after {retries+1} attempts ({elapsed_ms:.0f}ms): {last_exc}')
+    try:
+        db.session.rollback()
+    except Exception:
+        pass
     return False
 
 
 def ip_rate_limit(endpoint, max_calls=5, window_sec=60):
-    """Rate limit по IP — защита логина/регистрации от брутфорса"""
+    """Rate limit по IP — защита логина/регистрации от брутфорса. FIX #5: thread-safe."""
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
             ip  = request.environ.get('HTTP_X_FORWARDED_FOR', request.remote_addr or 'unknown').split(',')[0].strip()
             now = time.monotonic()
-            calls = _ip_rate_limits[ip][endpoint]
-            calls[:] = [t for t in calls if now - t < window_sec]
-            if len(calls) >= max_calls:
-                return jsonify({'success': False, 'error': 'Слишком много попыток. Подождите минуту.'}), 429
-            calls.append(now)
+            with _ip_rl_lock:
+                calls = _ip_rate_limits[ip][endpoint]
+                calls[:] = [t for t in calls if now - t < window_sec]
+                if len(calls) >= max_calls:
+                    return jsonify({'success': False, 'error': 'Слишком много попыток. Подождите минуту.'}), 429
+                calls.append(now)
             return f(*args, **kwargs)
         return wrapper
     return decorator
@@ -1180,32 +1224,57 @@ def _security_before():
             pass
 
 
+_typing_last      = {}   # uid → monotonic
+_enter_chat_throttle = {}  # (uid, chat_id) → monotonic   FIX #8
+
 def broadcast_status(user_id, online, throttle_ms=500):
+    """FIX #9: рассылаем статус только контактам, не всем пользователям."""
     now  = time.monotonic()
     last = _status_throttle.get(user_id, 0)
-    if online or (now - last) > (throttle_ms / 1000):
-        _status_throttle[user_id] = now
-        _online_cache.set(user_id, online)
+    if not online and (now - last) <= (throttle_ms / 1000):
+        return
+    _status_throttle[user_id] = now
+    _online_cache.set(user_id, online)
+    # Рассылаем только тем кто сохранил этого пользователя (двунаправленно)
+    try:
+        contact_ids = db.session.execute(
+            text('''
+                SELECT contact_id AS uid FROM saved_contact WHERE user_id = :uid
+                UNION
+                SELECT user_id   AS uid FROM saved_contact WHERE contact_id = :uid
+            '''),
+            {'uid': user_id}
+        ).scalars().all()
+        for cid in contact_ids:
+            socketio.emit('user_status', {'user_id': user_id, 'online': online},
+                          room=f'user_{cid}')
+        # Также себе — чтобы многоустройственность работала
+        socketio.emit('user_status', {'user_id': user_id, 'online': online},
+                      room=f'user_{user_id}')
+    except Exception as _bse:
+        # Fallback: broadcast всем (только если БД упала)
+        app.logger.warning(f'[broadcast_status] fallback broadcast: {_bse}')
         socketio.emit('user_status', {'user_id': user_id, 'online': online})
 
 
 def rate_limit(endpoint, max_calls=30, window_sec=60):
+    """Per-user rate limit. FIX #5: атомарная проверка+запись через lock."""
     def decorator(f):
         @wraps(f)
         def wrapper(*args, **kwargs):
             if not current_user.is_authenticated:
                 return f(*args, **kwargs)
-            # ИСПРАВЛЕНИЕ: используем _get_current_user_id() вместо current_user.id напрямую
             try:
                 uid = current_user.id
             except Exception:
                 return f(*args, **kwargs)
-            now   = time.monotonic()
-            calls = _rate_limits[uid][endpoint]
-            calls[:] = [t for t in calls if now - t < window_sec]
-            if len(calls) >= max_calls:
-                return jsonify({'error': 'Too many requests'}), 429
-            calls.append(now)
+            now = time.monotonic()
+            with _rl_lock:
+                calls = _rate_limits[uid][endpoint]
+                calls[:] = [t for t in calls if now - t < window_sec]
+                if len(calls) >= max_calls:
+                    return jsonify({'error': 'Too many requests'}), 429
+                calls.append(now)
             return f(*args, **kwargs)
         return wrapper
     return decorator
@@ -1303,6 +1372,10 @@ def send_code():
         if not phone:
             return jsonify({'success': False, 'error': 'Укажите номер телефона'}), 400
 
+        # FIX #1: валидация формата номера
+        if not _validate_phone(phone):
+            return jsonify({'success': False, 'error': 'Неверный формат номера телефона'}), 400
+
         existing = User.query.filter_by(phone=phone).first()
 
         if not existing:
@@ -1317,7 +1390,7 @@ def send_code():
             if User.query.filter_by(username=username).first():
                 return jsonify({'success': False, 'error': 'Юзернейм уже занят'}), 400
 
-        code    = str(random.randint(100000, 999999))
+        code = str(random.randint(100000, 999999))
 
         PendingCode.set(
             phone    = phone,
@@ -1334,7 +1407,11 @@ def send_code():
             print(f'📱 Код отправлен: {phone[:3]}***')
         print(f'{"="*50}\n')
 
-        return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
+        # FIX #1 КРИТИЧНО: dev_code ТОЛЬКО в режиме debug — в продакшн код никогда не возвращаем в ответе!
+        resp = {'success': True, 'message': 'Код отправлен'}
+        if app.debug:
+            resp['dev_code'] = code
+        return jsonify(resp)
 
     except Exception as e:
         app.logger.error(f'send_code: {e}')
@@ -1447,7 +1524,11 @@ def register_step1():
             print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
         else:
             print(f'📱 Код отправлен: {phone[:3]}***')
-        return jsonify({'success': True, 'message': 'Код отправлен', 'dev_code': code})
+        # FIX #1: dev_code только в debug-режиме
+        resp = {'success': True, 'message': 'Код отправлен'}
+        if app.debug:
+            resp['dev_code'] = code
+        return jsonify(resp)
 
     except Exception as e:
         app.logger.error(f'register_step1 error: {e}')
@@ -1886,53 +1967,75 @@ def get_my_chats():
             app.logger.error(f'Chat parse error {c.id}: {e}')
 
     memberships = GroupMember.query.filter_by(user_id=uid).all()
-    for m in memberships:
-        try:
-            group = db.session.get(Group, m.group_id)
-            if not group:
-                continue
-            chat = db.session.get(Chat, group.chat_id) if group.chat_id else None
-            if not chat:
-                continue
+    if memberships:
+        group_ids = [m.group_id for m in memberships]
 
-            last_msg = Message.query.filter_by(
-                chat_id=chat.id, is_deleted=False
-            ).order_by(Message.id.desc()).first()
+        # FIX #6: один SQL вместо N×5 запросов
+        group_rows = db.session.execute(text('''
+            WITH grp AS (
+                SELECT g.id, g.name, g.avatar, g.chat_id, g.created_at
+                FROM "group" g
+                WHERE g.id = ANY(:gids)
+            ),
+            last_msgs AS (
+                SELECT DISTINCT ON (m.chat_id)
+                    m.chat_id, m.type, m.content, m.sender_name, m.timestamp
+                FROM message m
+                JOIN grp ON grp.chat_id = m.chat_id
+                WHERE m.is_deleted = FALSE
+                ORDER BY m.chat_id, m.id DESC
+            ),
+            unread AS (
+                SELECT m.chat_id, COUNT(*) AS cnt
+                FROM message m
+                JOIN grp ON grp.chat_id = m.chat_id
+                WHERE m.is_read = FALSE AND m.sender_id != :uid AND m.is_deleted = FALSE
+                GROUP BY m.chat_id
+            ),
+            mcnt AS (
+                SELECT group_id, COUNT(*) AS cnt FROM group_member
+                WHERE group_id = ANY(:gids)
+                GROUP BY group_id
+            )
+            SELECT g.id AS group_id, g.name, g.avatar, g.chat_id, g.created_at,
+                   lm.type AS lm_type, lm.content AS lm_content,
+                   lm.sender_name AS lm_sender, lm.timestamp AS lm_ts,
+                   COALESCE(u.cnt, 0) AS unread_cnt,
+                   COALESCE(mc.cnt, 0) AS member_cnt
+            FROM grp g
+            LEFT JOIN last_msgs lm ON lm.chat_id = g.chat_id
+            LEFT JOIN unread    u  ON u.chat_id  = g.chat_id
+            LEFT JOIN mcnt      mc ON mc.group_id = g.id
+        '''), {'gids': group_ids, 'uid': uid}).fetchall()
 
-            unread = db.session.execute(
-                text('SELECT COUNT(*) FROM message WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
-                {'cid': chat.id, 'uid': uid}
-            ).scalar() or 0
-
-            type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
-            preview  = '👥 Группа создана'
-            sort_ts  = group.created_at or datetime(2000, 1, 1)
-
-            if last_msg:
-                sender_prefix = f'{last_msg.sender_name}: ' if last_msg.sender_name else ''
-                preview = sender_prefix + (type_map.get(last_msg.type, last_msg.content or '...'))
-                sort_ts = last_msg.timestamp
-
-            member_count = GroupMember.query.filter_by(group_id=group.id).count()
-            result.append({
-                'chat_id':       chat.id,
-                'group_id':      group.id,
-                'partner_id':    group.id,
-                'group_name':    group.name,
-                'partner_name':  group.name,
-                'group_avatar':  group.avatar,
-                'partner_avatar':group.avatar,
-                'member_count':  member_count,
-                'online':        False,
-                'last_message':  preview,
-                'timestamp':     to_moscow_str(last_msg.timestamp if last_msg else None),
-                'raw_timestamp': last_msg.timestamp.isoformat() + 'Z' if last_msg and last_msg.timestamp else '',
-                'unread_count':  unread,
-                'is_group':      True,
-                '_sort':         sort_ts,
-            })
-        except Exception as e:
-            app.logger.error(f'Group chat parse error {m.group_id}: {e}')
+        for row in group_rows:
+            try:
+                type_map = {'image': '🖼 Фото', 'audio': '🎙️ Голос', 'video': '📹 Видео'}
+                preview  = '👥 Группа создана'
+                sort_ts  = row.created_at or datetime(2000, 1, 1)
+                if row.lm_ts:
+                    prefix  = f'{row.lm_sender}: ' if row.lm_sender else ''
+                    preview = prefix + (type_map.get(row.lm_type, row.lm_content or '...'))
+                    sort_ts = row.lm_ts
+                result.append({
+                    'chat_id':       row.chat_id,
+                    'group_id':      row.group_id,
+                    'partner_id':    row.group_id,
+                    'group_name':    row.name,
+                    'partner_name':  row.name,
+                    'group_avatar':  row.avatar,
+                    'partner_avatar':row.avatar,
+                    'member_count':  row.member_cnt,
+                    'online':        False,
+                    'last_message':  preview,
+                    'timestamp':     to_moscow_str(row.lm_ts),
+                    'raw_timestamp': row.lm_ts.isoformat() + 'Z' if row.lm_ts else '',
+                    'unread_count':  row.unread_cnt,
+                    'is_group':      True,
+                    '_sort':         sort_ts,
+                })
+            except Exception as e:
+                app.logger.error(f'Group chat parse error {row.group_id}: {e}')
 
     def sort_key(x):
         s = x.get('_sort')
@@ -2411,6 +2514,58 @@ def update_profile():
 # ══════════════════════════════════════════════════════════
 ALLOWED_AVATAR_EXTS = {'jpg', 'jpeg', 'png', 'gif', 'webp'}
 
+# FIX #4: разрешённые MIME-типы для медиа
+ALLOWED_IMAGE_MIMES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+ALLOWED_MEDIA_MIMES = ALLOWED_IMAGE_MIMES | {
+    'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
+    'audio/mpeg', 'audio/ogg', 'audio/wav', 'audio/flac',
+    'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/webm',
+}
+ALLOWED_AUDIO_MIMES = {m for m in ALLOWED_MEDIA_MIMES if m.startswith('audio/')}
+
+def _detect_mime_from_bytes(header: bytes) -> str | None:
+    """FIX #4: определяет MIME по первым байтам файла (magic bytes).
+    Клиентский Content-Type игнорируется — только содержимое."""
+    if len(header) < 4:
+        return None
+    if header[:3] == b'\xff\xd8\xff':
+        return 'image/jpeg'
+    if header[:8] == b'\x89PNG\r\n\x1a\n':
+        return 'image/png'
+    if header[:6] in (b'GIF87a', b'GIF89a'):
+        return 'image/gif'
+    if header[:4] == b'RIFF' and len(header) >= 12 and header[8:12] == b'WAVE':
+        return 'audio/wav'
+    if header[:4] == b'RIFF':
+        return 'video/webm'  # может быть WebM или AVI
+    if header[:3] == b'ID3' or (header[0] == 0xff and header[1] & 0xe0 == 0xe0):
+        return 'audio/mpeg'
+    if header[:4] == b'OggS':
+        return 'audio/ogg'
+    if header[:4] == b'fLaC':
+        return 'audio/flac'
+    if header[:4] == b'\x1aE\xdf\xa3':
+        return 'video/webm'
+    if len(header) >= 12 and header[4:8] == b'ftyp':
+        sub = header[8:12]
+        if sub in (b'M4A ', b'm4a ', b'M4B ', b'f4a ', b'f4b '):
+            return 'audio/mp4'
+        return 'video/mp4'
+    if header[:5] == b'WEBP' or header[8:12] == b'WEBP':
+        return 'image/webp'
+    return None
+
+
+def _safe_read_magic(file_obj, max_bytes=12) -> bytes:
+    """Читает первые max_bytes байт и перематывает файл назад."""
+    try:
+        file_obj.seek(0)
+        header = file_obj.read(max_bytes)
+        file_obj.seek(0)
+        return header
+    except Exception:
+        return b''
+
 
 @app.route('/upload_avatar', methods=['POST'])
 @login_required
@@ -2423,9 +2578,14 @@ def upload_avatar():
     if not file or not file.filename:
         return jsonify({'success': False, 'error': 'Файл не выбран'}), 400
 
+    # FIX #4: проверяем по расширению И по магическим байтам
     ext = (file.filename.rsplit('.', 1)[-1] if '.' in file.filename else 'jpg').lower()
     if ext not in ALLOWED_AVATAR_EXTS:
         return jsonify({'success': False, 'error': 'Неподдерживаемый формат'}), 400
+
+    real_mime = _detect_mime_from_bytes(_safe_read_magic(file))
+    if real_mime and real_mime not in ALLOWED_IMAGE_MIMES:
+        return jsonify({'success': False, 'error': 'Файл не является изображением'}), 400
 
     file.seek(0, 2)
     size = file.tell()
@@ -2597,7 +2757,12 @@ def api_upload():
     except ValueError:
         return jsonify({'success': False, 'error': 'Invalid chat_id'}), 400
 
-    mime = file.content_type or mimetypes.guess_type(file.filename)[0] or ''
+    # FIX #4: определяем MIME по реальному содержимому, не по заголовку клиента
+    real_mime = _detect_mime_from_bytes(_safe_read_magic(file))
+    if real_mime and real_mime not in ALLOWED_MEDIA_MIMES:
+        return jsonify({'success': False, 'error': 'Тип файла не разрешён'}), 400
+
+    mime = real_mime or file.content_type or mimetypes.guess_type(file.filename)[0] or 'application/octet-stream'
     msg_type = 'file'
     if mime.startswith('image/'): msg_type = 'image'
     elif mime.startswith('video/'): msg_type = 'video'
@@ -2607,7 +2772,7 @@ def api_upload():
     file_bytes = file.read()
     uid   = current_user.id
     uname = current_user.name
-    _cleanup_pending_uploads()  # убираем устаревшие записи перед добавлением новой
+    _cleanup_pending_uploads()
     temp_id = f'tmp_{uid}_{int(time.time()*1000)}_{uuid.uuid4().hex[:6]}'
     _pending_uploads[temp_id] = {'status': 'uploading', 'url': '', 'ts': time.monotonic()}
 
@@ -3452,19 +3617,17 @@ _active_calls = {}
 _recent_client_msgs = {}
 
 def _call_cleanup_task():
-    """Background: auto-expire calls older than 60s with no state change"""
-    import threading
+    """Background: auto-expire calls older than 60s with no state change. FIX #12: shutdown-aware."""
     def _run():
-        while True:
-            import time as _t
-            _t.sleep(15)
-            now = _t.monotonic()
+        while not _shutdown_event.is_set():
+            if _shutdown_event.wait(timeout=15):
+                break
+            now = time.monotonic()
             expired = [cid for cid, info in list(_active_calls.items())
                        if now - info.get('ts', 0) > 60]
             for cid in expired:
                 info = _active_calls.pop(cid, {})
                 if info.get('state') in ('calling', 'ringing'):
-                    # Auto-missed — notify both sides
                     from_id = info.get('from_id')
                     to_id   = info.get('to_id')
                     ctype   = info.get('type', 'audio')
@@ -3478,8 +3641,16 @@ def _call_cleanup_task():
                         socketio.emit('call_no_answer', {
                             'call_id': cid,
                         }, room=f'user_{from_id}')
-    t = threading.Thread(target=_run, daemon=True)
+    t = threading.Thread(target=_run, daemon=True, name='call-cleanup')
     t.start()
+
+
+import atexit as _atexit
+
+@_atexit.register
+def _on_shutdown():
+    app.logger.info('[App] shutdown: stopping background threads')
+    _shutdown_event.set()
 
 # ══════════════════════════════════════════════════════════
 #  SOCKET.IO
@@ -3585,6 +3756,15 @@ def on_enter_chat(data):
         uid = current_user.id
     except Exception:
         return
+
+    # FIX #5: throttle — не чаще 1 раза в секунду на (uid, chat_id)
+    _key = (uid, int(chat_id))
+    _now = time.monotonic()
+    if _now - _enter_chat_throttle.get(_key, 0) < 1.0:
+        join_room(f'chat_{chat_id}')   # join всегда, но mark_read пропускаем
+        return
+    _enter_chat_throttle[_key] = _now
+
     join_room(f'chat_{chat_id}')
     db.session.execute(
         text('UPDATE message SET is_read=TRUE WHERE chat_id=:cid AND is_read=FALSE AND sender_id!=:uid AND is_deleted=FALSE'),
@@ -3781,10 +3961,12 @@ def handle_msg(data):
                             _sender_ava = sender_dict.get('avatar','') if sender_dict else ''
                             threading.Thread(target=send_push_to_user, args=(uid_int, uname, push_preview, chat_id, _sender_ava), daemon=True).start()
                     else:
-                        # Не шлём в тот же sid, чтобы не было дубля в открытом чате.
-                        # Другие устройства отправителя всё равно получат user_ событие.
-                        emit('new_message', payload, room=f'user_{uid_str}',
-                             skip_sid=_my_sid)
+                        # Другие устройства отправителя — только если sid известен
+                        # FIX #9: skip_sid=None не пропускает ничего → дубль на текущем устройстве
+                        if _my_sid:
+                            emit('new_message', payload, room=f'user_{uid_str}',
+                                 skip_sid=_my_sid)
+                        # Если sid неизвестен — не шлём себе (optimistic уже показан)
 
     # FIX Task 5c: return ACK with real msg_id so client can replace optimistic
     return {'ok': True, 'msg_id': msg.id}
@@ -4133,25 +4315,29 @@ def handle_end_call(data):
 # ══════════════════════════════════════════════════════════
 #  ФОНОВАЯ ОЧИСТКА
 # ══════════════════════════════════════════════════════════
+_shutdown_event = threading.Event()   # FIX #12: graceful shutdown
+
 def background_cleanup():
     _cleanup_cycle = 0
-    while True:
-        time.sleep(300)
+    while not _shutdown_event.is_set():
+        # FIX #12: прерываемый sleep — завершается за ≤5с при shutdown
+        if _shutdown_event.wait(timeout=300):
+            break
         _cleanup_cycle += 1
         try:
             with app.app_context():
-                # ── Удаляем истёкшие моменты ──
-                expired = Moment.query.filter(Moment.expires_at < datetime.utcnow()).all()
-                for m in expired:
-                    if m.media_url and m.media_url.startswith('/static/'):
-                        path = os.path.join(BASE_DIR, m.media_url.lstrip('/'))
-                        if os.path.exists(path):
-                            try: os.remove(path)
-                            except Exception: pass
-                    db.session.delete(m)
-                if expired:
-                    db_safe_commit()
-                    _moments_cache.delete('all')
+                # ── Удаляем истёкшие моменты одним SQL (FIX #10: не ORM-цикл) ──
+                db.session.execute(
+                    text('DELETE FROM moment_view WHERE moment_id IN '
+                         '(SELECT id FROM moment WHERE expires_at < :now)'),
+                    {'now': datetime.utcnow()}
+                )
+                db.session.execute(
+                    text('DELETE FROM moment WHERE expires_at < :now'),
+                    {'now': datetime.utcnow()}
+                )
+                db_safe_commit()
+                _moments_cache.delete('all')
 
                 # ── Сбрасываем статус оффлайн ──
                 stale = User.query.filter(
@@ -4179,7 +4365,8 @@ def background_cleanup():
                         db_safe_commit()
                         app.logger.info(f'Archived 5000 old messages (total old: {old_cnt})')
 
-                # ── Каждый час: чистим память ip_rate_limits ──
+                # ── Каждый час: чистим память ip_rate_limits + throttle-словари ──
+                # FIX #8: предотвращаем бесконечный рост _status_throttle и _typing_last
                 if _cleanup_cycle % 12 == 0:
                     now_m = time.monotonic()
                     for ip in list(_ip_rate_limits.keys()):
@@ -4187,6 +4374,19 @@ def background_cleanup():
                             _ip_rate_limits[ip][ep] = [t for t in _ip_rate_limits[ip][ep] if now_m - t < 3600]
                         if not any(_ip_rate_limits[ip].values()):
                             del _ip_rate_limits[ip]
+
+                    # FIX #8: throttle dicts cleanup
+                    stale_thresh = 300.0
+                    for d in (_status_throttle, _typing_last, _enter_chat_throttle):
+                        stale_k = [k for k, v in list(d.items()) if now_m - v > stale_thresh]
+                        for k in stale_k:
+                            d.pop(k, None)
+
+                    # FIX #8: rate_limits cleanup
+                    with _rl_lock:
+                        for uid_k in list(_rate_limits.keys()):
+                            for ep in list(_rate_limits[uid_k].keys()):
+                                _rate_limits[uid_k][ep] = [t for t in _rate_limits[uid_k][ep] if now_m - t < 3600]
 
                 # ── Чистим старые pending uploads (старше 2 часов) ──
                 old_uploads = [k for k, v in list(_pending_uploads.items())
@@ -4196,6 +4396,8 @@ def background_cleanup():
 
         except Exception as e:
             app.logger.error(f'Cleanup error: {e}')
+
+    app.logger.info('[Cleanup] background thread stopped gracefully')
 
 # ══════════════════════════════════════════════════════════
 #  МИГРАЦИИ
@@ -5237,11 +5439,20 @@ def healthcheck():
         db_ok = True
     except Exception:
         db_ok = False
+    redis_ok = False
+    if _redis_msg_cache:
+        try:
+            _redis_msg_cache.ping()
+            redis_ok = True
+        except Exception:
+            pass
     return jsonify({
         'status':   'ok' if db_ok else 'degraded',
         'db':       'ok' if db_ok else 'error',
+        'redis':    'ok' if redis_ok else 'unavailable',
         'version':  '9.0.0',
         'time_msk': to_moscow_str(datetime.utcnow()),
+        'db_stats': _db_commit_stats,   # FIX #11: метрики коммитов
     }), 200 if db_ok else 503
 
 # ══════════════════════════════════════════════════════════
