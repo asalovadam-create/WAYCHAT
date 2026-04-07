@@ -11180,13 +11180,16 @@ async function doLogout() {
 
 // PATCHED: wake-up пинг перед init() — будит Render Free если сервер спит
 window.onload = async function() {
-    // Показываем splash пока сервер просыпается
+    // Показываем app сразу — не ждём сервер
     const _splash = document.getElementById('app');
     if (_splash) _splash.style.opacity = '1';
 
+    // Запускаем init() СРАЗУ — серый экран пропадает мгновенно
+    init();
+
+    // Health-ping в фоне — только для логов, не блокирует UI
     try {
         const _wakeStart = Date.now();
-        // Ждём /health максимум 60 секунд
         await Promise.race([
             fetch('/health', { credentials: 'include', cache: 'no-store' }),
             new Promise(r => setTimeout(r, 60000))
@@ -11195,8 +11198,6 @@ window.onload = async function() {
     } catch(e) {
         console.warn('[WayChat] Wake-up ping failed, continuing anyway');
     }
-
-    init();
 };
 // ══════════════════════════════════════════════════════════════════
 //  🎵 MUSIC PLAYER v4 — Background play, Canvas EQ, Long video
