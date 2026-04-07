@@ -105,6 +105,30 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
 .alert { width:100%; padding:13px 16px; border-radius:14px; font-size:13px; font-weight:500; line-height:1.45; display:none; margin-bottom:14px; }
 .alert.err { background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.28); color:#fca5a5; }
 .alert.dev { background:rgba(245,158,11,0.10); border:1px solid rgba(245,158,11,0.22); color:#fcd34d; }
+
+/* ── КОД-БАННЕР ── */
+.code-banner {
+  width:100%; margin-bottom:14px; display:none;
+  background: linear-gradient(135deg, rgba(16,185,129,0.12) 0%, rgba(16,185,129,0.06) 100%);
+  border:1.5px solid rgba(16,185,129,0.35);
+  border-radius:16px; padding:14px 18px;
+  flex-direction:column; align-items:center; gap:8px;
+}
+.code-banner.show { display:flex; }
+.code-banner-label {
+  font-size:11px; font-weight:700; text-transform:uppercase;
+  letter-spacing:1px; color:rgba(16,185,129,0.7);
+}
+.code-banner-number {
+  font-size:38px; font-weight:800; letter-spacing:10px;
+  color:#fff; font-variant-numeric:tabular-nums;
+  text-shadow:0 0 24px rgba(16,185,129,0.5);
+}
+.code-banner-tap {
+  font-size:12px; color:rgba(255,255,255,0.35);
+  cursor:pointer;
+}
+.code-banner-tap:active { color:var(--accent); }
 .country-sheet {
   position:fixed; inset:0; z-index:999; background:rgba(0,0,0,0.7); backdrop-filter:blur(12px);
   display:flex; align-items:flex-end; opacity:0; pointer-events:none; transition:opacity 0.25s;
@@ -254,9 +278,13 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       </svg>
     </div>
     <h1 id="code-login-title">+7 ...</h1>
-    <p class="subtitle">Код напечатан в терминале сервера.<br><b>Введите его для входа</b></p>
+    <p class="subtitle">Код отображается прямо здесь.<br><b>Нажмите на него чтобы вставить</b></p>
     <div id="err-code-login" class="alert err"></div>
-    <div id="dev-code-login" class="alert dev"></div>
+    <div class="code-banner" id="code-banner-login">
+      <div class="code-banner-label">🔑 Ваш код для входа</div>
+      <div class="code-banner-number" id="code-banner-login-num">——————</div>
+      <div class="code-banner-tap" onclick="tapFillLogin()">Нажмите чтобы вставить ↓</div>
+    </div>
     <div class="field">
       <label>Код подтверждения</label>
       <input id="login-code" type="tel" inputmode="numeric" class="code-inp"
@@ -326,9 +354,13 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       </svg>
     </div>
     <h1 id="code-reg-title">+7 ...</h1>
-    <p class="subtitle">Код для создания аккаунта.<br><b>Смотрите в терминале сервера</b></p>
+    <p class="subtitle">Код для создания аккаунта.<br><b>Нажмите на него чтобы вставить</b></p>
     <div id="err-code-reg" class="alert err"></div>
-    <div id="dev-code-reg" class="alert dev"></div>
+    <div class="code-banner" id="code-banner-reg">
+      <div class="code-banner-label">🔑 Ваш код регистрации</div>
+      <div class="code-banner-number" id="code-banner-reg-num">——————</div>
+      <div class="code-banner-tap" onclick="tapFillReg()">Нажмите чтобы вставить ↓</div>
+    </div>
     <div class="field">
       <label>Код подтверждения</label>
       <input id="reg-code" type="tel" inputmode="numeric" class="code-inp"
@@ -590,6 +622,50 @@ function showDev(id, msg) {
   el.textContent = msg || '';
   el.style.display = msg ? 'block' : 'none';
 }
+
+// Новый баннер с кодом прямо в интерфейсе
+let _lastLoginCode = '';
+let _lastRegCode   = '';
+
+function showCodeBanner(type, code) {
+  if (type === 'login') {
+    _lastLoginCode = code || '';
+    const banner = document.getElementById('code-banner-login');
+    const num    = document.getElementById('code-banner-login-num');
+    if (!banner) return;
+    if (code) {
+      num.textContent = code;
+      banner.classList.add('show');
+      // Автовставка в поле
+      const inp = document.getElementById('login-code');
+      if (inp) { inp.value = code; }
+    } else {
+      banner.classList.remove('show');
+    }
+  } else {
+    _lastRegCode = code || '';
+    const banner = document.getElementById('code-banner-reg');
+    const num    = document.getElementById('code-banner-reg-num');
+    if (!banner) return;
+    if (code) {
+      num.textContent = code;
+      banner.classList.add('show');
+      const inp = document.getElementById('reg-code');
+      if (inp) { inp.value = code; }
+    } else {
+      banner.classList.remove('show');
+    }
+  }
+}
+
+function tapFillLogin() {
+  const inp = document.getElementById('login-code');
+  if (inp && _lastLoginCode) { inp.value = _lastLoginCode; inp.focus(); }
+}
+function tapFillReg() {
+  const inp = document.getElementById('reg-code');
+  if (inp && _lastRegCode) { inp.value = _lastRegCode; inp.focus(); }
+}
 function busy(id, on, txt) {
   const b = document.getElementById(id);
   if (!b) return;
@@ -641,9 +717,8 @@ async function requestLoginCode() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('code-login-title').textContent = _fullPhone;
-      showDev('dev-code-login', d.dev_code ? '🔑 Dev-код: ' + d.dev_code : '');
+      showCodeBanner('login', d.dev_code || '');
       showErr('err-code-login','');
-      document.getElementById('login-code').value = '';
       showScreen('sc-code-login');
       setTimeout(() => document.getElementById('login-code').focus(), 200);
     } else { showErr('err-phone', d.error||'Ошибка'); }
@@ -694,9 +769,8 @@ async function doRegStep1() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('code-reg-title').textContent = _fullPhone;
-      showDev('dev-code-reg', d.dev_code ? '🔑 Dev-код: ' + d.dev_code : '');
+      showCodeBanner('reg', d.dev_code || '');
       showErr('err-code-reg','');
-      document.getElementById('reg-code').value = '';
       showScreen('sc-code-reg');
       setTimeout(() => document.getElementById('reg-code').focus(), 200);
     } else { showErr('err-reg-info', d.error||'Ошибка'); }
@@ -825,11 +899,6 @@ function agreePrivacy() {
     <p>Мы можем обновлять настоящую Политику. О существенных изменениях мы уведомим вас через приложение.</p>
 
     <h3>9. Контакты</h3>
-    <p>По вопросам конфиденциальности: <b>privacy@waychat.app</b></p>
+    <p>По вопросам конфиденциальности: <b><a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="49393b203f282a30093e28302a21283d67283939">[email&#160;protected]</a></b></p>
 
-    <button class="privacy-agree-btn" onclick="agreePrivacy()">✓ Принимаю и возвращаюсь</button>
-  </div>
-</div>
-
-</body>
-</html>
+    <button class="privacy-agree-b
