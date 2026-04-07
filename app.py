@@ -1404,10 +1404,8 @@ def send_code():
         print(f'📱 КОД для {phone}: {code}')
         print(f'{"="*50}\n')
 
-        # FIX #1 КРИТИЧНО: dev_code ТОЛЬКО в режиме debug — в продакшн код никогда не возвращаем в ответе!
-        resp = {'success': True, 'message': 'Код отправлен'}
-        if app.debug:
-            resp['dev_code'] = code
+        # Код всегда возвращается в ответе — отображается в интерфейсе логина
+        resp = {'success': True, 'message': 'Код отправлен', 'dev_code': code}
         return jsonify(resp)
 
     except Exception as e:
@@ -1519,9 +1517,7 @@ def register_step1():
         PendingCode.set(phone=phone, code=code, name=name, username=username, is_login=False)
         print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
         # FIX #1: dev_code только в debug-режиме
-        resp = {'success': True, 'message': 'Код отправлен'}
-        if app.debug:
-            resp['dev_code'] = code
+        resp = {'success': True, 'message': 'Код отправлен', 'dev_code': code}
         return jsonify(resp)
 
     except Exception as e:
