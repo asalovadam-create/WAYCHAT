@@ -1401,10 +1401,7 @@ def send_code():
         )
 
         print(f'\n{"="*50}')
-        if app.debug:
-            print(f'📱 КОД для {phone}: {code}')
-        else:
-            print(f'📱 Код отправлен: {phone[:3]}***')
+        print(f'📱 КОД для {phone}: {code}')
         print(f'{"="*50}\n')
 
         # FIX #1 КРИТИЧНО: dev_code ТОЛЬКО в режиме debug — в продакшн код никогда не возвращаем в ответе!
@@ -1520,10 +1517,7 @@ def register_step1():
 
         code    = _gen_code()
         PendingCode.set(phone=phone, code=code, name=name, username=username, is_login=False)
-        if app.debug:
-            print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
-        else:
-            print(f'📱 Код отправлен: {phone[:3]}***')
+        print(f'\n{"="*50}\n📱 КОД для {phone}: {code}\n{"="*50}\n')
         # FIX #1: dev_code только в debug-режиме
         resp = {'success': True, 'message': 'Код отправлен'}
         if app.debug:
