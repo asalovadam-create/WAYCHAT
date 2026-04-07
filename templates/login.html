@@ -285,6 +285,10 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       <div class="code-banner-number" id="code-banner-login-num">——————</div>
       <div class="code-banner-tap" onclick="tapFillLogin()">Нажмите чтобы вставить ↓</div>
     </div>
+    <div id="code-loading-login" style="display:none;text-align:center;padding:12px 0;font-size:13px;color:rgba(255,255,255,0.35)">
+      ⏳ Получаем код…
+      <br><span style="font-size:12px;color:rgba(16,185,129,0.6);cursor:pointer;margin-top:6px;display:inline-block" onclick="_startPoll(_fullPhone,'login')">Запросить снова</span>
+    </div>
     <div class="field">
       <label>Код подтверждения</label>
       <input id="login-code" type="tel" inputmode="numeric" class="code-inp"
@@ -360,6 +364,10 @@ h1 { font-size:28px; font-weight:800; letter-spacing:-0.5px; margin-bottom:10px;
       <div class="code-banner-label">🔑 Ваш код регистрации</div>
       <div class="code-banner-number" id="code-banner-reg-num">——————</div>
       <div class="code-banner-tap" onclick="tapFillReg()">Нажмите чтобы вставить ↓</div>
+    </div>
+    <div id="code-loading-reg" style="display:none;text-align:center;padding:12px 0;font-size:13px;color:rgba(255,255,255,0.35)">
+      ⏳ Получаем код…
+      <br><span style="font-size:12px;color:rgba(16,185,129,0.6);cursor:pointer;margin-top:6px;display:inline-block" onclick="_startPoll(_fullPhone,'reg')">Запросить снова</span>
     </div>
     <div class="field">
       <label>Код подтверждения</label>
@@ -626,6 +634,39 @@ function showDev(id, msg) {
 // Новый баннер с кодом прямо в интерфейсе
 let _lastLoginCode = '';
 let _lastRegCode   = '';
+let _pollTimer     = null;
+
+function _stopPoll() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+// Поллинг: каждые 2с запрашиваем код из БД через /api/get_code
+function _startPoll(phone, type) {
+  _stopPoll();
+  // Показываем лоадер
+  const loaderId = type === 'login' ? 'code-loading-login' : 'code-loading-reg';
+  const loaderEl = document.getElementById(loaderId);
+  if (loaderEl) loaderEl.style.display = 'block';
+
+  let attempts = 0;
+  _pollTimer = setInterval(async () => {
+    attempts++;
+    if (attempts > 30) {
+      _stopPoll();
+      if (loaderEl) loaderEl.style.display = 'none';
+      return;
+    }
+    try {
+      const r = await fetch('/api/get_code?phone=' + encodeURIComponent(phone), { credentials: 'same-origin' });
+      const d = await r.json();
+      if (d.ok && d.code) {
+        showCodeBanner(type, d.code);
+        _stopPoll();
+        if (loaderEl) loaderEl.style.display = 'none';
+      }
+    } catch(e) {}
+  }, 2000);
+}
 
 function showCodeBanner(type, code) {
   if (type === 'login') {
@@ -636,7 +677,6 @@ function showCodeBanner(type, code) {
     if (code) {
       num.textContent = code;
       banner.classList.add('show');
-      // Автовставка в поле
       const inp = document.getElementById('login-code');
       if (inp) { inp.value = code; }
     } else {
@@ -717,9 +757,14 @@ async function requestLoginCode() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('code-login-title').textContent = _fullPhone;
-      showCodeBanner('login', d.dev_code || '');
       showErr('err-code-login','');
       showScreen('sc-code-login');
+      // Если сервер сразу вернул код — показываем, иначе поллим БД
+      if (d.dev_code) {
+        showCodeBanner('login', d.dev_code);
+      } else {
+        _startPoll(_fullPhone, 'login');
+      }
       setTimeout(() => document.getElementById('login-code').focus(), 200);
     } else { showErr('err-phone', d.error||'Ошибка'); }
   } catch(e) { showErr('err-phone','Ошибка соединения'); }
@@ -769,9 +814,13 @@ async function doRegStep1() {
     const d = await r.json();
     if (d.success) {
       document.getElementById('code-reg-title').textContent = _fullPhone;
-      showCodeBanner('reg', d.dev_code || '');
       showErr('err-code-reg','');
       showScreen('sc-code-reg');
+      if (d.dev_code) {
+        showCodeBanner('reg', d.dev_code);
+      } else {
+        _startPoll(_fullPhone, 'reg');
+      }
       setTimeout(() => document.getElementById('reg-code').focus(), 200);
     } else { showErr('err-reg-info', d.error||'Ошибка'); }
   } catch(e) { showErr('err-reg-info','Ошибка соединения'); }
