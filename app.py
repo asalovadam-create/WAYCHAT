@@ -5422,6 +5422,22 @@ def upload_media_thumb():
     return jsonify({'success': True, 'url': url})
 
 
+@app.route('/api/get_code')
+def api_get_code():
+    """Возвращает код подтверждения из БД — для отображения прямо в интерфейсе."""
+    phone = (request.args.get('phone') or '').strip()
+    if not phone:
+        return jsonify({'ok': False}), 400
+    try:
+        pending = PendingCode.get(phone)
+        if pending and pending.expires > time.time():
+            return jsonify({'ok': True, 'code': pending.code})
+        return jsonify({'ok': False})
+    except Exception as e:
+        app.logger.error(f'api_get_code: {e}')
+        return jsonify({'ok': False}), 500
+
+
 @app.route('/health')
 def healthcheck():
     try:
