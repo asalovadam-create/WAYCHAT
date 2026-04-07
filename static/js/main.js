@@ -6,6 +6,35 @@
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
+// ══ CSP FIX: Удаляем внешние Google Fonts (блокируются CSP style-src)
+// Заменяем Pacifico на системный шрифт через CSS-переменную
+(function() {
+    function removeGoogleFonts() {
+        document.querySelectorAll('link[href*="fonts.googleapis.com"]').forEach(function(el) {
+            el.parentNode && el.parentNode.removeChild(el);
+        });
+        // Перекрываем font-face Pacifico системным шрифтом
+        var st = document.createElement('style');
+        st.id = 'wc-csp-font-fix';
+        st.textContent = [
+            '@font-face {',
+            '  font-family: "Pacifico";',
+            '  src: local("-apple-system"), local("SF Pro Display"), local("Helvetica Neue"), local("Arial");',
+            '}',
+            '[style*="Pacifico"], .pacifico {',
+            '  font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif !important;',
+            '  font-weight: 700 !important;',
+            '}'
+        ].join('\n');
+        document.head.appendChild(st);
+    }
+    if (document.head) {
+        removeGoogleFonts();
+    } else {
+        document.addEventListener('DOMContentLoaded', removeGoogleFonts);
+    }
+})();
+
 // ══════════════════════════════════════════════════════════
 //  PERSISTENT CACHE — IndexedDB для аватаров, медиа, профилей
 // ══════════════════════════════════════════════════════════
@@ -4428,7 +4457,6 @@ function renderChatList(chats) {
                     <p data-chat-preview style="font-size:15px;color:${isUnread?'rgba(255,255,255,0.85)':'var(--text-2)'};font-weight:${isUnread?'500':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;margin-right:8px">${escHtml(preview)}</p>
                     <span data-chat-badge style="display:${isUnread?'flex':'none'};align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;background:var(--accent);border-radius:10px;font-size:12px;font-weight:700;color:#000">${isUnread?(chat.unread_count||''):''}</span>
                 </div>`;
-        }
         }
 
         frag.appendChild(div);
@@ -11180,16 +11208,13 @@ async function doLogout() {
 
 // PATCHED: wake-up пинг перед init() — будит Render Free если сервер спит
 window.onload = async function() {
-    // Показываем app сразу — не ждём сервер
+    // Показываем splash пока сервер просыпается
     const _splash = document.getElementById('app');
     if (_splash) _splash.style.opacity = '1';
 
-    // Запускаем init() СРАЗУ — серый экран пропадает мгновенно
-    init();
-
-    // Health-ping в фоне — только для логов, не блокирует UI
     try {
         const _wakeStart = Date.now();
+        // Ждём /health максимум 60 секунд
         await Promise.race([
             fetch('/health', { credentials: 'include', cache: 'no-store' }),
             new Promise(r => setTimeout(r, 60000))
@@ -11198,6 +11223,8 @@ window.onload = async function() {
     } catch(e) {
         console.warn('[WayChat] Wake-up ping failed, continuing anyway');
     }
+
+    init();
 };
 // ══════════════════════════════════════════════════════════════════
 //  🎵 MUSIC PLAYER v4 — Background play, Canvas EQ, Long video
