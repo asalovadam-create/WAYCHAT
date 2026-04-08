@@ -1,0 +1,230 @@
+"""
+redis_msg_cache.py — Серверный кэш переписки в Redis для WayChat
+================================================================
+
+Подключение к app.py:
+    from redis_msg_cache import register_msg_cache_routes
+    register_msg_cache_routes(app)
+
+Зависимости:
+    pip install redis flask flask-login
+
+Переменные окружения (или укажи прямо в REDIS_URL):
+    REDIS_URL=redis://localhost:6379/0
+    (или REDIS_URL=redis://:password@host:6379/0 для Render/Railway)
+"""
+
+import json
+import os
+import time
+import logging
+from functools import wraps
+
+from flask import Blueprint, request, jsonify, session
+
+# ── Redis подключение ──────────────────────────────────────────────────────────
+try:
+    import redis as _redis_lib
+    _REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+    _redis: _redis_lib.Redis = _redis_lib.from_url(
+        _REDIS_URL,
+        decode_responses=True,      # возвращаем str, не bytes
+        socket_connect_timeout=3,
+        socket_timeout=3,
+    )
+    _redis.ping()                   # проверяем соединение при старте
+    logging.info(f'[MsgCache] Redis connected: {_REDIS_URL}')
+    REDIS_AVAILABLE = True
+except Exception as _e:
+    logging.warning(f'[MsgCache] Redis недоступен — кэш переписки отключён: {_e}')
+    _redis = None
+    REDIS_AVAILABLE = False
+
+
+# ── Константы ──────────────────────────────────────────────────────────────────
+MSG_CACHE_TTL    = 7 * 24 * 3600   # 7 дней в секундах
+MSG_CACHE_LIMIT  = 300             # максимум сообщений на чат в кэше
+KEY_PREFIX       = 'wc:msgs:'      # Redis ключ: wc:msgs:p_42  или  wc:msgs:g_7
+
+
+# ── Blueprint ──────────────────────────────────────────────────────────────────
+bp = Blueprint('msg_cache', __name__)
+
+
+def _require_auth(f):
+    """Декоратор: только авторизованные пользователи."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        # Совместимость с flask-login и ручным session['user_id']
+        try:
+            from flask_login import current_user
+            if not current_user.is_authenticated:
+                return jsonify({'error': 'unauthorized'}), 401
+        except ImportError:
+            if not session.get('user_id'):
+                return jsonify({'error': 'unauthorized'}), 401
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def _current_user_id() -> int | None:
+    """Возвращает ID текущего пользователя."""
+    try:
+        from flask_login import current_user
+        return int(current_user.id)
+    except Exception:
+        return session.get('user_id')
+
+
+def _make_key(user_id: int, chat_key: str) -> str:
+    """
+    Redis ключ привязан к пользователю → нельзя прочитать чужой кэш.
+    wc:msgs:123:p_42   (личный чат пользователя 123 с партнёром 42)
+    wc:msgs:123:g_7    (групповой чат)
+    """
+    return f'{KEY_PREFIX}{user_id}:{chat_key}'
+
+
+def _validate_chat_key(chat_key: str) -> bool:
+    """Допускаем только p_<int> и g_<int> — защита от инъекций."""
+    if not isinstance(chat_key, str):
+        return False
+    if len(chat_key) > 20:
+        return False
+    parts = chat_key.split('_', 1)
+    if len(parts) != 2:
+        return False
+    if parts[0] not in ('p', 'g'):
+        return False
+    return parts[1].isdigit()
+
+
+# ── GET /api/msg_cache/<chat_key> ──────────────────────────────────────────────
+@bp.route('/api/msg_cache/<chat_key>', methods=['GET'])
+@_require_auth
+def get_msg_cache(chat_key: str):
+    """
+    Возвращает закэшированные сообщения из Redis.
+    Ответ: { messages: [...], ts: <unix_ms>, source: "redis" }
+    Если кэша нет — { messages: [], ts: 0 }
+    """
+    if not _validate_chat_key(chat_key):
+        return jsonify({'error': 'invalid key'}), 400
+
+    if not REDIS_AVAILABLE:
+        return jsonify({'messages': [], 'ts': 0, 'source': 'unavailable'})
+
+    uid = _current_user_id()
+    key = _make_key(uid, chat_key)
+
+    try:
+        raw = _redis.get(key)
+        if not raw:
+            return jsonify({'messages': [], 'ts': 0, 'source': 'miss'})
+
+        data = json.loads(raw)
+        return jsonify({
+            'messages': data.get('msgs', []),
+            'ts':       data.get('ts', 0),
+            'source':   'redis',
+        })
+    except Exception as e:
+        logging.error(f'[MsgCache] GET error key={key}: {e}')
+        return jsonify({'messages': [], 'ts': 0, 'source': 'error'})
+
+
+# ── POST /api/msg_cache/<chat_key> ─────────────────────────────────────────────
+@bp.route('/api/msg_cache/<chat_key>', methods=['POST'])
+@_require_auth
+def set_msg_cache(chat_key: str):
+    """
+    Сохраняет сообщения в Redis.
+    Тело: { messages: [...] }
+    """
+    if not _validate_chat_key(chat_key):
+        return jsonify({'error': 'invalid key'}), 400
+
+    if not REDIS_AVAILABLE:
+        return jsonify({'ok': False, 'reason': 'redis_unavailable'})
+
+    uid = _current_user_id()
+    key = _make_key(uid, chat_key)
+
+    try:
+        body = request.get_json(force=True, silent=True) or {}
+        msgs = body.get('messages', [])
+
+        if not isinstance(msgs, list):
+            return jsonify({'error': 'messages must be array'}), 400
+
+        # Обрезаем до лимита — храним только последние N
+        msgs = msgs[-MSG_CACHE_LIMIT:]
+
+        payload = json.dumps({'msgs': msgs, 'ts': int(time.time() * 1000)})
+
+        _redis.set(key, payload, ex=MSG_CACHE_TTL)
+
+        return jsonify({'ok': True, 'saved': len(msgs)})
+    except Exception as e:
+        logging.error(f'[MsgCache] SET error key={key}: {e}')
+        return jsonify({'ok': False, 'reason': str(e)}), 500
+
+
+# ── DELETE /api/msg_cache/<chat_key> ───────────────────────────────────────────
+@bp.route('/api/msg_cache/<chat_key>', methods=['DELETE'])
+@_require_auth
+def delete_msg_cache(chat_key: str):
+    """Удаляет кэш конкретного чата (при удалении переписки)."""
+    if not _validate_chat_key(chat_key):
+        return jsonify({'error': 'invalid key'}), 400
+
+    if not REDIS_AVAILABLE:
+        return jsonify({'ok': False})
+
+    uid = _current_user_id()
+    key = _make_key(uid, chat_key)
+
+    try:
+        _redis.delete(key)
+        return jsonify({'ok': True})
+    except Exception as e:
+        logging.error(f'[MsgCache] DELETE error key={key}: {e}')
+        return jsonify({'ok': False}), 500
+
+
+# ── DELETE /api/msg_cache (все чаты пользователя — при логауте) ────────────────
+@bp.route('/api/msg_cache', methods=['DELETE'])
+@_require_auth
+def clear_msg_cache():
+    """Удаляет все кэши пользователя (logout / сброс)."""
+    if not REDIS_AVAILABLE:
+        return jsonify({'ok': False})
+
+    uid = _current_user_id()
+    pattern = f'{KEY_PREFIX}{uid}:*'
+
+    try:
+        cursor = 0
+        deleted = 0
+        while True:
+            cursor, keys = _redis.scan(cursor, match=pattern, count=100)
+            if keys:
+                _redis.delete(*keys)
+                deleted += len(keys)
+            if cursor == 0:
+                break
+        return jsonify({'ok': True, 'deleted': deleted})
+    except Exception as e:
+        logging.error(f'[MsgCache] CLEAR error uid={uid}: {e}')
+        return jsonify({'ok': False}), 500
+
+
+# ── Регистрация в приложении ───────────────────────────────────────────────────
+def register_msg_cache_routes(app):
+    """
+    Вызови в app.py:
+        from redis_msg_cache import register_msg_cache_routes
+        register_msg_cache_routes(app)
+    """
+    app.register_blueprint(bp)
+    logging.info('[MsgCache] Routes registered: /api/msg_cache/<chat_key>')
