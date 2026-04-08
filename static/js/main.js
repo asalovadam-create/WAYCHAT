@@ -6,35 +6,6 @@
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
-// ══ CSP FIX: Удаляем внешние Google Fonts (блокируются CSP style-src)
-// Заменяем Pacifico на системный шрифт через CSS-переменную
-(function() {
-    function removeGoogleFonts() {
-        document.querySelectorAll('link[href*="fonts.googleapis.com"]').forEach(function(el) {
-            el.parentNode && el.parentNode.removeChild(el);
-        });
-        // Перекрываем font-face Pacifico системным шрифтом
-        var st = document.createElement('style');
-        st.id = 'wc-csp-font-fix';
-        st.textContent = [
-            '@font-face {',
-            '  font-family: "Pacifico";',
-            '  src: local("-apple-system"), local("SF Pro Display"), local("Helvetica Neue"), local("Arial");',
-            '}',
-            '[style*="Pacifico"], .pacifico {',
-            '  font-family: -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif !important;',
-            '  font-weight: 700 !important;',
-            '}'
-        ].join('\n');
-        document.head.appendChild(st);
-    }
-    if (document.head) {
-        removeGoogleFonts();
-    } else {
-        document.addEventListener('DOMContentLoaded', removeGoogleFonts);
-    }
-})();
-
 // ══════════════════════════════════════════════════════════
 //  PERSISTENT CACHE — IndexedDB для аватаров, медиа, профилей
 // ══════════════════════════════════════════════════════════
@@ -1041,6 +1012,127 @@ const MsgDB = (() => {
 
     return { load, save, delete: del, clear, keys };
 })();
+
+// ══════════════════════════════════════════════════════════
+//  REDIS MSG CACHE — синхронизация переписки через сервер
+//  Работает поверх MsgDB (IndexedDB) — Redis источник истины,
+//  IndexedDB — быстрый оффлайн слой.
+// ══════════════════════════════════════════════════════════
+const RedisCache = (() => {
+    // Дебаунс сохранений: не спамим сервер на каждое сообщение
+    const _saveTimers = {};
+    const SAVE_DEBOUNCE = 1500; // мс
+
+    /**
+     * load(cacheKey) → массив сообщений или null
+     * Сначала пробует IndexedDB (быстро/оффлайн), затем Redis (свежие данные).
+     */
+    async function load(cacheKey) {
+        // 1. IndexedDB — мгновенно, без сети
+        const idb = await MsgDB.load(cacheKey);
+        if (idb?.length) {
+            // Запускаем фоновую синхронизацию с Redis (не блокируем UI)
+            _syncFromRedis(cacheKey, idb).catch(() => {});
+            return idb;
+        }
+
+        // 2. IndexedDB пуст — тянем из Redis
+        return await _fetchFromRedis(cacheKey);
+    }
+
+    /**
+     * save(cacheKey, messages) — сохраняет в IndexedDB сразу, в Redis — дебаунс
+     */
+    async function save(cacheKey, messages) {
+        // IndexedDB — всегда сразу
+        MsgDB.save(cacheKey, messages).catch(() => {});
+
+        // Redis — дебаунс чтобы не отправлять на каждое новое сообщение
+        clearTimeout(_saveTimers[cacheKey]);
+        _saveTimers[cacheKey] = setTimeout(() => {
+            _pushToRedis(cacheKey, messages).catch(() => {});
+        }, SAVE_DEBOUNCE);
+    }
+
+    /**
+     * del(cacheKey) — удаляет из обоих слоёв
+     */
+    async function del(cacheKey) {
+        MsgDB.delete(cacheKey).catch(() => {});
+        try {
+            await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
+                method: 'DELETE',
+                credentials: 'include',
+            });
+        } catch(e) { /* оффлайн — ничего страшного */ }
+    }
+
+    // ── Приватные хелперы ─────────────────────────────────────────
+
+    async function _fetchFromRedis(cacheKey) {
+        try {
+            const r = await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
+                credentials: 'include',
+            });
+            if (!r.ok) return null;
+            const data = await r.json();
+            const msgs = data.messages;
+            if (Array.isArray(msgs) && msgs.length) {
+                // Сохраняем в IndexedDB чтобы следующий раз был быстрее
+                MsgDB.save(cacheKey, msgs).catch(() => {});
+                return msgs;
+            }
+            return null;
+        } catch(e) { return null; }
+    }
+
+    /**
+     * Сравниваем IndexedDB с Redis: если Redis новее — возвращаем из Redis.
+     * Если IDB новее или одинаково — ничего не делаем.
+     */
+    async function _syncFromRedis(cacheKey, idbMsgs) {
+        try {
+            const r = await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
+                credentials: 'include',
+            });
+            if (!r.ok) return;
+            const data = await r.json();
+            if (!Array.isArray(data.messages) || !data.messages.length) return;
+
+            const redisMsgs = data.messages;
+            const idbLastId  = idbMsgs.length  ? (idbMsgs[idbMsgs.length - 1].id  || 0) : 0;
+            const redisLastId = redisMsgs.length ? (redisMsgs[redisMsgs.length - 1].id || 0) : 0;
+
+            if (redisLastId > idbLastId) {
+                // Redis свежее — обновляем IndexedDB
+                MsgDB.save(cacheKey, redisMsgs).catch(() => {});
+                // Обновляем in-memory кэш если чат открыт
+                const isGroup   = cacheKey.startsWith('g_');
+                const partnerId = parseInt(cacheKey.slice(2), 10);
+                if (
+                    typeof messagesByChatCache !== 'undefined' &&
+                    messagesByChatCache[cacheKey]
+                ) {
+                    messagesByChatCache[cacheKey].messages = redisMsgs;
+                }
+            }
+        } catch(e) { /* фоновая задача — игнорируем */ }
+    }
+
+    async function _pushToRedis(cacheKey, messages) {
+        try {
+            await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ messages: messages.slice(-300) }),
+            });
+        } catch(e) { /* оффлайн — IndexedDB сохранён, всё ок */ }
+    }
+
+    return { load, save, del };
+})();
+
 const _viewersCache = {};
 let _currentFacingMode = 'user';  // для flip
 let _speakerOn         = true;
@@ -1730,8 +1822,8 @@ function initSocket() {
         if (ck1) delete messagesByChatCache[ck1];
         if (ck2) delete messagesByChatCache[ck2];
         const tasks = [];
-        if (ck1) tasks.push(MsgDB.delete(ck1));
-        if (ck2) tasks.push(MsgDB.delete(ck2));
+        if (ck1) tasks.push(RedisCache.del(ck1));
+        if (ck2) tasks.push(RedisCache.del(ck2));
         tasks.push(WCCache.del('chats', String(cid)));
         if (partnerId) tasks.push(WCCache.del('profiles', String(partnerId)));
         await Promise.allSettled(tasks);
@@ -4165,10 +4257,10 @@ async function _doDeleteChat(chatId) {
     if (ck_private) delete messagesByChatCache[ck_private];
     if (ck_group)   delete messagesByChatCache[ck_group];
 
-    // ─── 3. Чистим IndexedDB (awaited!) ───
+    // ─── 3. Чистим IndexedDB + Redis (awaited!) ───
     const delTasks = [];
-    if (ck_private) delTasks.push(MsgDB.delete(ck_private));
-    if (ck_group)   delTasks.push(MsgDB.delete(ck_group));
+    if (ck_private) delTasks.push(RedisCache.del(ck_private));
+    if (ck_group)   delTasks.push(RedisCache.del(ck_group));
     // Также чистим WCCache profiles/chats store
     delTasks.push(WCCache.del('chats', String(chatId)));
     if (partnerId) delTasks.push(WCCache.del('profiles', String(partnerId)));
@@ -4825,9 +4917,9 @@ async function openChat(id, name, avatar) {
             scrollDown(false);
             if (elStatus) elStatus.textContent = 'обновление...';
         } else {
-            // Пробуем IndexedDB — показываем сразу без ожидания chat_id
+            // Пробуем IndexedDB → Redis — показываем сразу без ожидания chat_id
             _showChatSkeleton(msgs);
-            MsgDB.load(cacheKey).then(idb => {
+            RedisCache.load(cacheKey).then(idb => {
                 if (_chatOpenId !== _myOpenId) return;
                 if (_deletedPartnerIds.has(id)) { msgs.innerHTML = ''; return; }
                 if (idb?.length) {
@@ -4962,7 +5054,7 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
         if (elStatus) elStatus.textContent = 'обновление...';
     } else {
         _showChatSkeleton(msgs);
-        MsgDB.load(cacheKey).then(idb => {
+        RedisCache.load(cacheKey).then(idb => {
             if (_chatOpenId !== _myOpenId) return;
             if (idb?.length) {
                 messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
@@ -5160,7 +5252,7 @@ async function loadMessages(initial = false, retryCount = 0) {
             }
             renderMessagesFromCache(finalMsgs);
             scrollDown(false);
-            MsgDB.save(cacheKey, finalMsgs).catch(() => {});
+            RedisCache.save(cacheKey, finalMsgs).catch(() => {});
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
             // Пагинация — добавляем в начало
@@ -5574,7 +5666,7 @@ function renderNewMessage(msg, animate = true) {
             if (!_exists) {
                 messagesByChatCache[ck].messages.push(msg);
                 clearTimeout(renderNewMessage._t);
-                renderNewMessage._t = setTimeout(() => MsgDB.save(ck, messagesByChatCache[ck].messages), 300);
+                renderNewMessage._t = setTimeout(() => RedisCache.save(ck, messagesByChatCache[ck].messages), 300);
             }
         }
     }
@@ -7102,17 +7194,17 @@ function onNewMessage(msg) {
             const _existing = messagesByChatCache[_ck].messages;
             if (!_existing.some(m => _normMsgId(m.id) === _mid)) {
                 messagesByChatCache[_ck].messages.push(msg);
-                // Персистируем в IDB чтобы при следующем заходе данные были актуальны
-                MsgDB.save(_ck, messagesByChatCache[_ck].messages).catch(() => {});
+                // Персистируем в IDB + Redis чтобы при следующем заходе данные были актуальны
+                RedisCache.save(_ck, messagesByChatCache[_ck].messages).catch(() => {});
             }
         }
     } else {
-        // Сообщение пришло в закрытый чат — инвалидируем ОБА кэша (память + IDB)
+        // Сообщение пришло в закрытый чат — инвалидируем ОБА кэша (память + IDB + Redis)
         // Иначе при следующем заходе показываются старые данные без нового сообщения
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
-        // IDB тоже удаляем — принудит loadMessages к свежей загрузке с сервера
-        MsgDB.delete(cacheKey).catch(() => {});
+        // IDB + Redis удаляем — принудит loadMessages к свежей загрузке с сервера
+        RedisCache.del(cacheKey).catch(() => {});
 
         // Мгновенно обновляем чат в списке без запроса к серверу.
         // Если чат новый (нет в DOM) — делаем полный loadChats с задержкой.
