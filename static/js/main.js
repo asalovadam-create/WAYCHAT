@@ -6,6 +6,23 @@
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
+// ══ CSP FIX: удаляем Google Fonts (блокируются policy style-src) ══
+(function() {
+    function _removeGFonts() {
+        document.querySelectorAll('link[href*="fonts.googleapis.com"]').forEach(function(el) {
+            el.parentNode && el.parentNode.removeChild(el);
+        });
+        var st = document.createElement('style');
+        st.id = 'wc-csp-font-fix';
+        st.textContent = [
+            '@font-face{font-family:"Pacifico";src:local("-apple-system"),local("SF Pro Display"),local("Helvetica Neue"),local("Arial");}',
+            '[style*="Pacifico"],.pacifico{font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif!important;font-weight:700!important;}'
+        ].join('');
+        document.head.appendChild(st);
+    }
+    document.head ? _removeGFonts() : document.addEventListener('DOMContentLoaded', _removeGFonts);
+})();
+
 // ══════════════════════════════════════════════════════════
 //  PERSISTENT CACHE — IndexedDB для аватаров, медиа, профилей
 // ══════════════════════════════════════════════════════════
@@ -475,15 +492,24 @@ const VirtualList=(()=>{
         el.addEventListener('scroll',_onScroll,{passive:true});
     }
 
-    function setMessages(arr){
+    function setMessages(arr, opts){
         if(!el)return;
+        opts = opts || {};
         ms=arr.slice();
         if(!el._mounted){el._mounted=true;mount(el);}
+
+        // Отключаем scroll-events во время рендера чтобы не триггерить пагинацию
+        el.removeEventListener('scroll',_onScroll);
+
         _renderAll();
-        // Scroll to bottom after render
-        requestAnimationFrame(()=>{
+
+        // Восстанавливаем скролл
+        el.addEventListener('scroll',_onScroll,{passive:true});
+
+        // Прыгаем вниз МГНОВЕННО (без smooth) — юзер не видит движения
+        requestAnimationFrame(function(){
             if(!el)return;
-            el.scrollTop=el.scrollHeight;
+            el.scrollTop = el.scrollHeight;
             _scrollAtBottom=true; _scrollUnread=0;
             _updateScrollBtn(el); _ensureScrollBtn(); _attachScrollListener(el);
         });
@@ -543,15 +569,23 @@ const VirtualList=(()=>{
         const existIds=new Set(ms.map(m=>m.id));
         arr=arr.filter(m=>!existIds.has(m.id));
         if(!arr.length)return;
-        const prevScrollH=el.scrollHeight;
-        const prevScrollT=el.scrollTop;
+
+        // Запоминаем якорь — первый видимый элемент и его offsetTop
+        const prevScrollH = el.scrollHeight;
+        const prevScrollT = el.scrollTop;
+
+        // Отключаем scroll-events во время рендера
+        el.removeEventListener('scroll',_onScroll);
+
         ms=[...arr,...ms];
         _renderAll();
-        // Restore scroll position — no jump
-        requestAnimationFrame(()=>{
-            if(!el)return;
-            el.scrollTop=prevScrollT+(el.scrollHeight-prevScrollH);
-        });
+
+        el.addEventListener('scroll',_onScroll,{passive:true});
+
+        // Восстанавливаем позицию без анимации — юзер не замечает
+        // ВАЖНО: делать ДО следующего frame, иначе браузер сам прыгнет
+        const newScrollH = el.scrollHeight;
+        el.scrollTop = prevScrollT + (newScrollH - prevScrollH);
     }
 
     function toBottom(a){
@@ -687,17 +721,15 @@ function _ensureScrollBtn() {
         _scrollUnread   = 0;
         _scrollAtBottom = true;
         _updateScrollBtn(msgs);
-        // Принудительно скроллим до самого низа (мгновенно через rAF)
+        // Мгновенный скролл до реального низа (не smooth — иначе не долистывает при быстром нажатии)
+        msgs.scrollTop = msgs.scrollHeight;
+        // Финальная коррекция через 1 frame на случай если layout ещё не обновился
         requestAnimationFrame(function() {
-            msgs.scrollTo({ top: msgs.scrollHeight, behavior: 'smooth' });
-            // Финальная коррекция через 500мс на случай lazy-рендера
-            setTimeout(function() {
-                if (msgs) {
-                    msgs.scrollTop = msgs.scrollHeight;
-                    _scrollAtBottom = true;
-                    _updateScrollBtn(msgs);
-                }
-            }, 520);
+            if (msgs) {
+                msgs.scrollTop = msgs.scrollHeight;
+                _scrollAtBottom = true;
+                _updateScrollBtn(msgs);
+            }
         });
         if (currentChatId) {
             socket.emit('mark_read', { chat_id: currentChatId });
@@ -1014,120 +1046,85 @@ const MsgDB = (() => {
 })();
 
 // ══════════════════════════════════════════════════════════
-//  REDIS MSG CACHE — синхронизация переписки через сервер
-//  Работает поверх MsgDB (IndexedDB) — Redis источник истины,
-//  IndexedDB — быстрый оффлайн слой.
+//  REDIS MSG CACHE — сообщения хранятся на сервере в Redis.
+//  IndexedDB = мгновенный оффлайн слой (L1).
+//  Redis      = постоянное хранилище (L2), доступно с любого устройства.
+//  Стратегия: показываем из L1 сразу, фоном сверяем с L2.
 // ══════════════════════════════════════════════════════════
 const RedisCache = (() => {
-    // Дебаунс сохранений: не спамим сервер на каждое сообщение
-    const _saveTimers = {};
-    const SAVE_DEBOUNCE = 1500; // мс
+    const _timers = {};
+    const DEBOUNCE = 1500; // мс — не спамим сервер
 
-    /**
-     * load(cacheKey) → массив сообщений или null
-     * Сначала пробует IndexedDB (быстро/оффлайн), затем Redis (свежие данные).
-     */
     async function load(cacheKey) {
-        // 1. IndexedDB — мгновенно, без сети
+        // L1: IndexedDB — мгновенно
         const idb = await MsgDB.load(cacheKey);
-        if (idb?.length) {
-            // Запускаем фоновую синхронизацию с Redis (не блокируем UI)
+        if (idb && idb.length) {
+            // Фоновая синхронизация с Redis (не блокирует UI)
             _syncFromRedis(cacheKey, idb).catch(() => {});
             return idb;
         }
-
-        // 2. IndexedDB пуст — тянем из Redis
-        return await _fetchFromRedis(cacheKey);
+        // L2: Redis — если L1 пуст (новый браузер / другое устройство)
+        return _fetchFromRedis(cacheKey);
     }
 
-    /**
-     * save(cacheKey, messages) — сохраняет в IndexedDB сразу, в Redis — дебаунс
-     */
     async function save(cacheKey, messages) {
-        // IndexedDB — всегда сразу
         MsgDB.save(cacheKey, messages).catch(() => {});
-
-        // Redis — дебаунс чтобы не отправлять на каждое новое сообщение
-        clearTimeout(_saveTimers[cacheKey]);
-        _saveTimers[cacheKey] = setTimeout(() => {
+        clearTimeout(_timers[cacheKey]);
+        _timers[cacheKey] = setTimeout(() => {
             _pushToRedis(cacheKey, messages).catch(() => {});
-        }, SAVE_DEBOUNCE);
+        }, DEBOUNCE);
     }
 
-    /**
-     * del(cacheKey) — удаляет из обоих слоёв
-     */
     async function del(cacheKey) {
         MsgDB.delete(cacheKey).catch(() => {});
         try {
-            await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
-                method: 'DELETE',
-                credentials: 'include',
+            await fetch('/api/msg_cache/' + encodeURIComponent(cacheKey), {
+                method: 'DELETE', credentials: 'include'
             });
-        } catch(e) { /* оффлайн — ничего страшного */ }
+        } catch(e) {}
     }
 
-    // ── Приватные хелперы ─────────────────────────────────────────
-
-    async function _fetchFromRedis(cacheKey) {
+    async function _fetchFromRedis(key) {
         try {
-            const r = await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
-                credentials: 'include',
-            });
+            const r = await fetch('/api/msg_cache/' + encodeURIComponent(key), { credentials: 'include' });
             if (!r.ok) return null;
-            const data = await r.json();
-            const msgs = data.messages;
+            const d = await r.json();
+            const msgs = d.messages;
             if (Array.isArray(msgs) && msgs.length) {
-                // Сохраняем в IndexedDB чтобы следующий раз был быстрее
-                MsgDB.save(cacheKey, msgs).catch(() => {});
+                MsgDB.save(key, msgs).catch(() => {}); // кэшируем в L1
                 return msgs;
             }
-            return null;
-        } catch(e) { return null; }
+        } catch(e) {}
+        return null;
     }
 
-    /**
-     * Сравниваем IndexedDB с Redis: если Redis новее — возвращаем из Redis.
-     * Если IDB новее или одинаково — ничего не делаем.
-     */
-    async function _syncFromRedis(cacheKey, idbMsgs) {
+    async function _syncFromRedis(key, idbMsgs) {
         try {
-            const r = await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
-                credentials: 'include',
-            });
+            const r = await fetch('/api/msg_cache/' + encodeURIComponent(key), { credentials: 'include' });
             if (!r.ok) return;
-            const data = await r.json();
-            if (!Array.isArray(data.messages) || !data.messages.length) return;
-
-            const redisMsgs = data.messages;
-            const idbLastId  = idbMsgs.length  ? (idbMsgs[idbMsgs.length - 1].id  || 0) : 0;
-            const redisLastId = redisMsgs.length ? (redisMsgs[redisMsgs.length - 1].id || 0) : 0;
-
-            if (redisLastId > idbLastId) {
-                // Redis свежее — обновляем IndexedDB
-                MsgDB.save(cacheKey, redisMsgs).catch(() => {});
-                // Обновляем in-memory кэш если чат открыт
-                const isGroup   = cacheKey.startsWith('g_');
-                const partnerId = parseInt(cacheKey.slice(2), 10);
-                if (
-                    typeof messagesByChatCache !== 'undefined' &&
-                    messagesByChatCache[cacheKey]
-                ) {
-                    messagesByChatCache[cacheKey].messages = redisMsgs;
+            const d = await r.json();
+            if (!Array.isArray(d.messages) || !d.messages.length) return;
+            const rMsgs = d.messages;
+            const idbLast  = idbMsgs.length  ? (idbMsgs[idbMsgs.length - 1].id  || 0) : 0;
+            const redisLast = rMsgs.length   ? (rMsgs[rMsgs.length - 1].id       || 0) : 0;
+            if (redisLast > idbLast) {
+                MsgDB.save(key, rMsgs).catch(() => {});
+                if (typeof messagesByChatCache !== 'undefined' && messagesByChatCache[key]) {
+                    messagesByChatCache[key].messages = rMsgs;
                 }
             }
-        } catch(e) { /* фоновая задача — игнорируем */ }
+        } catch(e) {}
     }
 
-    async function _pushToRedis(cacheKey, messages) {
+    async function _pushToRedis(key, messages) {
         try {
-            await fetch(`/api/msg_cache/${encodeURIComponent(cacheKey)}`, {
+            await fetch('/api/msg_cache/' + encodeURIComponent(key), {
                 method: 'POST',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ messages: messages.slice(-300) }),
             });
-        } catch(e) { /* оффлайн — IndexedDB сохранён, всё ок */ }
+        } catch(e) {}
     }
 
     return { load, save, del };
@@ -2841,12 +2838,13 @@ body {
     padding: 2px 0;
 }
 .wv-bar {
-    width: 2px;
-    border-radius: 1px;
-    background: rgba(255,255,255,0.28);
+    width: 2.5px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.25);
     flex-shrink: 0;
-    transition: background 0.08s, height 0.15s ease;
+    transition: background 0.12s ease;
     will-change: background;
+    transform-origin: bottom;
 }
 .wv-bar.wv-played {
     background: var(--accent) !important;
@@ -4257,7 +4255,7 @@ async function _doDeleteChat(chatId) {
     if (ck_private) delete messagesByChatCache[ck_private];
     if (ck_group)   delete messagesByChatCache[ck_group];
 
-    // ─── 3. Чистим IndexedDB + Redis (awaited!) ───
+    // ─── 3. Чистим IndexedDB (awaited!) ───
     const delTasks = [];
     if (ck_private) delTasks.push(RedisCache.del(ck_private));
     if (ck_group)   delTasks.push(RedisCache.del(ck_group));
@@ -4554,26 +4552,48 @@ function renderChatList(chats) {
         frag.appendChild(div);
     });
 
-    // BUG-A FIX: surgical DOM update — NO innerHTML wipe
-    // Move/insert items in server-defined order without destroying existing elements
+    // Surgical DOM update — move items to correct positions without layout thrash
+    // Используем position: relative + margin анимацию чтобы избежать reflow
     const fragItems = Array.from(frag.childNodes);
+
+    // Snapshot текущих позиций ДО перестановки (FLIP technique)
+    const oldPositions = new Map();
+    container.querySelectorAll('[data-chat-key]').forEach(el => {
+        oldPositions.set(el.dataset.chatKey, el.getBoundingClientRect().top);
+    });
+
+    // Вставляем в правильный порядок
     let refNode = container.firstChild;
     fragItems.forEach(node => {
-        const key = node.dataset?.chatKey;
-        const existing = key ? container.querySelector(`[data-chat-key="${key}"]`) : null;
+        const key = node.dataset && node.dataset.chatKey;
+        const existing = key ? container.querySelector('[data-chat-key="' + key + '"]') : null;
         if (existing) {
-            // Item already in DOM — move to correct position if needed
             if (existing !== refNode) {
                 container.insertBefore(existing, refNode || null);
             } else {
                 refNode = refNode.nextSibling;
             }
         } else {
-            // Truly new item — insert at correct position
             container.insertBefore(node, refNode || null);
         }
     });
-    // Remove any leftover items not in new list (already handled above via existingMap diff)
+
+    // FLIP: animate only elements that actually moved
+    container.querySelectorAll('[data-chat-key]').forEach(el => {
+        const key = el.dataset.chatKey;
+        const oldTop = oldPositions.get(key);
+        if (oldTop === undefined) return; // новый элемент — без анимации
+        const newTop = el.getBoundingClientRect().top;
+        const delta = oldTop - newTop;
+        if (Math.abs(delta) < 2) return; // не двигался — не трогаем
+        // Инвертируем позицию и плавно возвращаем
+        el.style.transition = 'none';
+        el.style.transform = 'translateY(' + delta + 'px)';
+        requestAnimationFrame(function() {
+            el.style.transition = 'transform 0.22s cubic-bezier(0.4, 0, 0.2, 1)';
+            el.style.transform = 'translateY(0)';
+        });
+    });
 
     updateUnreadBadge(totalUnread);
     } finally { _renderingChats = false; }
@@ -4906,7 +4926,7 @@ async function openChat(id, name, avatar) {
 
     if (_deletedPartnerIds.has(id)) {
         delete messagesByChatCache[cacheKey];
-        try { await MsgDB.delete(cacheKey); } catch(e) {}
+        try { await RedisCache.del(cacheKey); } catch(e) {}
         try { await WCCache.del('profiles', String(id)); } catch(e) {}
         msgs.innerHTML = '';
     } else {
@@ -4914,10 +4934,9 @@ async function openChat(id, name, avatar) {
         if (cached?.messages?.length) {
             // In-memory кэш — показываем мгновенно
             renderMessagesFromCache(cached.messages);
-            scrollDown(false);
             if (elStatus) elStatus.textContent = 'обновление...';
         } else {
-            // Пробуем IndexedDB → Redis — показываем сразу без ожидания chat_id
+            // Пробуем IndexedDB — показываем сразу без ожидания chat_id
             _showChatSkeleton(msgs);
             RedisCache.load(cacheKey).then(idb => {
                 if (_chatOpenId !== _myOpenId) return;
@@ -4926,7 +4945,6 @@ async function openChat(id, name, avatar) {
                     messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
                     msgs.innerHTML = '';
                     renderMessagesFromCache(idb);
-                    scrollDown(false);
                     if (elStatus) elStatus.textContent = 'обновление...';
                 }
             }).catch(() => {});
@@ -4973,7 +4991,7 @@ async function openChat(id, name, avatar) {
         if (_deletedPartnerIds.has(id)) {
             const _ck = `p_${id}`;
             delete messagesByChatCache[_ck];
-            try { await MsgDB.delete(_ck); } catch(e) {}
+            try { await RedisCache.del(_ck); } catch(e) {}
             const _m = document.getElementById('messages');
             if (_m) _m.innerHTML = '<div style="padding:60px 0;text-align:center;opacity:0.2"><div style="font-size:40px;margin-bottom:10px">\u{1F44B}</div><p>\u{041D}\u{0430}\u{0447}\u{043D}\u{0438}\u{0442}\u{0435} \u{043F}\u{0435}\u{0440}\u{0435}\u{043F}\u{0438}\u{0441}\u{043A}\u{0443}!</p></div>';
             setupVoiceRecording();
@@ -5050,7 +5068,6 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
 
     if (cached?.messages?.length) {
         renderMessagesFromCache(cached.messages);
-        scrollDown(false);
         if (elStatus) elStatus.textContent = 'обновление...';
     } else {
         _showChatSkeleton(msgs);
@@ -5060,7 +5077,6 @@ async function openGroupChat(groupId, groupName, groupAvatar) {
                 messagesByChatCache[cacheKey] = { messages: idb, lastFetch: 0 };
                 msgs.innerHTML = '';
                 renderMessagesFromCache(idb);
-                scrollDown(false);
             }
         }).catch(() => {});
     }
@@ -5251,7 +5267,6 @@ async function loadMessages(initial = false, retryCount = 0) {
                 return;
             }
             renderMessagesFromCache(finalMsgs);
-            scrollDown(false);
             RedisCache.save(cacheKey, finalMsgs).catch(() => {});
             socket.emit('mark_read', { chat_id: currentChatId });
         } else {
@@ -5299,11 +5314,11 @@ function renderMessagesFromCache(msgs) {
         });
     const container = document.getElementById('messages');
     if (!container) return;
-    // Без opacity-анимации — вызывает 1с мигание при каждом открытии чата
     container.style.opacity = '1';
     container.style.transition = '';
     VirtualList.mount(container);
-    VirtualList.setMessages(msgs);
+    // instant=true: никакой анимации при рендере из кэша — юзер не видит движения
+    VirtualList.setMessages(msgs, { instant: true });
 }
 
 function getMessageDate(msg) {
@@ -6487,24 +6502,34 @@ async function _loadWaveform(uid, src) {
         const decoded = await actx.decodeAudioData(buf);
         actx.close();
         const data = decoded.getChannelData(0);
-        const N    = 48; // 48 bars like TG Web
+        const N    = 48;
         const step = Math.floor(data.length / N);
         const hs   = [];
         for (let i = 0; i < N; i++) {
-            let rms = 0;
+            let rms = 0, peak = 0;
             const start = i * step;
             for (let j = 0; j < step; j++) {
-                const v = data[start + j] || 0;
+                const v = Math.abs(data[start + j] || 0);
                 rms += v * v;
+                if (v > peak) peak = v;
             }
             rms = Math.sqrt(rms / step);
-            hs.push(Math.max(3, Math.round(rms * 52)));
+            // Смешиваем RMS (70%) и peak (30%) — даёт красивую "живую" волну
+            hs.push(rms * 0.7 + peak * 0.3);
         }
-        // Normalize to max 26px
-        const maxH = Math.max(...hs, 1);
-        const normalized = hs.map(h => Math.max(3, Math.round((h / maxH) * 26)));
-        _wvCache.set(src, normalized);
-        _applyWvBars(uid, normalized);
+        // Нормализуем: min=3px, max=26px с нелинейным масштабом (корень) — мелкие детали лучше видно
+        const maxH = Math.max(...hs, 0.001);
+        const normalized = hs.map(function(h) {
+            return Math.max(3, Math.round(Math.sqrt(h / maxH) * 24));
+        });
+        // Сглаживаем соседние бары — убираем резкие одиночные пики
+        const smoothed = normalized.map(function(h, i, arr) {
+            const prev = arr[i - 1] || h;
+            const next = arr[i + 1] || h;
+            return Math.round((prev * 0.2 + h * 0.6 + next * 0.2));
+        });
+        _wvCache.set(src, smoothed);
+        _applyWvBars(uid, smoothed);
     } catch(e) {}
 }
 
@@ -6592,7 +6617,8 @@ function toggleAudio(uid) {
             // Fallback: обычное воспроизведение если Web Audio недоступен
         }
 
-        audio.play().catch(() => {});
+        audio.play().catch(function() {});
+        audio._playing = true;
         wrap.dataset.playing = '1';
         const pi = wrap.querySelector('.tg-voice-icon-play');
         const pa = wrap.querySelector('.tg-voice-icon-pause');
@@ -6601,6 +6627,7 @@ function toggleAudio(uid) {
         activeAudio = audio;
     } else {
         audio.pause();
+        audio._playing = false;
         wrap.removeAttribute('data-playing');
         const pi = wrap.querySelector('.tg-voice-icon-play');
         const pa = wrap.querySelector('.tg-voice-icon-pause');
@@ -6612,19 +6639,22 @@ function toggleAudio(uid) {
 
 function updateAudio(uid) {
     const audio = document.getElementById(uid);
-    if (!audio || !audio.duration) return;
-    const pct  = audio.currentTime / audio.duration;
-    const dur  = document.getElementById(`dur_${uid}`);
-    const wv   = document.getElementById(`wv_${uid}`);
-    if (dur) dur.textContent = fmtSec(audio.currentTime);
-    // Highlight played bars with accent color
+    if (!audio || !audio.duration || isNaN(audio.duration)) return;
+    // Защита от отрицательного времени (баг iOS Safari — currentTime иногда -0.001)
+    const ct = Math.max(0, audio.currentTime);
+    const pct = ct / audio.duration;
+    const dur = document.getElementById('dur_' + uid);
+    const wv  = document.getElementById('wv_' + uid);
+    if (dur) dur.textContent = fmtSec(ct);
     if (wv) {
         const bars     = wv.querySelectorAll('.wv-bar');
         const progress = Math.floor(pct * bars.length);
-        bars.forEach((bar, i) => {
-            if (i < progress) {
+        // Батчим DOM-изменения через один проход — не дёргаем каждый bar отдельно
+        bars.forEach(function(bar, i) {
+            const played = i < progress;
+            if (played && !bar.classList.contains('wv-played')) {
                 bar.classList.add('wv-played');
-            } else {
+            } else if (!played && bar.classList.contains('wv-played')) {
                 bar.classList.remove('wv-played');
             }
         });
@@ -6639,30 +6669,45 @@ function setAudioDur(uid) {
 
 function onAudioEnd(uid) {
     const audio = document.getElementById(uid);
-    const wrap  = audio?.closest('.tg-voice-msg') || audio?.closest('.audio-player');
+    const wrap  = audio && (audio.closest('.tg-voice-msg') || audio.closest('.audio-player'));
     if (wrap) {
         wrap.removeAttribute('data-playing');
         const pi = wrap.querySelector('.tg-voice-icon-play');
         const pa = wrap.querySelector('.tg-voice-icon-pause');
         if (pi) pi.style.display = '';
         if (pa) pa.style.display = 'none';
-        // Reset waveform bars
-        wrap.querySelectorAll('.wv-bar').forEach(b => b.classList.remove('wv-played'));
+        // Сбрасываем волну (убираем played)
+        wrap.querySelectorAll('.wv-bar').forEach(function(b) { b.classList.remove('wv-played'); });
     }
-    // Reset duration display
-    const dur = document.getElementById(`dur_${uid}`);
-    if (dur && audio) dur.textContent = fmtSec(audio.duration);
+    // Показываем полную длительность (не 0:00 и не currentTime)
+    const dur = document.getElementById('dur_' + uid);
+    if (dur && audio && audio.duration && !isNaN(audio.duration)) {
+        dur.textContent = fmtSec(audio.duration);
+    }
+    // Сбрасываем currentTime чтобы следующее нажатие играло сначала
+    if (audio) {
+        // Небольшая задержка — иначе iOS Safari снова триггерит timeupdate с 0
+        setTimeout(function() {
+            if (audio && !audio._playing) audio.currentTime = 0;
+        }, 80);
+    }
     activeAudio = null;
 }
 
 function seekAudio(e, uid) {
     const audio = document.getElementById(uid);
-    if (!audio?.duration) return;
-    // Use getBoundingClientRect for accurate click position
+    if (!audio || !audio.duration || isNaN(audio.duration)) return;
+    e.preventDefault(); // предотвращаем scroll при touch
     const wv   = document.getElementById('wv_' + uid) || e.currentTarget;
     const rect = wv.getBoundingClientRect();
-    const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.currentTime = pct * audio.duration;
+    // Поддержка touch-событий (e.touches[0]) и mouse (e.clientX)
+    const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : e.clientX;
+    const pct  = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const newTime = pct * audio.duration;
+    // Защита от прыжка назад: не позволяем установить currentTime меньше 0
+    audio.currentTime = Math.max(0, newTime);
+    // Мгновенно обновляем UI не дожидаясь timeupdate
+    updateAudio(uid);
 }
 
 function fmtSec(s) {
@@ -7194,16 +7239,16 @@ function onNewMessage(msg) {
             const _existing = messagesByChatCache[_ck].messages;
             if (!_existing.some(m => _normMsgId(m.id) === _mid)) {
                 messagesByChatCache[_ck].messages.push(msg);
-                // Персистируем в IDB + Redis чтобы при следующем заходе данные были актуальны
+                // Персистируем в IDB чтобы при следующем заходе данные были актуальны
                 RedisCache.save(_ck, messagesByChatCache[_ck].messages).catch(() => {});
             }
         }
     } else {
-        // Сообщение пришло в закрытый чат — инвалидируем ОБА кэша (память + IDB + Redis)
+        // Сообщение пришло в закрытый чат — инвалидируем ОБА кэша (память + IDB)
         // Иначе при следующем заходе показываются старые данные без нового сообщения
         const cacheKey = msg.is_group_msg ? `g_${msg.group_id}` : `p_${msg.sender_id}`;
         delete messagesByChatCache[cacheKey];
-        // IDB + Redis удаляем — принудит loadMessages к свежей загрузке с сервера
+        // IDB тоже удаляем — принудит loadMessages к свежей загрузке с сервера
         RedisCache.del(cacheKey).catch(() => {});
 
         // Мгновенно обновляем чат в списке без запроса к серверу.
@@ -14713,15 +14758,22 @@ function requestPermission(type) {
     return Promise.resolve('unknown');
 }
 
-function scrollDown(smooth = true) {
+function scrollDown(smooth = false) {
     VirtualList.scrollToBottom(smooth);
     // FIX: clear unread badge when scrolling to bottom
     const badge = document.getElementById('wc-scroll-badge');
     if (badge) { badge.textContent = ''; badge.style.display = 'none'; }
-    // FIX SCROLL-BTN: hide button immediately
     _scrollAtBottom = true; _scrollUnread = 0;
     const _msgsEl = document.getElementById('messages');
-    if (_msgsEl) _updateScrollBtn(_msgsEl);
+    if (_msgsEl) {
+        // Финальная коррекция — layout может ещё не завершиться
+        requestAnimationFrame(function() {
+            if (_msgsEl) {
+                _msgsEl.scrollTop = _msgsEl.scrollHeight;
+                _updateScrollBtn(_msgsEl);
+            }
+        });
+    }
 }
 
 function setupCallScreen(type, isIncoming) {
